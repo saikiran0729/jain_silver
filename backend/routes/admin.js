@@ -108,6 +108,7 @@ router.get('/pending-users', auth, adminAuth, async (req, res) => {
     })
       .select('-password -otp -resetPasswordOTP')
       .sort({ createdAt: -1 })
+      .limit(100) // Limit to 100 users to prevent timeout
       .lean(); // Use lean() for better performance - returns plain objects instead of Mongoose documents
 
     // Format document URLs with CloudFront
@@ -163,9 +164,12 @@ router.get('/users', auth, adminAuth, async (req, res) => {
     const { status } = req.query;
     const query = status ? { status } : {};
     
+    const { limit = 100, skip = 0 } = req.query;
     const users = await User.find(query)
       .select('-password -otp -resetPasswordOTP')
       .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(skip))
       .lean(); // Use lean() for better performance - returns plain objects instead of Mongoose documents
 
     // Format document URLs with CloudFront
