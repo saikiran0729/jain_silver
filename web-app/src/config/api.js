@@ -14,12 +14,16 @@ const api = axios.create({
 
 api.interceptors.request.use(
   async (config) => {
-    // Don't override timeout if explicitly set in the request
-    if (!config.timeout) {
+    // Set timeout based on endpoint type
+    // Only override if not explicitly set in the request config
+    if (config.timeout === undefined || config.timeout === api.defaults.timeout) {
       if (config.url && (config.url.includes('/rates') || config.url === '/rates')) {
         config.timeout = 10000; // 10 seconds - backend may wait for fresh rates
       } else if (config.url && (config.url.includes('/admin') || config.url.includes('/store') || config.url.includes('/news'))) {
         config.timeout = 30000; // 30 seconds - admin/store/news endpoints may need more time for database queries
+      } else {
+        // For other endpoints, use default 30s
+        config.timeout = 30000;
       }
     }
     
