@@ -3,13 +3,31 @@ const router = express.Router();
 const auth = require('../middleware/auth');
 const SilverRate = require('../models/SilverRate');
 
-// In-memory store for manual adjustments (per rate type)
-let manualAdjustments = {};
+// Helper function to fetch manual adjustments from MongoDB
+const fetchManualAdjustments = async (rateNames) => {
+  let adjustmentsMap = {};
+  try {
+    const adjustments = await SilverRate.find({ 
+      location: 'Andhra Pradesh',
+      name: { $in: rateNames }
+    }).select('name manualAdjustment').lean();
+    
+    adjustments.forEach(adj => {
+      adjustmentsMap[adj.name] = adj.manualAdjustment || 0;
+    });
+  } catch (error) {
+    console.warn('Could not fetch manual adjustments from MongoDB, using defaults:', error.message);
+  }
+  return adjustmentsMap;
+};
 
-// Helper function to apply manual adjustments to rates
-const applyManualAdjustments = (rates) => {
+// Helper function to apply manual adjustments to rates from MongoDB
+const applyManualAdjustments = async (rates) => {
+  // Fetch current adjustments from MongoDB
+  const adjustmentsMap = await fetchManualAdjustments(rates.map(r => r.name));
+
   return rates.map(rate => {
-    const manualAdjustment = manualAdjustments[rate.name]?.manualAdjustment || 0;
+    const manualAdjustment = adjustmentsMap[rate.name] || rate.manualAdjustment || 0;
     // Store original rates before adjustment
     const originalRatePerGram = rate.ratePerGram;
     let originalTotalRate = rate.rate;
@@ -218,6 +236,9 @@ const updateMongoDBRates = async (liveRate) => {
       { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
     ];
 
+    // Fetch manual adjustments from MongoDB
+    const adjustmentsMap = await fetchManualAdjustments(rateDefinitions.map(r => r.name));
+
     let updatedCount = 0;
     const updatePromises = rateDefinitions.map(async (rateDef) => {
       try {
@@ -228,7 +249,7 @@ const updateMongoDBRates = async (liveRate) => {
           ratePerGram = baseRatePerGram * 1.005;
         }
 
-        const manualAdjustment = manualAdjustments[rateDef.name]?.manualAdjustment || 0;
+        const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
         ratePerGram = ratePerGram + manualAdjustment;
         ratePerGram = Math.max(0, Math.round(ratePerGram * 100) / 100);
 
@@ -272,6 +293,29 @@ const updateMongoDBRates = async (liveRate) => {
   }
 };
 
+/**
+ * @swagger
+ * /rates:
+ *   get:
+ *     summary: Get all silver rates (Public)
+ *     tags: [Rates]
+ *     description: Returns current silver rates for all products with manual adjustments applied
+ *     responses:
+ *       200:
+ *         description: List of silver rates
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/SilverRate'
+ *       500:
+ *         description: Server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 // Get all silver rates - First tries MongoDB, then live API
 router.get('/', async (req, res) => {
   try {
@@ -366,7 +410,7 @@ router.get('/', async (req, res) => {
                     .sort({ name: 1 })
                     .lean();
                   if (retryRates && retryRates.length > 0) {
-                    const ratesWithAdjustments = applyManualAdjustments(retryRates);
+                    const ratesWithAdjustments = await applyManualAdjustments(retryRates);
                     const ratesWithUSD = ratesWithAdjustments.map(rate => ({
                       ...rate,
                       usdInrRate: cachedBaseRate.usdInrRate || 89.25
@@ -385,7 +429,7 @@ router.get('/', async (req, res) => {
                   const freshAge = Date.now() - new Date(freshLatest.lastUpdated).getTime();
                   console.log(`✅ Fresh rates loaded: ${freshRates.length} rates (${Math.round(freshAge/1000)}s old, latest: ${freshLatest.name} = ₹${freshLatest.ratePerGram}/gram)`);
                   
-                  const ratesWithAdjustments = applyManualAdjustments(freshRates);
+                  const ratesWithAdjustments = await applyManualAdjustments(freshRates);
                   const ratesWithUSD = ratesWithAdjustments.map(rate => ({
                       ...rate,
                       usdInrRate: cachedBaseRate.usdInrRate || 89.25
@@ -426,7 +470,7 @@ router.get('/', async (req, res) => {
                 const freshAge = Date.now() - new Date(freshLatest.lastUpdated).getTime();
                 console.log(`✅ Fresh rates fetched: ${freshRates.length} rates (${Math.round(freshAge/1000)}s old, latest: ${freshLatest.name} = ₹${freshLatest.ratePerGram}/gram)`);
                 
-                const ratesWithAdjustments = applyManualAdjustments(freshRates);
+                const ratesWithAdjustments = await applyManualAdjustments(freshRates);
                 const ratesWithUSD = ratesWithAdjustments.map(rate => ({
                   ...rate,
                   usdInrRate: cachedBaseRate.usdInrRate || 89.25
@@ -463,7 +507,7 @@ router.get('/', async (req, res) => {
                 .sort({ name: 1 })
                 .lean();
               if (freshRates && freshRates.length > 0) {
-                const ratesWithAdjustments = applyManualAdjustments(freshRates);
+                const ratesWithAdjustments = await applyManualAdjustments(freshRates);
                 const ratesWithUSD = ratesWithAdjustments.map(rate => ({
                   ...rate,
                   usdInrRate: cachedBaseRate.usdInrRate || 89.25
@@ -491,7 +535,7 @@ router.get('/', async (req, res) => {
           
           // Apply manual adjustments to rates from MongoDB
           // This ensures admin adjustments are reflected immediately
-          const ratesWithAdjustments = applyManualAdjustments(mongoRates);
+          const ratesWithAdjustments = await applyManualAdjustments(mongoRates);
           
           // Add USD rate to all rates if available
           const ratesWithUSD = ratesWithAdjustments.map(rate => ({
@@ -558,6 +602,9 @@ router.get('/', async (req, res) => {
       { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
     ];
     
+    // Fetch manual adjustments from MongoDB
+    const adjustmentsMap = await fetchManualAdjustments(rateDefinitions.map(r => r.name));
+
     const allRates = rateDefinitions.map(rateDef => {
       let ratePerGram = baseRatePerGram;
       if (rateDef.purity === '92.5%') {
@@ -566,7 +613,7 @@ router.get('/', async (req, res) => {
         ratePerGram = baseRatePerGram * 1.005;
       }
       
-      const manualAdjustment = manualAdjustments[rateDef.name]?.manualAdjustment || 0;
+      const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
       ratePerGram = ratePerGram + manualAdjustment;
       ratePerGram = Math.max(0, Math.round(ratePerGram * 100) / 100);
       
@@ -622,7 +669,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Update silver rate (admin only)
+// Update silver rate (admin only) - Now saves to MongoDB
 router.put('/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -650,18 +697,31 @@ router.put('/:id', auth, async (req, res) => {
       return res.status(404).json({ message: 'Rate not found' });
     }
 
+    // Update MongoDB with manual adjustment
     if (manualAdjustment !== undefined) {
-      if (!manualAdjustments[rateDef.name]) {
-        manualAdjustments[rateDef.name] = {};
-      }
-      manualAdjustments[rateDef.name].manualAdjustment = manualAdjustment;
+      await SilverRate.updateOne(
+        { name: rateDef.name, location: 'Andhra Pradesh' },
+        { 
+          $set: { 
+            manualAdjustment: manualAdjustment,
+            lastUpdated: new Date()
+          } 
+        },
+        { upsert: true }
+      );
     }
+
+    // Fetch updated rate from MongoDB
+    const updatedRate = await SilverRate.findOne({ 
+      name: rateDef.name, 
+      location: 'Andhra Pradesh' 
+    });
 
     res.json({
       message: 'Rate adjustment updated successfully',
       rate: {
         name: rateDef.name,
-        manualAdjustment: manualAdjustments[rateDef.name]?.manualAdjustment || 0
+        manualAdjustment: updatedRate?.manualAdjustment || 0
       }
     });
   } catch (error) {
@@ -785,6 +845,21 @@ const updateRatesHandler = async (req, res = null) => {
       { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
     ];
 
+    // Fetch current manual adjustments from MongoDB
+    let adjustmentsMap = {};
+    try {
+      const existingRates = await SilverRate.find({ 
+        location: 'Andhra Pradesh',
+        name: { $in: rateDefinitions.map(r => r.name) }
+      }).select('name manualAdjustment');
+      
+      existingRates.forEach(rate => {
+        adjustmentsMap[rate.name] = rate.manualAdjustment || 0;
+      });
+    } catch (adjError) {
+      console.warn('Could not fetch manual adjustments from MongoDB, using defaults:', adjError.message);
+    }
+
     let updatedCount = 0;
     // Use bulk write for faster MongoDB updates (more efficient than individual updates)
     const bulkOps = rateDefinitions.map((rateDef) => {
@@ -795,7 +870,8 @@ const updateRatesHandler = async (req, res = null) => {
         ratePerGram = baseRatePerGram * 1.005;
       }
 
-      const manualAdjustment = manualAdjustments[rateDef.name]?.manualAdjustment || 0;
+      // Get manual adjustment from MongoDB (not in-memory)
+      const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
       ratePerGram = ratePerGram + manualAdjustment;
       ratePerGram = Math.max(0, Math.round(ratePerGram * 100) / 100);
 
@@ -862,7 +938,7 @@ const updateRatesHandler = async (req, res = null) => {
         } else if (firstRate.purity === '99.99%') {
           firstRatePerGram = baseRatePerGram * 1.005;
         }
-        const manualAdj = manualAdjustments[firstRate.name]?.manualAdjustment || 0;
+        const manualAdj = adjustmentsMap[firstRate.name] || 0;
         firstRatePerGram = firstRatePerGram + manualAdj;
         let weightInGrams = firstRate.weight.value;
         if (firstRate.weight.unit === 'kg') {
@@ -882,8 +958,8 @@ const updateRatesHandler = async (req, res = null) => {
           } else if (rateDef.purity === '99.99%') {
             ratePerGram = baseRatePerGram * 1.005;
           }
-
-          const manualAdjustment = manualAdjustments[rateDef.name]?.manualAdjustment || 0;
+          
+          const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
           ratePerGram = ratePerGram + manualAdjustment;
           ratePerGram = Math.max(0, Math.round(ratePerGram * 100) / 100);
 
@@ -963,7 +1039,9 @@ const updateRatesHandler = async (req, res = null) => {
       } else if (verifyRate.purity === '99.99%') {
         expectedRatePerGram = baseRatePerGram * 1.005;
       }
-      const manualAdj = manualAdjustments[verifyRate.name]?.manualAdjustment || 0;
+      // Fetch adjustment for verification rate
+      const verifyAdjustments = await fetchManualAdjustments([verifyRate.name]);
+      const manualAdj = verifyAdjustments[verifyRate.name] || 0;
       expectedRatePerGram = expectedRatePerGram + manualAdj;
       expectedRatePerGram = Math.round(expectedRatePerGram * 100) / 100;
       
@@ -1099,7 +1177,8 @@ router.post('/adjust', auth, async (req, res) => {
 });
 
 module.exports = router;
-module.exports.manualAdjustments = manualAdjustments;
+// Manual adjustments are now stored in MongoDB (SilverRate.manualAdjustment field)
+// No longer using in-memory storage - all adjustments persist to database
 module.exports.updateRatesHandler = updateRatesHandler;
 module.exports.updateRatesFromEndpoints = updateRatesFromEndpoints;
 module.exports.getCachedBaseRate = () => cachedBaseRate;

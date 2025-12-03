@@ -60,6 +60,58 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /news/admin/all:
+ *   get:
+ *     summary: Get all news posts including unpublished (Admin only)
+ *     tags: [News]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *         description: Maximum number of posts to return
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: published
+ *         schema:
+ *           type: boolean
+ *         description: Filter by published status
+ *       - in: query
+ *         name: category
+ *         schema:
+ *           type: string
+ *         description: Filter by category
+ *     responses:
+ *       200:
+ *         description: List of news posts
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 news:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/News'
+ *                 pagination:
+ *                   type: object
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - Admin access required
+ *       500:
+ *         description: Server error
+ */
 // Get all news posts (admin only - includes unpublished)
 router.get('/admin/all', auth, adminAuth, async (req, res) => {
   try {
@@ -111,6 +163,62 @@ router.get('/admin/all', auth, adminAuth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /news:
+ *   post:
+ *     summary: Create news post (Admin only)
+ *     tags: [News]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - title
+ *               - content
+ *             properties:
+ *               title:
+ *                 type: string
+ *               content:
+ *                 type: string
+ *               image:
+ *                 type: string
+ *               published:
+ *                 type: boolean
+ *                 default: false
+ *               category:
+ *                 type: string
+ *                 enum: [announcement, update, offer, general]
+ *                 default: general
+ *               tags:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       201:
+ *         description: News post created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 news:
+ *                   $ref: '#/components/schemas/News'
+ *       400:
+ *         description: Invalid input
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - Admin access required
+ *       500:
+ *         description: Server error
+ */
 // Create news post (admin only)
 router.post('/', auth, adminAuth, async (req, res) => {
   try {
@@ -146,6 +254,54 @@ router.post('/', auth, adminAuth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /news/{id}:
+ *   put:
+ *     summary: Update news post (Admin only)
+ *     tags: [News]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: News post ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *               content:
+ *                 type: string
+ *               image:
+ *                 type: string
+ *               published:
+ *                 type: boolean
+ *               category:
+ *                 type: string
+ *               tags:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: News post updated successfully
+ *       404:
+ *         description: News post not found
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - Admin access required
+ *       500:
+ *         description: Server error
+ */
 // Update news post (admin only)
 router.put('/:id', auth, adminAuth, async (req, res) => {
   try {
@@ -189,6 +345,33 @@ router.put('/:id', auth, adminAuth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /news/{id}:
+ *   delete:
+ *     summary: Delete news post (Admin only)
+ *     tags: [News]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: News post ID
+ *     responses:
+ *       200:
+ *         description: News post deleted successfully
+ *       404:
+ *         description: News post not found
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - Admin access required
+ *       500:
+ *         description: Server error
+ */
 // Delete news post (admin only)
 router.delete('/:id', auth, adminAuth, async (req, res) => {
   try {

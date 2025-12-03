@@ -327,6 +327,18 @@ routeNames.forEach(routeName => {
   }
 });
 
+// Swagger/OpenAPI Documentation (optional - only if packages are installed)
+try {
+  const { swaggerUi, swaggerSpec } = require('./swagger');
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+    customCss: '.swagger-ui .topbar { display: none }',
+    customSiteTitle: 'Jain Silver API Documentation'
+  }));
+  console.log('📚 Swagger documentation available at /api-docs');
+} catch (error) {
+  console.log('⚠️  Swagger not available (install with: npm install swagger-ui-express swagger-jsdoc)');
+}
+
 // Global error handler - must be after all routes
 app.use((err, req, res, next) => {
   console.error('❌ Global error handler:', err.message);

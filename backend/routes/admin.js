@@ -90,6 +90,30 @@ router.get('/', auth, adminAuth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /admin/pending-users:
+ *   get:
+ *     summary: Get all pending users (Admin only)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of pending users
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/User'
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - Admin access required
+ *       500:
+ *         description: Server error
+ */
 // Get all pending users
 router.get('/pending-users', auth, adminAuth, async (req, res) => {
   try {
@@ -149,6 +173,49 @@ router.get('/pending-users', auth, adminAuth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /admin/users:
+ *   get:
+ *     summary: Get all users (Admin only)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, approved, rejected]
+ *         description: Filter by user status
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 100
+ *         description: Maximum number of users to return
+ *       - in: query
+ *         name: skip
+ *         schema:
+ *           type: integer
+ *           default: 0
+ *         description: Number of users to skip
+ *     responses:
+ *       200:
+ *         description: List of users
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/User'
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - Admin access required
+ *       500:
+ *         description: Server error
+ */
 // Get all users
 router.get('/users', auth, adminAuth, async (req, res) => {
   try {
@@ -293,9 +360,49 @@ router.get('/user/:userId', auth, adminAuth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /admin/adjust-rates:
+ *   post:
+ *     summary: Adjust silver rates (Admin only)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - value
+ *               - adjustmentType
+ *             properties:
+ *               value:
+ *                 type: number
+ *                 description: Adjustment value (positive for increase, negative for decrease)
+ *               adjustmentType:
+ *                 type: string
+ *                 enum: [amount, percentage]
+ *                 description: Type of adjustment - amount per gram or percentage
+ *               itemName:
+ *                 type: string
+ *                 description: Specific item to adjust (optional, defaults to all items)
+ *     responses:
+ *       200:
+ *         description: Rates adjusted successfully
+ *       400:
+ *         description: Invalid input
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - Admin access required
+ *       500:
+ *         description: Server error
+ */
 // Admin helper: adjust rates (per-gram amount or percentage, can be negative)
 // This applies a manual adjustment that is added/subtracted from live RB Goldspot rates
-// Uses in-memory storage (no MongoDB for rates)
+// Uses MongoDB for persistence
 router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
   try {
     const { value, adjustmentType, itemName } = req.body;

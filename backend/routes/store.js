@@ -137,6 +137,20 @@ router.get('/', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /store/info:
+ *   get:
+ *     summary: Get store information (Public)
+ *     tags: [Store]
+ *     responses:
+ *       200:
+ *         description: Store information retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/StoreInfo'
+ */
 // Get store information (public endpoint) - alias for root
 router.get('/info', async (req, res) => {
   try {
@@ -274,9 +288,80 @@ router.get('/info', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /store/info:
+ *   put:
+ *     summary: Update store information (Admin only)
+ *     tags: [Store]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               welcomeMessage:
+ *                 type: string
+ *               address:
+ *                 type: string
+ *               phoneNumber:
+ *                 type: string
+ *               instagram:
+ *                 type: string
+ *               facebook:
+ *                 type: string
+ *               youtube:
+ *                 type: string
+ *               storeTimings:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *               bankDetails:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *     responses:
+ *       200:
+ *         description: Store information updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 storeInfo:
+ *                   $ref: '#/components/schemas/StoreInfo'
+ *       400:
+ *         description: No valid fields to update
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - Admin access required
+ *       500:
+ *         description: Server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 // Update store information (admin only)
 router.put('/info', auth, adminAuth, async (req, res) => {
   try {
+    // Check MongoDB connection
+    const mongoose = require('mongoose');
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ 
+        message: 'Database connection not available',
+        error: 'Please try again later'
+      });
+    }
+
+    console.log('📝 Updating store info with data:', JSON.stringify(req.body, null, 2));
+    
     // Get only the fields that are allowed to be updated
     const allowedFields = ['welcomeMessage', 'address', 'phoneNumber', 'instagram', 'facebook', 'youtube', 'storeTimings', 'bankDetails'];
     const updateData = {};
@@ -286,40 +371,59 @@ router.put('/info', auth, adminAuth, async (req, res) => {
         updateData[field] = req.body[field];
       }
     });
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ message: 'No valid fields to update' });
+    }
     
     let storeInfo = await StoreInfo.findOne();
     
     if (!storeInfo) {
       // Create new store info with defaults
-      storeInfo = new StoreInfo({
-        ...updateData,
-        storeTimings: updateData.storeTimings || [
+      const defaultStoreInfo = {
+        storeTimings: [
           { day: 'Monday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
           { day: 'Tuesday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
           { day: 'Wednesday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
           { day: 'Thursday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
           { day: 'Friday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
           { day: 'Saturday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
-          { day: 'Sunday', openTime: '', closeTime: '', isClosed: true },
+          { day: 'Sunday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: true },
         ],
-        bankDetails: updateData.bankDetails || []
+        bankDetails: []
+      };
+      storeInfo = new StoreInfo({
+        ...defaultStoreInfo,
+        ...updateData,
+        storeTimings: updateData.storeTimings || defaultStoreInfo.storeTimings,
+        bankDetails: updateData.bankDetails || defaultStoreInfo.bankDetails
       });
     } else {
       // Update existing fields
       Object.keys(updateData).forEach(key => {
-        storeInfo[key] = updateData[key];
+        if (updateData[key] !== undefined && updateData[key] !== null) {
+          storeInfo[key] = updateData[key];
+        }
       });
     }
     
     await storeInfo.save();
     
+    const savedInfo = storeInfo.toObject ? storeInfo.toObject() : storeInfo;
+    console.log('✅ Store info updated successfully');
+    
     res.json({
       message: 'Store information updated successfully',
-      storeInfo: storeInfo.toObject ? storeInfo.toObject() : storeInfo
+      storeInfo: savedInfo
     });
   } catch (error) {
-    console.error('Update store info error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('❌ Update store info error:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      message: 'Server error', 
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
