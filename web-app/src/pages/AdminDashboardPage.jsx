@@ -176,10 +176,16 @@ function AdminDashboardPage() {
     try {
       setLoadingNews(true);
       const response = await api.get('/news/admin/all');
+      console.log('News response:', response.data);
       setNewsPosts(response.data?.news || []);
+      if (response.data?.news?.length === 0) {
+        console.log('No news posts found in database');
+      }
     } catch (error) {
       console.error('Error fetching news:', error);
-      alert('Failed to fetch news posts');
+      console.error('Error response:', error.response?.data);
+      setNewsPosts([]);
+      alert(error.response?.data?.message || 'Failed to fetch news posts. Please check console for details.');
     } finally {
       setLoadingNews(false);
     }
@@ -189,8 +195,19 @@ function AdminDashboardPage() {
     try {
       setLoadingStore(true);
       const response = await api.get('/store/info');
-      setStoreInfo(response.data);
-      setStoreForm(response.data);
+      const storeData = response.data || {};
+      setStoreInfo(storeData);
+      // Preserve all fields including storeTimings and bankDetails
+      setStoreForm({
+        welcomeMessage: storeData.welcomeMessage || '',
+        address: storeData.address || '',
+        phoneNumber: storeData.phoneNumber || '',
+        instagram: storeData.instagram || '',
+        facebook: storeData.facebook || '',
+        youtube: storeData.youtube || '',
+        storeTimings: storeData.storeTimings || [],
+        bankDetails: storeData.bankDetails || []
+      });
     } catch (error) {
       console.error('Error fetching store info:', error);
       alert('Failed to fetch store information');
@@ -262,12 +279,16 @@ function AdminDashboardPage() {
   const handleSaveStoreInfo = async () => {
     try {
       setLoadingAction(true);
-      await api.put('/store/info', storeForm);
+      console.log('Saving store info:', storeForm);
+      const response = await api.put('/store/info', storeForm);
+      console.log('Store info saved:', response.data);
       alert('Store information updated successfully');
       setStoreDialogOpen(false);
       fetchStoreInfo();
     } catch (error) {
-      alert(error.response?.data?.message || 'Failed to update store information');
+      console.error('Error saving store info:', error);
+      console.error('Error response:', error.response?.data);
+      alert(error.response?.data?.message || error.response?.data?.error || 'Failed to update store information. Please check console for details.');
     } finally {
       setLoadingAction(false);
     }

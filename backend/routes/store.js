@@ -277,19 +277,45 @@ router.get('/info', async (req, res) => {
 // Update store information (admin only)
 router.put('/info', auth, adminAuth, async (req, res) => {
   try {
+    // Get only the fields that are allowed to be updated
+    const allowedFields = ['welcomeMessage', 'address', 'phoneNumber', 'instagram', 'facebook', 'youtube', 'storeTimings', 'bankDetails'];
+    const updateData = {};
+    
+    allowedFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updateData[field] = req.body[field];
+      }
+    });
+    
     let storeInfo = await StoreInfo.findOne();
     
     if (!storeInfo) {
-      storeInfo = new StoreInfo(req.body);
+      // Create new store info with defaults
+      storeInfo = new StoreInfo({
+        ...updateData,
+        storeTimings: updateData.storeTimings || [
+          { day: 'Monday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
+          { day: 'Tuesday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
+          { day: 'Wednesday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
+          { day: 'Thursday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
+          { day: 'Friday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
+          { day: 'Saturday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
+          { day: 'Sunday', openTime: '', closeTime: '', isClosed: true },
+        ],
+        bankDetails: updateData.bankDetails || []
+      });
     } else {
-      Object.assign(storeInfo, req.body);
+      // Update existing fields
+      Object.keys(updateData).forEach(key => {
+        storeInfo[key] = updateData[key];
+      });
     }
     
     await storeInfo.save();
     
     res.json({
       message: 'Store information updated successfully',
-      storeInfo
+      storeInfo: storeInfo.toObject ? storeInfo.toObject() : storeInfo
     });
   } catch (error) {
     console.error('Update store info error:', error);

@@ -76,26 +76,38 @@ router.get('/admin/all', auth, adminAuth, async (req, res) => {
     
     const skip = (parseInt(page) - 1) * parseInt(limit);
     
+    // Check if News model is available
+    if (!News) {
+      console.error('News model is not available');
+      return res.status(500).json({ message: 'News model not initialized', news: [] });
+    }
+    
     const news = await News.find(query)
       .populate('author', 'name email')
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
-      .skip(skip);
+      .skip(skip)
+      .lean(); // Use lean() for better performance
     
     const total = await News.countDocuments(query);
     
     res.json({
-      news,
+      news: news || [],
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / parseInt(limit))
+        total: total || 0,
+        pages: Math.ceil((total || 0) / parseInt(limit))
       }
     });
   } catch (error) {
     console.error('Get all news error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      message: 'Server error', 
+      error: error.message,
+      news: [] // Return empty array on error
+    });
   }
 });
 
