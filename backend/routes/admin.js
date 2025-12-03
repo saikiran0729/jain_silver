@@ -93,25 +93,70 @@ router.get('/', auth, adminAuth, async (req, res) => {
 // Get all pending users
 router.get('/pending-users', auth, adminAuth, async (req, res) => {
   try {
+    // Check MongoDB connection
+    const mongoose = require('mongoose');
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ 
+        message: 'Database connection not available',
+        users: []
+      });
+    }
+
     const users = await User.find({ 
       status: 'pending',
       isVerified: true
     }).select('-password -otp -resetPasswordOTP').sort({ createdAt: -1 });
 
     // Format document URLs with CloudFront
-    const { formatUserDocuments } = require('../utils/documentHelper');
-    const formattedUsers = users.map(user => formatUserDocuments(user));
+    let formattedUsers = [];
+    try {
+      const { formatUserDocuments } = require('../utils/documentHelper');
+      formattedUsers = users.map(user => {
+        try {
+          return formatUserDocuments(user);
+        } catch (userFormatError) {
+          console.error('Error formatting individual user:', userFormatError);
+          // Return user without formatting if helper fails for this user
+          return user.toObject ? user.toObject() : user;
+        }
+      });
+    } catch (formatError) {
+      console.error('Error formatting user documents:', formatError);
+      console.error('Format error stack:', formatError.stack);
+      // Return users without formatting if helper fails
+      formattedUsers = users.map(user => user.toObject ? user.toObject() : user);
+    }
+
+    // Ensure we always return an array
+    if (!Array.isArray(formattedUsers)) {
+      console.warn('formattedUsers is not an array, converting...');
+      formattedUsers = [];
+    }
 
     res.json(formattedUsers);
   } catch (error) {
     console.error('Get pending users error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      message: 'Server error', 
+      error: error.message,
+      users: [] // Return empty array on error
+    });
   }
 });
 
 // Get all users
 router.get('/users', auth, adminAuth, async (req, res) => {
   try {
+    // Check MongoDB connection
+    const mongoose = require('mongoose');
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ 
+        message: 'Database connection not available',
+        users: []
+      });
+    }
+
     const { status } = req.query;
     const query = status ? { status } : {};
     
@@ -120,13 +165,40 @@ router.get('/users', auth, adminAuth, async (req, res) => {
       .sort({ createdAt: -1 });
 
     // Format document URLs with CloudFront
-    const { formatUserDocuments } = require('../utils/documentHelper');
-    const formattedUsers = users.map(user => formatUserDocuments(user));
+    let formattedUsers = [];
+    try {
+      const { formatUserDocuments } = require('../utils/documentHelper');
+      formattedUsers = users.map(user => {
+        try {
+          return formatUserDocuments(user);
+        } catch (userFormatError) {
+          console.error('Error formatting individual user:', userFormatError);
+          // Return user without formatting if helper fails for this user
+          return user.toObject ? user.toObject() : user;
+        }
+      });
+    } catch (formatError) {
+      console.error('Error formatting user documents:', formatError);
+      console.error('Format error stack:', formatError.stack);
+      // Return users without formatting if helper fails
+      formattedUsers = users.map(user => user.toObject ? user.toObject() : user);
+    }
+
+    // Ensure we always return an array
+    if (!Array.isArray(formattedUsers)) {
+      console.warn('formattedUsers is not an array, converting...');
+      formattedUsers = [];
+    }
 
     res.json(formattedUsers);
   } catch (error) {
     console.error('Get users error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      message: 'Server error', 
+      error: error.message,
+      users: [] // Return empty array on error
+    });
   }
 });
 
@@ -238,19 +310,14 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       return res.status(400).json({ message: 'Percentage must be between -100% and 100%' });
     }
 
-    // Get the in-memory manual adjustments from rates.js
-    const ratesModule = require('./rates');
-    if (!ratesModule.manualAdjustments) {
-      ratesModule.manualAdjustments = {};
-    }
-
-    // Get current rates to calculate percentage
+    // Get current rates from MongoDB to calculate percentage and update adjustments
     const SilverRate = require('../models/SilverRate');
     let currentRates = [];
     try {
       currentRates = await SilverRate.find({ location: 'Andhra Pradesh' });
     } catch (err) {
       console.warn('Could not fetch current rates for percentage calculation:', err.message);
+      return res.status(500).json({ message: 'Failed to fetch current rates from database' });
     }
 
     const rateDefinitions = [
@@ -268,6 +335,7 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
 
     let modified = 0;
     const adjustments = [];
+    const bulkOps = [];
 
     // If itemName is provided, adjust only that item; otherwise adjust all
     const itemsToAdjust = itemName ? [itemName] : rateDefinitions;
@@ -276,24 +344,26 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       if (!rateDefinitions.includes(rateName)) {
         continue; // Skip invalid item names
       }
-
-      if (!ratesModule.manualAdjustments[rateName]) {
-        ratesModule.manualAdjustments[rateName] = {};
+      
+      // Get current rate from MongoDB
+      const currentRate = currentRates.find(r => r.name === rateName);
+      if (!currentRate) {
+        console.warn(`Rate ${rateName} not found in database, skipping adjustment`);
+        continue;
       }
       
-      // Get current rate for calculations
-      const currentRate = currentRates.find(r => r.name === rateName);
-      const originalRatePerGram = currentRate?.ratePerGram || 0;
+      const originalRatePerGram = currentRate.ratePerGram || 0;
+      const currentAdjustment = currentRate.manualAdjustment || 0;
       
       let adjustmentAmount = 0;
       let actualPercentageChange = 0;
       
       if (isPercentage) {
-        // Calculate amount based on percentage
+        // Calculate amount based on percentage of current ratePerGram
         adjustmentAmount = (originalRatePerGram * amount) / 100;
         actualPercentageChange = amount;
       } else {
-        // Use amount directly
+        // Use amount directly (additive to existing adjustment)
         adjustmentAmount = amount;
         // Calculate percentage change
         actualPercentageChange = originalRatePerGram > 0 
@@ -301,34 +371,54 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
           : 0;
       }
       
+      // Calculate new adjustment (additive: new = current + adjustment)
+      const newAdjustment = currentAdjustment + adjustmentAmount;
       const newRatePerGram = Math.max(0, originalRatePerGram + adjustmentAmount);
 
-      // Store the adjustment amount (not percentage) in manualAdjustments
-      ratesModule.manualAdjustments[rateName].manualAdjustment = adjustmentAmount;
-      modified++;
+      // Update MongoDB with new adjustment
+      bulkOps.push({
+        updateOne: {
+          filter: { name: rateName, location: 'Andhra Pradesh' },
+          update: {
+            $set: {
+              manualAdjustment: newAdjustment,
+              lastUpdated: new Date()
+            }
+          }
+        }
+      });
 
+      modified++;
       adjustments.push({
         itemName: rateName,
         amount: adjustmentAmount,
         originalRatePerGram: originalRatePerGram,
+        originalAdjustment: currentAdjustment,
+        newAdjustment: newAdjustment,
         newRatePerGram: newRatePerGram,
         percentageChange: parseFloat(actualPercentageChange.toFixed(2))
       });
     }
 
-    const adjustmentDescription = isPercentage 
-      ? `${amount > 0 ? '+' : ''}${amount}%`
-      : `${amount > 0 ? '+' : ''}₹${amount}/gram`;
-    console.log(`✅ Admin adjusted rates: ${adjustmentDescription} applied to ${modified} rate(s)`);
+    // Execute bulk update to MongoDB
+    if (bulkOps.length > 0) {
+      try {
+        await SilverRate.bulkWrite(bulkOps);
+        console.log(`✅ Updated ${bulkOps.length} rate adjustments in MongoDB`);
+      } catch (bulkError) {
+        console.error('Error updating adjustments in MongoDB:', bulkError);
+        return res.status(500).json({ message: 'Failed to save adjustments to database', error: bulkError.message });
+      }
+    }
 
-    // Trigger immediate rate update to apply adjustments to MongoDB
+    // Trigger immediate rate update to apply adjustments (adjustments are already in MongoDB)
     try {
       const updateRatesHandler = require('./rates').updateRatesHandler || null;
       if (updateRatesHandler) {
         updateRatesHandler(req, null).catch(err => {
           console.error('⚠️ Failed to trigger rate update after adjustment:', err.message);
         });
-        console.log('🔄 Triggered rate update to apply adjustments to MongoDB');
+        console.log('🔄 Triggered rate update to recalculate rates with new adjustments');
       }
     } catch (updateErr) {
       console.warn('⚠️ Could not trigger rate update:', updateErr.message);
@@ -336,7 +426,7 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
 
     // Emit socket event for clients
     const io = req.app.get('io');
-    if (io) io.emit('manualAdjustment', { amount, itemName });
+    if (io) io.emit('manualAdjustment', { value: amount, adjustmentType: isPercentage ? 'percentage' : 'amount', itemName });
 
     // Calculate average percentage if multiple items
     const avgPercentage = adjustments.length > 0
@@ -346,6 +436,8 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
     const adjustmentDescription = isPercentage 
       ? `${amount > 0 ? '+' : ''}${Math.abs(amount)}%`
       : `₹${Math.abs(amount)}/gram`;
+    
+    console.log(`✅ Admin adjusted rates: ${adjustmentDescription} applied to ${modified} rate(s)`);
     
     const message = isPercentage
       ? `Rates ${amount > 0 ? 'increased' : 'decreased'} by ${adjustmentDescription}`
