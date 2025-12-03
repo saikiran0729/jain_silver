@@ -405,6 +405,8 @@ router.get('/user/:userId', auth, adminAuth, async (req, res) => {
 // Uses MongoDB for persistence
 router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
   try {
+    console.log('📝 Rate adjustment request:', JSON.stringify(req.body, null, 2));
+    
     const { value, adjustmentType, itemName } = req.body;
     
     // Support both old format (amount) and new format (value + adjustmentType)
@@ -417,9 +419,17 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       isPercentage = false;
     }
     
+    // Ensure amount is a number
+    if (amount !== undefined && amount !== null) {
+      amount = parseFloat(amount);
+    }
+    
     if (typeof amount !== 'number' || isNaN(amount)) {
+      console.error('❌ Invalid amount value:', amount, typeof amount);
       return res.status(400).json({ message: 'Valid numeric value is required' });
     }
+    
+    console.log(`📊 Processing adjustment: ${amount} (${isPercentage ? 'percentage' : 'amount'}) for ${itemName || 'all items'}`);
     
     if (isPercentage && (amount < -100 || amount > 100)) {
       return res.status(400).json({ message: 'Percentage must be between -100% and 100%' });
@@ -469,20 +479,23 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       
       const originalRatePerGram = currentRate.ratePerGram || 0;
       const currentAdjustment = currentRate.manualAdjustment || 0;
+      // Current effective rate = original + existing adjustments
+      const currentEffectiveRate = originalRatePerGram + currentAdjustment;
       
       let adjustmentAmount = 0;
       let actualPercentageChange = 0;
       
       if (isPercentage) {
-        // Calculate amount based on percentage of current ratePerGram
-        adjustmentAmount = (originalRatePerGram * amount) / 100;
+        // Calculate amount based on percentage of current effective rate
+        // This ensures percentage is calculated on the rate the user sees
+        adjustmentAmount = (currentEffectiveRate * amount) / 100;
         actualPercentageChange = amount;
       } else {
         // Use amount directly (additive to existing adjustment)
         adjustmentAmount = amount;
-        // Calculate percentage change
-        actualPercentageChange = originalRatePerGram > 0 
-          ? ((amount / originalRatePerGram) * 100)
+        // Calculate percentage change based on current effective rate
+        actualPercentageChange = currentEffectiveRate > 0 
+          ? ((amount / currentEffectiveRate) * 100)
           : 0;
       }
       
