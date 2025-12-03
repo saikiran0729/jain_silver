@@ -2,7 +2,19 @@
  * Helper functions for handling document URLs with CloudFront
  */
 
-const { AWS_CONFIG } = require('../config/aws');
+let AWS_CONFIG;
+try {
+  const awsModule = require('../config/aws');
+  AWS_CONFIG = awsModule.AWS_CONFIG || awsModule.default?.AWS_CONFIG;
+  if (!AWS_CONFIG) {
+    throw new Error('AWS_CONFIG not found');
+  }
+} catch (error) {
+  console.warn('AWS config not available, using fallback URLs:', error.message);
+  AWS_CONFIG = {
+    CLOUDFRONT_URL: process.env.AWS_CLOUDFRONT_URL || process.env.CLOUDFRONT_URL || ''
+  };
+}
 
 /**
  * Convert document URLs to CloudFront URLs
@@ -50,9 +62,14 @@ const formatDocumentUrls = (documents) => {
 const getCloudFrontUrl = (location) => {
   if (!location) return null;
   
-  // If it's already a CloudFront URL, return as is
-  if (location.includes('cloudfront.net') || location.startsWith('https://')) {
+  // If it's already a CloudFront URL or full URL, return as is
+  if (location.includes('cloudfront.net') || location.startsWith('https://') || location.startsWith('http://')) {
     return location;
+  }
+  
+  // If CloudFront URL is not configured, return relative URL
+  if (!AWS_CONFIG || !AWS_CONFIG.CLOUDFRONT_URL) {
+    return location.startsWith('/') ? location : `/${location}`;
   }
   
   // If it's an S3 key (starts with documents/ or images/), convert to CloudFront URL
@@ -75,15 +92,30 @@ const getCloudFrontUrl = (location) => {
  * @returns {Object} - User object with formatted document URLs
  */
 const formatUserDocuments = (user) => {
-  if (!user) return user;
-  
-  const userObj = user.toObject ? user.toObject() : { ...user };
-  
-  if (userObj.documents) {
-    userObj.documents = formatDocumentUrls(userObj.documents);
+  if (!user) {
+    console.warn('formatUserDocuments: user is null or undefined');
+    return user;
   }
   
-  return userObj;
+  try {
+    // If user is already a plain object (from lean()), use it directly
+    const userObj = user.toObject ? user.toObject() : { ...user };
+    
+    if (userObj.documents && typeof userObj.documents === 'object') {
+      try {
+        userObj.documents = formatDocumentUrls(userObj.documents);
+      } catch (docError) {
+        console.error('Error formatting document URLs:', docError);
+        // Keep original documents if formatting fails
+      }
+    }
+    
+    return userObj;
+  } catch (error) {
+    console.error('Error in formatUserDocuments:', error);
+    // Return user as-is if formatting fails
+    return user.toObject ? user.toObject() : { ...user };
+  }
 };
 
 module.exports = {

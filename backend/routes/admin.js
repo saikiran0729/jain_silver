@@ -105,7 +105,10 @@ router.get('/pending-users', auth, adminAuth, async (req, res) => {
     const users = await User.find({ 
       status: 'pending',
       isVerified: true
-    }).select('-password -otp -resetPasswordOTP').sort({ createdAt: -1 });
+    })
+      .select('-password -otp -resetPasswordOTP')
+      .sort({ createdAt: -1 })
+      .lean(); // Use lean() for better performance - returns plain objects instead of Mongoose documents
 
     // Format document URLs with CloudFront
     let formattedUsers = [];
@@ -117,14 +120,14 @@ router.get('/pending-users', auth, adminAuth, async (req, res) => {
         } catch (userFormatError) {
           console.error('Error formatting individual user:', userFormatError);
           // Return user without formatting if helper fails for this user
-          return user.toObject ? user.toObject() : user;
+          return user;
         }
       });
     } catch (formatError) {
       console.error('Error formatting user documents:', formatError);
       console.error('Format error stack:', formatError.stack);
       // Return users without formatting if helper fails
-      formattedUsers = users.map(user => user.toObject ? user.toObject() : user);
+      formattedUsers = users;
     }
 
     // Ensure we always return an array
@@ -162,7 +165,8 @@ router.get('/users', auth, adminAuth, async (req, res) => {
     
     const users = await User.find(query)
       .select('-password -otp -resetPasswordOTP')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean(); // Use lean() for better performance - returns plain objects instead of Mongoose documents
 
     // Format document URLs with CloudFront
     let formattedUsers = [];
@@ -174,14 +178,14 @@ router.get('/users', auth, adminAuth, async (req, res) => {
         } catch (userFormatError) {
           console.error('Error formatting individual user:', userFormatError);
           // Return user without formatting if helper fails for this user
-          return user.toObject ? user.toObject() : user;
+          return user;
         }
       });
     } catch (formatError) {
       console.error('Error formatting user documents:', formatError);
       console.error('Format error stack:', formatError.stack);
       // Return users without formatting if helper fails
-      formattedUsers = users.map(user => user.toObject ? user.toObject() : user);
+      formattedUsers = users;
     }
 
     // Ensure we always return an array

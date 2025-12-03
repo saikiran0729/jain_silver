@@ -18,6 +18,8 @@ api.interceptors.request.use(
     if (!config.timeout) {
       if (config.url && (config.url.includes('/rates') || config.url === '/rates')) {
         config.timeout = 10000; // 10 seconds - backend may wait for fresh rates
+      } else if (config.url && config.url.includes('/admin')) {
+        config.timeout = 30000; // 30 seconds - admin endpoints may need more time for database queries
       }
     }
     
