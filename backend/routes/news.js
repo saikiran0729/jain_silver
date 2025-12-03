@@ -124,7 +124,7 @@ router.post('/', auth, adminAuth, async (req, res) => {
       title,
       content,
       image: image || null,
-      author: req.user.id,
+      author: req.user.userId, // Use userId from decoded JWT token
       published: published || false,
       publishedAt: published ? new Date() : null,
       category: category || 'general',

@@ -381,7 +381,8 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       
       // Calculate new adjustment (additive: new = current + adjustment)
       const newAdjustment = currentAdjustment + adjustmentAmount;
-      const newRatePerGram = Math.max(0, originalRatePerGram + adjustmentAmount);
+      // New rate should be original rate + total adjustment (cumulative)
+      const newRatePerGram = Math.max(0, originalRatePerGram + newAdjustment);
 
       // Update MongoDB with new adjustment
       bulkOps.push({
