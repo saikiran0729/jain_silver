@@ -14,8 +14,9 @@ function AdminDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
   const [adjustDialogOpen, setAdjustDialogOpen] = useState(false);
-  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustValue, setAdjustValue] = useState('');
   const [adjustType, setAdjustType] = useState('increase'); // 'increase' or 'decrease'
+  const [adjustValueType, setAdjustValueType] = useState('amount'); // 'amount' or 'percentage'
   const [selectedItem, setSelectedItem] = useState('all'); // 'all' or specific item name
   const [loadingAction, setLoadingAction] = useState(false);
   const [rates, setRates] = useState([]);
@@ -139,25 +140,28 @@ function AdminDashboardPage() {
   };
 
   const handleAdjustRates = async () => {
-    const amount = parseFloat(adjustAmount);
-    if (isNaN(amount) || amount <= 0) {
+    const value = parseFloat(adjustValue);
+    if (isNaN(value) || value <= 0) {
       alert('Please enter a valid positive number');
       return;
     }
     try {
       setLoadingAction(true);
-      const finalAmount = adjustType === 'decrease' ? -Math.abs(amount) : amount;
-      const payload = { amount: finalAmount };
+      const finalValue = adjustType === 'decrease' ? -Math.abs(value) : value;
+      const payload = {
+        value: finalValue,
+        adjustmentType: adjustValueType // 'amount' or 'percentage'
+      };
       if (selectedItem !== 'all') {
         payload.itemName = selectedItem;
       }
       const response = await api.post('/admin/adjust-rates', payload);
-      const percentage = response.data?.percentageChange || 0;
-      const message = `Rates ${adjustType === 'decrease' ? 'decreased' : 'increased'} by ₹${amount}/gram (${percentage > 0 ? '+' : ''}${percentage}%)${selectedItem !== 'all' ? ` for ${selectedItem}` : ' for all items'} successfully`;
+      const message = `Rates ${adjustType === 'decrease' ? 'decreased' : 'increased'} by ${adjustValueType === 'percentage' ? `${Math.abs(value)}%` : `₹${Math.abs(value)}/gram`}${selectedItem !== 'all' ? ` for ${selectedItem}` : ' for all items'} successfully`;
       alert(message);
       setAdjustDialogOpen(false);
-      setAdjustAmount('');
+      setAdjustValue('');
       setSelectedItem('all');
+      setAdjustValueType('amount');
       // Refresh rates to show updated values
       await fetchRates();
     } catch (error) {
@@ -331,6 +335,9 @@ function AdminDashboardPage() {
               startIcon={<Remove />}
               onClick={() => {
                 setAdjustType('decrease');
+                setAdjustValueType('amount');
+                setAdjustValue('');
+                setSelectedItem('all');
                 setAdjustDialogOpen(true);
               }}
               disabled={loadingAction}
@@ -343,6 +350,9 @@ function AdminDashboardPage() {
               startIcon={<Add />}
               onClick={() => {
                 setAdjustType('increase');
+                setAdjustValueType('amount');
+                setAdjustValue('');
+                setSelectedItem('all');
                 setAdjustDialogOpen(true);
               }}
               disabled={loadingAction}
@@ -532,14 +542,31 @@ function AdminDashboardPage() {
       </Card>
 
       {/* Adjust Rates Dialog */}
-      <Dialog open={adjustDialogOpen} onClose={() => setAdjustDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>
+      <Dialog 
+        open={adjustDialogOpen} 
+        onClose={() => {
+          setAdjustDialogOpen(false);
+          setAdjustValue('');
+          setAdjustValueType('amount');
+          setSelectedItem('all');
+        }} 
+        maxWidth="sm" 
+        fullWidth
+        disableEnforceFocus={false}
+        disableAutoFocus={false}
+        keepMounted={false}
+        aria-labelledby="adjust-rates-dialog-title"
+      >
+        <DialogTitle id="adjust-rates-dialog-title">
           {adjustType === 'decrease' ? 'Decrease Rates' : 'Increase Rates'}
         </DialogTitle>
         <DialogContent>
           <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
-            Enter the amount per gram to {adjustType === 'decrease' ? 'decrease' : 'increase'} rates.
-            Example: Enter 100 to {adjustType === 'decrease' ? 'decrease' : 'increase'} by ₹100/gram.
+            Choose adjustment type and enter the value to {adjustType === 'decrease' ? 'decrease' : 'increase'} rates.
+            {adjustValueType === 'amount' 
+              ? ` Example: Enter 100 to ${adjustType === 'decrease' ? 'decrease' : 'increase'} by ₹100/gram.`
+              : ` Example: Enter 5 to ${adjustType === 'decrease' ? 'decrease' : 'increase'} by 5%.`
+            }
           </Typography>
           <FormControl fullWidth margin="normal">
             <InputLabel>Select Item</InputLabel>
@@ -556,26 +583,45 @@ function AdminDashboardPage() {
               ))}
             </Select>
           </FormControl>
+          <FormControl fullWidth margin="normal">
+            <InputLabel>Adjustment Type</InputLabel>
+            <Select
+              value={adjustValueType}
+              onChange={(e) => setAdjustValueType(e.target.value)}
+              label="Adjustment Type"
+            >
+              <MenuItem value="amount">Amount (₹/gram)</MenuItem>
+              <MenuItem value="percentage">Percentage (%)</MenuItem>
+            </Select>
+          </FormControl>
           <TextField
             fullWidth
-            label={`Amount to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`}
+            label={adjustValueType === 'amount' 
+              ? `Amount (₹/gram) to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`
+              : `Percentage (%) to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`
+            }
             type="number"
-            value={adjustAmount}
-            onChange={(e) => setAdjustAmount(e.target.value)}
+            value={adjustValue}
+            onChange={(e) => setAdjustValue(e.target.value)}
             margin="normal"
-            placeholder="e.g., 100"
-            inputProps={{ min: 0, step: 0.01 }}
+            placeholder={adjustValueType === 'amount' ? 'e.g., 100' : 'e.g., 5'}
+            inputProps={{ min: 0, step: adjustValueType === 'amount' ? 0.01 : 0.1 }}
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setAdjustDialogOpen(false)} disabled={loadingAction}>
+          <Button onClick={() => {
+            setAdjustDialogOpen(false);
+            setAdjustValue('');
+            setAdjustValueType('amount');
+            setSelectedItem('all');
+          }} disabled={loadingAction}>
             Cancel
           </Button>
           <Button
             onClick={handleAdjustRates}
             variant="contained"
             color={adjustType === 'decrease' ? 'error' : 'success'}
-            disabled={loadingAction || !adjustAmount}
+            disabled={loadingAction || !adjustValue}
           >
             {loadingAction ? 'Applying...' : adjustType === 'decrease' ? 'Decrease' : 'Increase'}
           </Button>
@@ -696,8 +742,17 @@ function AdminDashboardPage() {
       )}
 
       {/* News Dialog */}
-      <Dialog open={newsDialogOpen} onClose={() => setNewsDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>{editingNews ? 'Edit News Post' : 'Create News Post'}</DialogTitle>
+      <Dialog 
+        open={newsDialogOpen} 
+        onClose={() => setNewsDialogOpen(false)} 
+        maxWidth="md" 
+        fullWidth
+        disableEnforceFocus={false}
+        disableAutoFocus={false}
+        keepMounted={false}
+        aria-labelledby="news-dialog-title"
+      >
+        <DialogTitle id="news-dialog-title">{editingNews ? 'Edit News Post' : 'Create News Post'}</DialogTitle>
         <DialogContent>
           <TextField
             fullWidth
@@ -767,8 +822,17 @@ function AdminDashboardPage() {
       </Dialog>
 
       {/* Store Info Dialog */}
-      <Dialog open={storeDialogOpen} onClose={() => setStoreDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Edit Store Information</DialogTitle>
+      <Dialog 
+        open={storeDialogOpen} 
+        onClose={() => setStoreDialogOpen(false)} 
+        maxWidth="md" 
+        fullWidth
+        disableEnforceFocus={false}
+        disableAutoFocus={false}
+        keepMounted={false}
+        aria-labelledby="store-info-dialog-title"
+      >
+        <DialogTitle id="store-info-dialog-title">Edit Store Information</DialogTitle>
         <DialogContent>
           <TextField
             fullWidth

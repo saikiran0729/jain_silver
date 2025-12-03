@@ -213,14 +213,29 @@ router.get('/user/:userId', auth, adminAuth, async (req, res) => {
   }
 });
 
-// Admin helper: adjust rates (per-gram amount, can be negative)
+// Admin helper: adjust rates (per-gram amount or percentage, can be negative)
 // This applies a manual adjustment that is added/subtracted from live RB Goldspot rates
 // Uses in-memory storage (no MongoDB for rates)
 router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
   try {
-    const { amount, itemName } = req.body;
+    const { value, adjustmentType, itemName } = req.body;
+    
+    // Support both old format (amount) and new format (value + adjustmentType)
+    let amount = value;
+    let isPercentage = adjustmentType === 'percentage';
+    
+    // Backward compatibility: if 'amount' is provided, use it
+    if (req.body.amount !== undefined && value === undefined) {
+      amount = req.body.amount;
+      isPercentage = false;
+    }
+    
     if (typeof amount !== 'number' || isNaN(amount)) {
-      return res.status(400).json({ message: 'Valid numeric amount is required' });
+      return res.status(400).json({ message: 'Valid numeric value is required' });
+    }
+    
+    if (isPercentage && (amount < -100 || amount > 100)) {
+      return res.status(400).json({ message: 'Percentage must be between -100% and 100%' });
     }
 
     // Get the in-memory manual adjustments from rates.js
@@ -266,29 +281,45 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
         ratesModule.manualAdjustments[rateName] = {};
       }
       
-      // Get current rate for percentage calculation
+      // Get current rate for calculations
       const currentRate = currentRates.find(r => r.name === rateName);
       const originalRatePerGram = currentRate?.ratePerGram || 0;
-      const newRatePerGram = Math.max(0, (originalRatePerGram || 0) + amount);
       
-      // Calculate percentage change
-      const percentageChange = originalRatePerGram > 0 
-        ? ((amount / originalRatePerGram) * 100).toFixed(2)
-        : 0;
+      let adjustmentAmount = 0;
+      let actualPercentageChange = 0;
+      
+      if (isPercentage) {
+        // Calculate amount based on percentage
+        adjustmentAmount = (originalRatePerGram * amount) / 100;
+        actualPercentageChange = amount;
+      } else {
+        // Use amount directly
+        adjustmentAmount = amount;
+        // Calculate percentage change
+        actualPercentageChange = originalRatePerGram > 0 
+          ? ((amount / originalRatePerGram) * 100)
+          : 0;
+      }
+      
+      const newRatePerGram = Math.max(0, originalRatePerGram + adjustmentAmount);
 
-      ratesModule.manualAdjustments[rateName].manualAdjustment = amount;
+      // Store the adjustment amount (not percentage) in manualAdjustments
+      ratesModule.manualAdjustments[rateName].manualAdjustment = adjustmentAmount;
       modified++;
 
       adjustments.push({
         itemName: rateName,
-        amount: amount,
+        amount: adjustmentAmount,
         originalRatePerGram: originalRatePerGram,
         newRatePerGram: newRatePerGram,
-        percentageChange: parseFloat(percentageChange)
+        percentageChange: parseFloat(actualPercentageChange.toFixed(2))
       });
     }
 
-    console.log(`✅ Admin adjusted rates: ${amount > 0 ? '+' : ''}₹${amount}/gram applied to ${modified} rate(s)`);
+    const adjustmentDescription = isPercentage 
+      ? `${amount > 0 ? '+' : ''}${amount}%`
+      : `${amount > 0 ? '+' : ''}₹${amount}/gram`;
+    console.log(`✅ Admin adjusted rates: ${adjustmentDescription} applied to ${modified} rate(s)`);
 
     // Trigger immediate rate update to apply adjustments to MongoDB
     try {
@@ -312,10 +343,19 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       ? (adjustments.reduce((sum, adj) => sum + adj.percentageChange, 0) / adjustments.length).toFixed(2)
       : 0;
 
+    const adjustmentDescription = isPercentage 
+      ? `${amount > 0 ? '+' : ''}${Math.abs(amount)}%`
+      : `₹${Math.abs(amount)}/gram`;
+    
+    const message = isPercentage
+      ? `Rates ${amount > 0 ? 'increased' : 'decreased'} by ${adjustmentDescription}`
+      : `Rates ${amount > 0 ? 'increased' : 'decreased'} by ${adjustmentDescription} (${amount > 0 ? '+' : ''}${avgPercentage}%)`;
+
     res.json({ 
-      message: `Rates ${amount > 0 ? 'increased' : 'decreased'} by ₹${Math.abs(amount)}/gram (${amount > 0 ? '+' : ''}${avgPercentage}%)`,
+      message,
       modifiedCount: modified, 
-      amount,
+      value: amount,
+      adjustmentType: isPercentage ? 'percentage' : 'amount',
       percentageChange: parseFloat(avgPercentage),
       adjustments: adjustments,
       itemName: itemName || 'all',
