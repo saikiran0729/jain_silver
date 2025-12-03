@@ -4,7 +4,7 @@ const API_BASE_URL = 'https://jain-silver-phi.vercel.app/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000, // 10 seconds - backend may wait for fresh rates
+  timeout: 30000, // 30 seconds - increased for admin/store/news endpoints that may need more time
   maxContentLength: 50 * 1024 * 1024,
   maxBodyLength: 50 * 1024 * 1024,
   headers: {
