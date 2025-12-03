@@ -383,7 +383,7 @@ router.post('/register',
         return res.status(400).json({ errors: errors.array() });
       }
 
-      const { name, email, phone, password, aadharNumber, panNumber } = req.body;
+      const { name, surname, lastName, email, phone, password, aadharNumber, panNumber } = req.body;
 
       // Normalize email and phone
       const normalizedEmail = email ? email.toLowerCase().trim() : '';
@@ -419,15 +419,16 @@ router.post('/register',
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
       // Validate file uploads
-      if (!req.files || !req.files.aadharFront || !req.files.aadharBack || !req.files.panImage) {
+      if (!req.files || !req.files.aadharFront || !req.files.aadharBack || !req.files.panImage || !req.files.selfie) {
         console.error('❌ Missing required files:', {
           aadharFront: !!req.files?.aadharFront,
           aadharBack: !!req.files?.aadharBack,
           panImage: !!req.files?.panImage,
+          selfie: !!req.files?.selfie,
           allFiles: req.files ? Object.keys(req.files) : 'No files object'
         });
         return res.status(400).json({ 
-          message: 'All document images are required (Aadhar Front, Aadhar Back, PAN Image)',
+          message: 'All document images are required (Aadhar Front, Aadhar Back, PAN Image, Selfie)',
           received: req.files ? Object.keys(req.files) : []
         });
       }
@@ -440,6 +441,7 @@ router.post('/register',
         const aadharFrontFile = Array.isArray(req.files.aadharFront) ? req.files.aadharFront[0] : req.files.aadharFront;
         const aadharBackFile = Array.isArray(req.files.aadharBack) ? req.files.aadharBack[0] : req.files.aadharBack;
         const panImageFile = Array.isArray(req.files.panImage) ? req.files.panImage[0] : req.files.panImage;
+        const selfieFile = Array.isArray(req.files.selfie) ? req.files.selfie[0] : req.files.selfie;
 
         console.log('📄 Processing file locations:', {
           aadharFront: {
@@ -476,12 +478,14 @@ router.post('/register',
         const aadharFrontUrl = getDocumentUrl(aadharFrontFile);
         const aadharBackUrl = getDocumentUrl(aadharBackFile);
         const panImageUrl = getDocumentUrl(panImageFile);
+        const selfieUrl = getDocumentUrl(selfieFile);
 
-        if (!aadharFrontUrl || !aadharBackUrl || !panImageUrl) {
+        if (!aadharFrontUrl || !aadharBackUrl || !panImageUrl || !selfieUrl) {
           console.error('❌ Missing document URLs after upload:', {
             aadharFront: !!aadharFrontUrl,
             aadharBack: !!aadharBackUrl,
-            panImage: !!panImageUrl
+            panImage: !!panImageUrl,
+            selfie: !!selfieUrl
           });
           return res.status(500).json({ 
             message: 'Failed to process document uploads', 
@@ -498,13 +502,15 @@ router.post('/register',
           pan: {
             image: panImageUrl,
             number: panNumber.trim().toUpperCase()
-          }
+          },
+          selfie: selfieUrl
         };
 
         console.log('✅ Document URLs prepared:', {
           aadharFront: documents.aadhar.front ? 'Set' : 'Missing',
           aadharBack: documents.aadhar.back ? 'Set' : 'Missing',
-          panImage: documents.pan.image ? 'Set' : 'Missing'
+          panImage: documents.pan.image ? 'Set' : 'Missing',
+          selfie: documents.selfie ? 'Set' : 'Missing'
         });
       } catch (docError) {
         console.error('❌ Error processing document URLs:', docError);
@@ -518,7 +524,9 @@ router.post('/register',
       // Create user - will be saved in 'users' collection (Mongoose auto-pluralizes 'User' -> 'users')
       console.log('👤 Creating user in MongoDB (collection: users)...');
       const user = new User({
-        name: name.trim(),
+        name: name ? name.trim() : ((surname || '') + ' ' + (lastName || '')).trim() || 'User',
+        surname: surname ? surname.trim() : '',
+        lastName: lastName ? lastName.trim() : '',
         email: normalizedEmail,
         phone: normalizedPhone,
         password,

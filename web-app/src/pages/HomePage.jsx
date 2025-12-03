@@ -9,14 +9,19 @@ import {
   Alert,
   Grid,
   Avatar,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
 } from '@mui/material';
 import { TrendingUp, TrendingDown, Remove } from '@mui/icons-material';
 import { AuthContext } from '../context/AuthContext';
 import api from '../config/api';
 import axios from 'axios';
 import colors from '../theme/colors';
-import PromotionalBanner from '../components/PromotionalBanner';
-import SidePromotionalBanner from '../components/SidePromotionalBanner';
 
 const POLLING_INTERVAL = 1000;
 
@@ -293,27 +298,20 @@ function HomePage() {
   }
 
   return (
-    <Box sx={{ p: 3, maxWidth: 1400, mx: 'auto' }}>
-      <PromotionalBanner />
-      
-      <Box sx={{ mb: 3 }}>
+    <Box sx={{ p: 2, maxWidth: 1200, mx: 'auto', height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
+      <Box sx={{ mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography
-          variant="h4"
+          variant="h5"
           sx={{
             fontWeight: 700,
-            fontSize: 28,
-            mb: 1,
+            fontSize: 20,
             color: '#000000',
-            fontFamily: 'serif',
           }}
         >
-          Silver Rates (Live)
-        </Typography>
-        <Typography variant="body2" sx={{ color: colors.textSecondary }}>
-          Andhra Pradesh Market • Updates every second
+          Live Rates
         </Typography>
         {lastUpdateTime && (
-          <Typography variant="caption" sx={{ color: colors.primary }}>
+          <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.75rem' }}>
             Last update: {lastUpdateTime.toLocaleTimeString()}
           </Typography>
         )}
@@ -322,9 +320,15 @@ function HomePage() {
       {rates.length === 0 ? (
         <Alert severity="info">No rates available</Alert>
       ) : (
-        <Grid container spacing={2}>
-          <Grid item xs={12} lg={9}>
-            <Grid container spacing={2}>
+        <TableContainer component={Paper} sx={{ boxShadow: 2, flex: 1, overflow: 'hidden' }}>
+          <Table sx={{ minWidth: 650 }} size="small" stickyHeader>
+            <TableHead>
+              <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
+                <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', py: 1 }}>Product</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700, fontSize: '0.85rem', py: 1 }}>Sell Price</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
               {rates.map((rate) => {
                 const rateKey = rate._id?.toString() || `${rate.name}-${rate.weight?.value}`;
                 const prevRate = previousRates[rateKey];
@@ -333,146 +337,85 @@ function HomePage() {
                 const iconType = getTypeIcon(rate.type, rate.name);
 
                 return (
-                  <Grid item xs={12} sm={6} md={4} key={rate._id || rateKey}>
-                    <Card
-                      sx={{
-                        borderRadius: 2,
-                        borderLeft: `4px solid ${colors.primary}`,
-                        backgroundColor: prevRate
-                          ? prevRate.isUp
-                            ? '#E8F5E9'
-                            : '#FFEBEE'
-                          : 'white',
-                        transition: 'all 0.3s ease',
-                        height: '100%',
-                        display: 'flex',
-                        flexDirection: 'column',
-                      }}
-                    >
-                      <CardContent>
-                        <Box sx={{ display: 'flex', alignItems: 'flex-start', mb: 2 }}>
-                          {productImage ? (
-                            <Box
-                              component="img"
-                              src={productImage}
-                              alt={rate.name}
-                              sx={{
-                                width: 56,
-                                height: 56,
-                                mr: 2,
-                                flexShrink: 0,
-                                borderRadius: 2,
-                                objectFit: 'cover',
-                                backgroundColor: colors.primaryVeryLight,
-                                border: `1px solid ${colors.border}`,
-                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                              }}
-                              onError={(e) => {
-                                e.target.style.display = 'none';
-                              }}
-                            />
-                          ) : (
-                            <Avatar
-                              sx={{
-                                width: 56,
-                                height: 56,
-                                mr: 2,
-                                flexShrink: 0,
-                                backgroundColor: colors.primaryVeryLight,
-                                fontSize: 24,
-                              }}
-                            >
-                              {iconType}
-                            </Avatar>
-                          )}
-                          <Box sx={{ flex: 1, minWidth: 0 }}>
-                            <Typography variant="h6" sx={{ fontWeight: 600, mb: 1, fontSize: '1rem' }}>
-                              {rate.name}
-                            </Typography>
-                            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
-                              <Chip
-                                label={rate.purity}
-                                size="small"
-                                sx={{
-                                  backgroundColor: colors.primaryVeryLight,
-                                  color: colors.primaryDark,
-                                  fontWeight: 700,
-                                  fontSize: '0.7rem',
-                                }}
-                              />
-                              <Typography variant="body2" sx={{ color: colors.textSecondary, fontSize: '0.75rem' }}>
-                                {formatWeight(rate.weight)}
-                              </Typography>
-                            </Box>
-                          </Box>
-                        </Box>
-                        <Box
-                          sx={{
-                            backgroundColor: colors.primaryVeryLight,
-                            p: 2,
-                            borderRadius: 2,
-                            textAlign: 'right',
-                          }}
-                        >
-                          <Typography
-                            variant="h5"
+                  <TableRow
+                    key={rate._id || rateKey}
+                    sx={{
+                      '&:hover': { backgroundColor: '#fafafa' },
+                      backgroundColor: prevRate
+                        ? prevRate.isUp
+                          ? '#E8F5E9'
+                          : '#FFEBEE'
+                        : 'white',
+                    }}
+                  >
+                    <TableCell sx={{ py: 0.75 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        {productImage ? (
+                          <Box
+                            component="img"
+                            src={productImage}
+                            alt={rate.name}
                             sx={{
-                              fontWeight: 600,
-                              color: rateColor,
-                              mb: 0.5,
-                              fontSize: '1.5rem',
+                              width: 40,
+                              height: 40,
+                              borderRadius: 0.5,
+                              objectFit: 'cover',
+                              border: `1px solid ${colors.border}`,
+                            }}
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <Avatar
+                            sx={{
+                              width: 40,
+                              height: 40,
+                              backgroundColor: colors.primaryVeryLight,
+                              fontSize: 16,
                             }}
                           >
-                            {formatPrice(rate.rate)}
+                            {iconType}
+                          </Avatar>
+                        )}
+                        <Box>
+                          <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', lineHeight: 1.2 }}>
+                            {rate.name}
                           </Typography>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              color: rateColor,
-                              fontWeight: 500,
-                            }}
-                          >
-                            ₹{rate.ratePerGram?.toFixed(2)}/gram
-                          </Typography>
-                          {prevRate && (
-                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', mt: 1 }}>
-                              {prevRate.isUp ? (
-                                <TrendingUp sx={{ color: colors.success, fontSize: 20 }} />
-                              ) : (
-                                <TrendingDown sx={{ color: colors.error, fontSize: 20 }} />
-                              )}
-                              <Typography
-                                variant="caption"
-                                sx={{
-                                  color: rateColor,
-                                  ml: 0.5,
-                                  fontWeight: 600,
-                                }}
-                              >
-                                ₹{Math.abs(prevRate.newRate - prevRate.oldRate).toFixed(2)}
-                              </Typography>
-                            </Box>
-                          )}
-                        </Box>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
-                          <Typography variant="caption" sx={{ color: colors.textSecondary }}>
-                            Updated: {new Date(rate.lastUpdated).toLocaleTimeString()}
-                          </Typography>
-                          <Typography variant="caption" sx={{ color: colors.textSecondary }}>
-                            {rate.location || 'Andhra Pradesh'}
+                          <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.7rem' }}>
+                            {rate.purity} • {formatWeight(rate.weight)}
                           </Typography>
                         </Box>
-                      </CardContent>
-                    </Card>
-                  </Grid>
+                      </Box>
+                    </TableCell>
+                    <TableCell align="right" sx={{ py: 0.75 }}>
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontWeight: 700,
+                          color: rateColor || '#d32f2f',
+                          fontSize: '0.95rem',
+                        }}
+                      >
+                        {formatPrice(rate.rate)}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          color: colors.textSecondary,
+                          fontSize: '0.7rem',
+                          display: 'block',
+                        }}
+                      >
+                        ₹{rate.ratePerGram?.toFixed(2)}/gram
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </Grid>
-          </Grid>
-          <Grid item xs={12} lg={3}>
-            <SidePromotionalBanner />
-          </Grid>
-        </Grid>
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
     </Box>
   );

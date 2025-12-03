@@ -9,6 +9,7 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import HomePage from './pages/HomePage';
 import ProfilePage from './pages/ProfilePage';
 import NewsPage from './pages/NewsPage';
+import AboutPage from './pages/AboutPage';
 import AdminLoginPage from './pages/AdminLoginPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import UserDocumentsPage from './pages/UserDocumentsPage';
@@ -45,6 +46,7 @@ function App() {
             <Route path="/" element={<Layout />}>
               <Route index element={<HomePage />} />
               <Route path="news" element={<NewsPage />} />
+              <Route path="about" element={<AboutPage />} />
               <Route path="profile" element={<ProfilePage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

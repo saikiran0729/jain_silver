@@ -54,13 +54,13 @@ storeInfoSchema.statics.getStoreInfo = async function() {
     // Create default store info
     storeInfo = new this({
       storeTimings: [
-        { day: 'Monday', openTime: '09:00 AM', closeTime: '08:00 PM', isClosed: false },
-        { day: 'Tuesday', openTime: '09:00 AM', closeTime: '08:00 PM', isClosed: false },
-        { day: 'Wednesday', openTime: '09:00 AM', closeTime: '08:00 PM', isClosed: false },
-        { day: 'Thursday', openTime: '09:00 AM', closeTime: '08:00 PM', isClosed: false },
-        { day: 'Friday', openTime: '09:00 AM', closeTime: '08:00 PM', isClosed: false },
-        { day: 'Saturday', openTime: '09:00 AM', closeTime: '08:00 PM', isClosed: false },
-        { day: 'Sunday', openTime: '10:00 AM', closeTime: '06:00 PM', isClosed: false },
+        { day: 'Monday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
+        { day: 'Tuesday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
+        { day: 'Wednesday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
+        { day: 'Thursday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
+        { day: 'Friday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
+        { day: 'Saturday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
+        { day: 'Sunday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: true },
       ],
       bankDetails: [
         {

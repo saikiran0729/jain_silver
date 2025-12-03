@@ -285,7 +285,8 @@ app.get('/', (req, res) => {
       users: '/api/users',
       admin: '/api/admin',
       rates: '/api/rates',
-      store: '/api/store'
+      store: '/api/store',
+      news: '/api/news'
     }
   });
 });
@@ -318,7 +319,7 @@ const loadRoute = (routePath, routeName) => {
 };
 
 // Load all routes - use route name for both path and name
-const routeNames = ['auth', 'users', 'admin', 'rates', 'store'];
+const routeNames = ['auth', 'users', 'admin', 'rates', 'store', 'news'];
 routeNames.forEach(routeName => {
   const loaded = loadRoute(routeName, routeName);
   if (!loaded) {

@@ -218,14 +218,26 @@ router.get('/user/:userId', auth, adminAuth, async (req, res) => {
 // Uses in-memory storage (no MongoDB for rates)
 router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
   try {
-    const { amount } = req.body;
+    const { amount, itemName } = req.body;
     if (typeof amount !== 'number' || isNaN(amount)) {
       return res.status(400).json({ message: 'Valid numeric amount is required' });
     }
 
     // Get the in-memory manual adjustments from rates.js
-    // We'll access it via a shared module or require the rates router
-    // For now, we'll use a simple approach: store in a shared location
+    const ratesModule = require('./rates');
+    if (!ratesModule.manualAdjustments) {
+      ratesModule.manualAdjustments = {};
+    }
+
+    // Get current rates to calculate percentage
+    const SilverRate = require('../models/SilverRate');
+    let currentRates = [];
+    try {
+      currentRates = await SilverRate.find({ location: 'Andhra Pradesh' });
+    } catch (err) {
+      console.warn('Could not fetch current rates for percentage calculation:', err.message);
+    }
+
     const rateDefinitions = [
       'Silver Coin 1 Gram',
       'Silver Coin 5 Grams',
@@ -239,29 +251,49 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       'Silver Jewelry 99.9%'
     ];
 
-    // Access the manual adjustments from rates.js module
-    // We need to export it from rates.js and import it here
-    const ratesModule = require('./rates');
-    if (!ratesModule.manualAdjustments) {
-      ratesModule.manualAdjustments = {};
-    }
-
     let modified = 0;
-    for (const rateName of rateDefinitions) {
+    const adjustments = [];
+
+    // If itemName is provided, adjust only that item; otherwise adjust all
+    const itemsToAdjust = itemName ? [itemName] : rateDefinitions;
+
+    for (const rateName of itemsToAdjust) {
+      if (!rateDefinitions.includes(rateName)) {
+        continue; // Skip invalid item names
+      }
+
       if (!ratesModule.manualAdjustments[rateName]) {
         ratesModule.manualAdjustments[rateName] = {};
       }
+      
+      // Get current rate for percentage calculation
+      const currentRate = currentRates.find(r => r.name === rateName);
+      const originalRatePerGram = currentRate?.ratePerGram || 0;
+      const newRatePerGram = Math.max(0, (originalRatePerGram || 0) + amount);
+      
+      // Calculate percentage change
+      const percentageChange = originalRatePerGram > 0 
+        ? ((amount / originalRatePerGram) * 100).toFixed(2)
+        : 0;
+
       ratesModule.manualAdjustments[rateName].manualAdjustment = amount;
       modified++;
+
+      adjustments.push({
+        itemName: rateName,
+        amount: amount,
+        originalRatePerGram: originalRatePerGram,
+        newRatePerGram: newRatePerGram,
+        percentageChange: parseFloat(percentageChange)
+      });
     }
 
-    console.log(`✅ Admin adjusted rates: ${amount > 0 ? '+' : ''}₹${amount}/gram applied to ${modified} rates`);
+    console.log(`✅ Admin adjusted rates: ${amount > 0 ? '+' : ''}₹${amount}/gram applied to ${modified} rate(s)`);
 
     // Trigger immediate rate update to apply adjustments to MongoDB
     try {
       const updateRatesHandler = require('./rates').updateRatesHandler || null;
       if (updateRatesHandler) {
-        // Call update handler without waiting (non-blocking) to update MongoDB with adjustments
         updateRatesHandler(req, null).catch(err => {
           console.error('⚠️ Failed to trigger rate update after adjustment:', err.message);
         });
@@ -273,12 +305,20 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
 
     // Emit socket event for clients
     const io = req.app.get('io');
-    if (io) io.emit('manualAdjustment', { amount });
+    if (io) io.emit('manualAdjustment', { amount, itemName });
+
+    // Calculate average percentage if multiple items
+    const avgPercentage = adjustments.length > 0
+      ? (adjustments.reduce((sum, adj) => sum + adj.percentageChange, 0) / adjustments.length).toFixed(2)
+      : 0;
 
     res.json({ 
-      message: `Rates ${amount > 0 ? 'increased' : 'decreased'} by ₹${Math.abs(amount)}/gram`,
+      message: `Rates ${amount > 0 ? 'increased' : 'decreased'} by ₹${Math.abs(amount)}/gram (${amount > 0 ? '+' : ''}${avgPercentage}%)`,
       modifiedCount: modified, 
       amount,
+      percentageChange: parseFloat(avgPercentage),
+      adjustments: adjustments,
+      itemName: itemName || 'all',
       note: 'Adjustment applied and rates are being updated in the database'
     });
   } catch (error) {

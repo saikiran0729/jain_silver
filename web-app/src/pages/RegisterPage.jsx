@@ -15,7 +15,8 @@ import colors from '../theme/colors';
 function RegisterPage() {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
-    name: '',
+    surname: '',
+    lastName: '',
     email: '',
     phone: '',
     password: '',
@@ -27,6 +28,7 @@ function RegisterPage() {
     aadharFront: null,
     aadharBack: null,
     panImage: null,
+    selfie: null,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -36,7 +38,7 @@ function RegisterPage() {
   };
 
   const handleRegister = async () => {
-    if (!formData.name || !formData.email || !formData.phone || !formData.password) {
+    if (!formData.surname || !formData.lastName || !formData.email || !formData.phone || !formData.password) {
       setError('Please fill all required fields');
       return;
     }
@@ -46,8 +48,8 @@ function RegisterPage() {
       return;
     }
 
-    if (!files.aadharFront || !files.aadharBack || !files.panImage) {
-      setError('Please upload all required documents');
+    if (!files.aadharFront || !files.aadharBack || !files.panImage || !files.selfie) {
+      setError('Please upload all required documents including selfie');
       return;
     }
 
@@ -56,7 +58,9 @@ function RegisterPage() {
 
     try {
       const data = new FormData();
-      data.append('name', formData.name.trim());
+      data.append('surname', formData.surname.trim());
+      data.append('lastName', formData.lastName.trim());
+      data.append('name', (formData.surname.trim() + ' ' + formData.lastName.trim()).trim());
       data.append('email', formData.email.toLowerCase().trim());
       data.append('phone', formData.phone.trim());
       data.append('password', formData.password);
@@ -65,6 +69,7 @@ function RegisterPage() {
       data.append('aadharFront', files.aadharFront);
       data.append('aadharBack', files.aadharBack);
       data.append('panImage', files.panImage);
+      data.append('selfie', files.selfie);
 
       const response = await fetch(api.defaults.baseURL + '/auth/register', {
         method: 'POST',
@@ -97,7 +102,8 @@ function RegisterPage() {
             Register
           </Typography>
           {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-          <TextField fullWidth label="Full Name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} margin="normal" />
+          <TextField fullWidth label="Surname" value={formData.surname} onChange={(e) => setFormData({ ...formData, surname: e.target.value })} margin="normal" />
+          <TextField fullWidth label="Last Name" value={formData.lastName} onChange={(e) => setFormData({ ...formData, lastName: e.target.value })} margin="normal" />
           <TextField fullWidth label="Email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} margin="normal" />
           <TextField fullWidth label="Phone" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} margin="normal" />
           <TextField fullWidth label="Password" type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} margin="normal" />
@@ -115,6 +121,10 @@ function RegisterPage() {
           <Button variant="outlined" component="label" fullWidth sx={{ mt: 1 }}>
             Upload PAN Image
             <input type="file" hidden accept="image/*" onChange={(e) => handleFileChange('panImage', e)} />
+          </Button>
+          <Button variant="outlined" component="label" fullWidth sx={{ mt: 1 }}>
+            {files.selfie ? 'Selfie Uploaded ✓' : 'Upload Selfie'}
+            <input type="file" hidden accept="image/*" capture="user" onChange={(e) => handleFileChange('selfie', e)} />
           </Button>
           <Button fullWidth variant="contained" onClick={handleRegister} disabled={loading} sx={{ mt: 3 }}>
             {loading ? 'Registering...' : 'Register'}
