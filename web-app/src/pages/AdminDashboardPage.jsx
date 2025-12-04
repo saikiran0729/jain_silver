@@ -42,10 +42,42 @@ function AdminDashboardPage() {
   const fetchRates = async () => {
     try {
       setLoadingRates(true);
+      console.log('📡 Fetching rates from /rates endpoint...');
       const response = await api.get('/rates');
+      console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
       setRates(response.data || []);
     } catch (error) {
-      console.error('Error fetching rates:', error);
+      console.error('❌ Error fetching rates:', error);
+      console.error('Error message:', error.message);
+      console.error('Error code:', error.code);
+      console.error('Error response status:', error.response?.status);
+      console.error('Error response statusText:', error.response?.statusText);
+      console.error('Error response data:', JSON.stringify(error.response?.data, null, 2));
+      console.error('Error config URL:', error.config?.url);
+      console.error('Error config baseURL:', error.config?.baseURL);
+      
+      const errorMsg = error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to fetch rates';
+      
+      // Handle different error types
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        console.warn('⏱️ Request timeout - rates endpoint may be slow');
+        alert('Request timeout. The rates endpoint may be slow. Please try again.');
+      } else if (!error.response) {
+        console.warn('🌐 Network error - check if server is running');
+        alert(`Network error: ${error.message}. Please check your internet connection and try again.`);
+      } else if (error.response?.status === 503) {
+        console.warn('⚠️ Service temporarily unavailable - rate update in progress');
+        alert('Rates are being updated. Please wait a moment and try again.');
+      } else if (error.response?.status === 500) {
+        console.warn('⚠️ Server error');
+        alert(`Server error: ${errorMsg}. Please try again later.`);
+      } else {
+        console.warn(`⚠️ Failed to fetch rates: ${errorMsg}`);
+        alert(`Failed to fetch rates: ${errorMsg}`);
+      }
+      
+      // Set empty array on error to prevent UI issues
+      setRates([]);
     } finally {
       setLoadingRates(false);
     }
@@ -63,33 +95,91 @@ function AdminDashboardPage() {
         return;
       }
       
+      console.log('🔍 Starting to fetch users...');
+      console.log('Token exists:', !!token);
+      console.log('API base URL:', api.defaults.baseURL);
+      console.log('Full URL will be:', `${api.defaults.baseURL}/admin/pending-users`);
+      
       try {
+        console.log('📡 Making request to /admin/pending-users...');
         const pendingResponse = await api.get('/admin/pending-users');
-        setPendingUsers(pendingResponse.data || []);
+        console.log('✅ Response received:', {
+          status: pendingResponse.status,
+          statusText: pendingResponse.statusText,
+          dataType: typeof pendingResponse.data,
+          isArray: Array.isArray(pendingResponse.data),
+          dataLength: Array.isArray(pendingResponse.data) ? pendingResponse.data.length : 'N/A'
+        });
+        // Backend returns array directly, not wrapped in data property
+        const users = Array.isArray(pendingResponse.data) ? pendingResponse.data : (pendingResponse.data?.users || []);
+        console.log('✅ Pending users fetched successfully:', users.length);
+        setPendingUsers(users);
       } catch (pendingError) {
-        console.error('Error fetching pending users:', pendingError);
+        console.error('❌ Error fetching pending users:', pendingError);
+        console.error('Error message:', pendingError.message);
+        console.error('Error code:', pendingError.code);
+        console.error('Error response status:', pendingError.response?.status);
+        console.error('Error response statusText:', pendingError.response?.statusText);
+        console.error('Error response data:', JSON.stringify(pendingError.response?.data, null, 2));
+        console.error('Error config URL:', pendingError.config?.url);
+        console.error('Error config baseURL:', pendingError.config?.baseURL);
+        
         const errorMsg = pendingError.response?.data?.message || pendingError.message || 'Failed to fetch pending users';
+        
         if (pendingError.response?.status === 401 || pendingError.response?.status === 403) {
           alert(`Authentication error: ${errorMsg}. Please sign in again.`);
           navigate('/admin/login');
           return;
         }
-        alert(`Failed to fetch pending users: ${errorMsg}`);
+        
+        // Show detailed error message
+        if (pendingError.code === 'ECONNABORTED' || pendingError.message?.includes('timeout')) {
+          console.warn('⏱️ Request timeout - server may be slow or unavailable');
+          alert('Request timeout. The server may be slow. Please try again.');
+        } else if (!pendingError.response) {
+          console.warn('🌐 Network error - check if server is running');
+          alert(`Network error: ${pendingError.message}. Please check your internet connection and try again.`);
+        } else {
+          console.warn(`⚠️ Failed to fetch pending users: ${errorMsg}`);
+          alert(`Failed to fetch pending users: ${errorMsg}`);
+        }
         setPendingUsers([]);
       }
       
       // Try to fetch all users
       try {
+        console.log('📡 Making request to /admin/users...');
         const allResponse = await api.get('/admin/users');
-        setAllUsers(allResponse.data || []);
+        console.log('✅ Response received:', {
+          status: allResponse.status,
+          statusText: allResponse.statusText,
+          dataType: typeof allResponse.data,
+          isArray: Array.isArray(allResponse.data),
+          dataLength: Array.isArray(allResponse.data) ? allResponse.data.length : 'N/A'
+        });
+        // Backend returns array directly, not wrapped in data property
+        const users = Array.isArray(allResponse.data) ? allResponse.data : (allResponse.data?.users || []);
+        console.log('✅ All users fetched successfully:', users.length);
+        setAllUsers(users);
       } catch (allUsersError) {
-        console.error('Error fetching all users:', allUsersError);
+        console.error('❌ Error fetching all users:', allUsersError);
+        console.error('Error message:', allUsersError.message);
+        console.error('Error code:', allUsersError.code);
+        console.error('Error response status:', allUsersError.response?.status);
+        console.error('Error response statusText:', allUsersError.response?.statusText);
+        console.error('Error response data:', JSON.stringify(allUsersError.response?.data, null, 2));
+        console.error('Error config URL:', allUsersError.config?.url);
+        console.error('Error config baseURL:', allUsersError.config?.baseURL);
+        
         const errorMsg = allUsersError.response?.data?.message || allUsersError.message || 'Failed to fetch all users';
+        
         if (allUsersError.response?.status === 401 || allUsersError.response?.status === 403) {
           // Already handled above, just use pending users
+          console.warn('⚠️ Authentication error for all users, using pending users only');
           setAllUsers(pendingUsers);
         } else {
-          console.warn('All users endpoint not available, using pending users only');
+          // Don't show alert, just use pending users as fallback
+          console.warn('⚠️ All users endpoint not available, using pending users only');
           setAllUsers(pendingUsers);
         }
       }
