@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Box, Card, CardContent, Typography, Button, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Chip, Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Tabs, Tab, CircularProgress, MenuItem, Select, FormControl, InputLabel, Grid, IconButton, TextareaAutosize } from '@mui/material';
-import { Logout, CheckCircle, Cancel, Visibility, Remove, Add, Edit, Delete, Add as AddIcon, Newspaper, Person, Store } from '@mui/icons-material';
+import { Logout, CheckCircle, Cancel, Visibility, Remove, Add, Edit, Delete, Add as AddIcon, Newspaper, Person, Store, RestartAlt } from '@mui/icons-material';
 import { AuthContext } from '../context/AuthContext';
 import api from '../config/api';
 import colors from '../theme/colors';
@@ -31,6 +31,7 @@ function AdminDashboardPage() {
   const [loadingStore, setLoadingStore] = useState(false);
   const [storeDialogOpen, setStoreDialogOpen] = useState(false);
   const [storeForm, setStoreForm] = useState({});
+  const [showOriginalRates, setShowOriginalRates] = useState(false); // Toggle to show original rates without adjustments
 
   useEffect(() => {
     fetchUsers();
@@ -418,7 +419,7 @@ function AdminDashboardPage() {
           <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
             Adjust silver rates per gram. Enter positive amount to increase or decrease rates.
           </Typography>
-          <Box sx={{ display: 'flex', gap: 2 }}>
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2 }}>
             <Button
               variant="contained"
               color="error"
@@ -449,6 +450,19 @@ function AdminDashboardPage() {
             >
               Increase Rates
             </Button>
+            <Box sx={{ ml: 'auto' }}>
+              <Button
+                size="small"
+                variant={showOriginalRates ? "contained" : "outlined"}
+                {...(showOriginalRates ? { color: "primary" } : {})}
+                startIcon={<RestartAlt />}
+                onClick={() => setShowOriginalRates(!showOriginalRates)}
+                disabled={loadingAction}
+                sx={{ minWidth: 150 }}
+              >
+                {showOriginalRates ? 'Show Adjusted' : 'Show As It Is'}
+              </Button>
+            </Box>
           </Box>
         </CardContent>
       </Card>
@@ -472,9 +486,18 @@ function AdminDashboardPage() {
                 <TableHead>
                   <TableRow>
                     <TableCell sx={{ fontWeight: 700 }}>Product</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700 }}>Normal Price</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700 }}>Adjusted Price</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700 }}>Adjustment</TableCell>
+                    {showOriginalRates ? (
+                      <>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>Original Price</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>Price per Gram</TableCell>
+                      </>
+                    ) : (
+                      <>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>Normal Price</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>Adjusted Price</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>Adjustment</TableCell>
+                      </>
+                    )}
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -483,7 +506,42 @@ function AdminDashboardPage() {
                     const normalPrice = rate.originalRate || rate.rate;
                     const adjustedPrice = rate.rate;
                     const adjustment = rate.manualAdjustment || 0;
+                    const originalRatePerGram = rate.originalRatePerGram || (rate.ratePerGram - adjustment);
                     
+                    // When showing "as it is", display original rates without adjustments
+                    if (showOriginalRates) {
+                      // Calculate original total price: subtract adjustment from current rate
+                      let weightInGrams = rate.weight?.value || 1;
+                      if (rate.weight?.unit === 'kg') {
+                        weightInGrams = weightInGrams * 1000;
+                      }
+                      const originalTotalPrice = rate.originalRate || (adjustedPrice - (adjustment * weightInGrams));
+                      
+                      return (
+                        <TableRow key={rate._id || rate.name}>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                              {rate.name}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: colors.textSecondary }}>
+                              {rate.purity} • {rate.weight?.value} {rate.weight?.unit}
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography variant="body2" sx={{ fontWeight: 600, color: colors.textPrimary }}>
+                              ₹{originalTotalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography variant="body2" sx={{ fontWeight: 600, color: colors.textPrimary }}>
+                              ₹{originalRatePerGram.toFixed(2)}/gram
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
+                    
+                    // Default view: show both normal and adjusted prices
                     return (
                       <TableRow key={rate._id || rate.name}>
                         <TableCell>
@@ -499,7 +557,7 @@ function AdminDashboardPage() {
                             ₹{normalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </Typography>
                           <Typography variant="caption" sx={{ color: colors.textSecondary, display: 'block' }}>
-                            ₹{rate.originalRatePerGram?.toFixed(2) || rate.ratePerGram.toFixed(2)}/gram
+                            ₹{originalRatePerGram.toFixed(2)}/gram
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
