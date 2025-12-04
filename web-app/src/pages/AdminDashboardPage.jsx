@@ -503,20 +503,50 @@ function AdminDashboardPage() {
                 <TableBody>
                   {rates.map((rate) => {
                     const hasAdjustment = rate.manualAdjustment && rate.manualAdjustment !== 0;
-                    const normalPrice = rate.originalRate || rate.rate;
-                    const adjustedPrice = rate.rate;
                     const adjustment = rate.manualAdjustment || 0;
-                    const originalRatePerGram = rate.originalRatePerGram || (rate.ratePerGram - adjustment);
+                    
+                    // Calculate weight in grams
+                    let weightInGrams = rate.weight?.value || 1;
+                    if (rate.weight?.unit === 'kg') {
+                      weightInGrams = weightInGrams * 1000;
+                    }
+                    
+                    // Calculate original rate from RB Gold by subtracting manual adjustment
+                    // IMPORTANT: Always calculate original from current rate - adjustment
+                    // The backend may store incorrect originalRatePerGram, so we calculate it ourselves
+                    // Original Rate = Current Rate - Manual Adjustment
+                    // This gives us the true original price from the source (RB Gold) without any adjustments
+                    const currentRatePerGram = rate.ratePerGram || 0;
+                    const currentTotalRate = rate.rate || 0;
+                    
+                    // Calculate true original rate from RB Gold (before any adjustments)
+                    // Formula: Original = Current - Adjustment
+                    // Example: If original was ₹184, decreased by 50% (-₹92), current is ₹92
+                    // Then: Original = ₹92 - (-₹92) = ₹184 ✓
+                    let originalRatePerGram = currentRatePerGram - adjustment;
+                    
+                    // Debug logging (remove in production)
+                    if (showOriginalRates && hasAdjustment) {
+                      console.log(`[${rate.name}] Current: ₹${currentRatePerGram}, Adjustment: ₹${adjustment}, Calculated Original: ₹${originalRatePerGram}`);
+                    }
+                    
+                    // Safety check: If calculated original is negative or zero, try using stored originalRatePerGram
+                    // But only if it makes sense (stored value should be higher than current if adjustment is negative)
+                    if (originalRatePerGram <= 0 && rate.originalRatePerGram && rate.originalRatePerGram > currentRatePerGram) {
+                      console.log(`[${rate.name}] Using stored originalRatePerGram: ₹${rate.originalRatePerGram}`);
+                      originalRatePerGram = rate.originalRatePerGram;
+                    }
+                    
+                    // Ensure original rate is never negative
+                    originalRatePerGram = Math.max(0, originalRatePerGram);
+                    const originalTotalPrice = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
+                    
+                    // Adjusted price (current rate, may be 0 if adjustment makes it negative)
+                    const adjustedPrice = currentTotalRate;
+                    const adjustedRatePerGram = currentRatePerGram;
                     
                     // When showing "as it is", display original rates without adjustments
                     if (showOriginalRates) {
-                      // Calculate original total price: subtract adjustment from current rate
-                      let weightInGrams = rate.weight?.value || 1;
-                      if (rate.weight?.unit === 'kg') {
-                        weightInGrams = weightInGrams * 1000;
-                      }
-                      const originalTotalPrice = rate.originalRate || (adjustedPrice - (adjustment * weightInGrams));
-                      
                       return (
                         <TableRow key={rate._id || rate.name}>
                           <TableCell>
@@ -554,7 +584,7 @@ function AdminDashboardPage() {
                         </TableCell>
                         <TableCell align="right">
                           <Typography variant="body2" sx={{ color: colors.textSecondary }}>
-                            ₹{normalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            ₹{originalTotalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </Typography>
                           <Typography variant="caption" sx={{ color: colors.textSecondary, display: 'block' }}>
                             ₹{originalRatePerGram.toFixed(2)}/gram
@@ -565,13 +595,13 @@ function AdminDashboardPage() {
                             variant="body2" 
                             sx={{ 
                               fontWeight: hasAdjustment ? 600 : 400,
-                              color: hasAdjustment ? (adjustment > 0 ? colors.success : colors.error) : colors.textPrimary
+                              color: adjustedPrice === 0 ? colors.error : (hasAdjustment ? (adjustment > 0 ? colors.success : colors.error) : colors.textPrimary)
                             }}
                           >
                             ₹{adjustedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </Typography>
-                          <Typography variant="caption" sx={{ color: colors.textSecondary, display: 'block' }}>
-                            ₹{rate.ratePerGram.toFixed(2)}/gram
+                          <Typography variant="caption" sx={{ color: adjustedPrice === 0 ? colors.error : colors.textSecondary, display: 'block' }}>
+                            ₹{adjustedRatePerGram.toFixed(2)}/gram
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
