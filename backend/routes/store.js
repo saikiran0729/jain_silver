@@ -231,8 +231,20 @@ router.get('/info', async (req, res) => {
         }
       }
       
-      // Merge with defaults to ensure all fields exist
-      const mergedInfo = { ...defaultStoreInfo, ...storeInfo };
+      // Convert to plain object if needed
+      const storeInfoObj = storeInfo.toObject ? storeInfo.toObject() : storeInfo;
+      
+      // Merge with defaults, but prioritize database values (database values come last in spread)
+      // This ensures that if database has empty arrays, they are used instead of defaults
+      const mergedInfo = { 
+        ...defaultStoreInfo, 
+        ...storeInfoObj,
+        // Explicitly set arrays from database if they exist (even if empty)
+        storeTimings: storeInfoObj.storeTimings !== undefined ? storeInfoObj.storeTimings : defaultStoreInfo.storeTimings,
+        bankDetails: storeInfoObj.bankDetails !== undefined ? storeInfoObj.bankDetails : defaultStoreInfo.bankDetails
+      };
+      
+      console.log('📖 Returning store info:', JSON.stringify(mergedInfo, null, 2));
       res.json(mergedInfo);
     } catch (dbError) {
       console.error('Error fetching store info from database:', dbError.message);
@@ -376,10 +388,32 @@ router.put('/info', auth, adminAuth, async (req, res) => {
       return res.status(400).json({ message: 'No valid fields to update' });
     }
     
-    let storeInfo = await StoreInfo.findOne();
+    // Use findOneAndUpdate with upsert to ensure atomic update
+    const updateOptions = {
+      new: true, // Return the updated document
+      upsert: true, // Create if doesn't exist
+      runValidators: true // Run schema validators
+    };
+    
+    // Prepare update object - use $set operator for proper MongoDB update
+    const updateObject = {};
+    Object.keys(updateData).forEach(key => {
+      if (updateData[key] !== undefined) {
+        updateObject[key] = updateData[key];
+      }
+    });
+    
+    console.log('📝 Update object:', JSON.stringify(updateObject, null, 2));
+    
+    // Use findOneAndUpdate for atomic operation
+    let storeInfo = await StoreInfo.findOneAndUpdate(
+      {}, // Empty filter means find any document (since there should only be one)
+      { $set: updateObject },
+      updateOptions
+    );
     
     if (!storeInfo) {
-      // Create new store info with defaults
+      // If still no document exists, create one with defaults and update data
       const defaultStoreInfo = {
         storeTimings: [
           { day: 'Monday', openTime: '11:00 AM', closeTime: '08:30 PM', isClosed: false },
@@ -392,22 +426,18 @@ router.put('/info', auth, adminAuth, async (req, res) => {
         ],
         bankDetails: []
       };
+      
       storeInfo = new StoreInfo({
         ...defaultStoreInfo,
-        ...updateData,
-        storeTimings: updateData.storeTimings || defaultStoreInfo.storeTimings,
-        bankDetails: updateData.bankDetails || defaultStoreInfo.bankDetails
+        ...updateObject
       });
-    } else {
-      // Update existing fields
-      Object.keys(updateData).forEach(key => {
-        if (updateData[key] !== undefined && updateData[key] !== null) {
-          storeInfo[key] = updateData[key];
-        }
-      });
+      await storeInfo.save();
     }
     
-    await storeInfo.save();
+    console.log('✅ Store info saved. Verifying:', JSON.stringify(storeInfo.toObject(), null, 2));
+    
+    // Re-fetch to ensure we have the latest data
+    storeInfo = await StoreInfo.findById(storeInfo._id);
     
     const savedInfo = storeInfo.toObject ? storeInfo.toObject() : storeInfo;
     console.log('✅ Store info updated successfully');

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Box, Card, CardContent, Typography, Button, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Chip, Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Tabs, Tab, CircularProgress, MenuItem, Select, FormControl, InputLabel, Grid, IconButton, TextareaAutosize, Accordion, AccordionSummary, AccordionDetails, Checkbox, FormControlLabel } from '@mui/material';
-import { Logout, CheckCircle, Cancel, Visibility, Remove, Add, Edit, Delete, Add as AddIcon, Newspaper, Person, Store, RestartAlt, ExpandMore } from '@mui/icons-material';
+import { Logout, CheckCircle, Cancel, Visibility, Remove, Add, Edit, Delete, Delete as DeleteIcon, Add as AddIcon, Newspaper, Person, Store, RestartAlt, ExpandMore } from '@mui/icons-material';
 import { AuthContext } from '../context/AuthContext';
 import api from '../config/api';
 import colors from '../theme/colors';
@@ -431,9 +431,38 @@ function AdminDashboardPage() {
   const handleSaveStoreInfo = async () => {
     try {
       setLoadingAction(true);
-      console.log('Saving store info:', storeForm);
-      const response = await api.put('/store/info', storeForm);
-      console.log('Store info saved:', response.data);
+      
+      // Prepare the data to send - ensure arrays are properly formatted
+      const dataToSend = {
+        welcomeMessage: storeForm.welcomeMessage || '',
+        address: storeForm.address || '',
+        phoneNumber: storeForm.phoneNumber || '',
+        instagram: storeForm.instagram || '',
+        facebook: storeForm.facebook || '',
+        youtube: storeForm.youtube || '',
+        storeTimings: Array.isArray(storeForm.storeTimings) ? storeForm.storeTimings : [],
+        bankDetails: Array.isArray(storeForm.bankDetails) ? storeForm.bankDetails : []
+      };
+      
+      console.log('Saving store info:', JSON.stringify(dataToSend, null, 2));
+      const response = await api.put('/store/info', dataToSend);
+      console.log('Store info saved response:', response.data);
+      
+      if (response.data && response.data.storeInfo) {
+        // Update local state with the response data
+        setStoreInfo(response.data.storeInfo);
+        setStoreForm({
+          welcomeMessage: response.data.storeInfo.welcomeMessage || '',
+          address: response.data.storeInfo.address || '',
+          phoneNumber: response.data.storeInfo.phoneNumber || '',
+          instagram: response.data.storeInfo.instagram || '',
+          facebook: response.data.storeInfo.facebook || '',
+          youtube: response.data.storeInfo.youtube || '',
+          storeTimings: response.data.storeInfo.storeTimings || [],
+          bankDetails: response.data.storeInfo.bankDetails || []
+        });
+      }
+      
       alert('Store information updated successfully');
       setStoreDialogOpen(false);
       await fetchStoreInfo(); // Refresh store info display
