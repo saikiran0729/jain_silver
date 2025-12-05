@@ -32,13 +32,62 @@ function AdminDashboardPage() {
   const [storeDialogOpen, setStoreDialogOpen] = useState(false);
   const [storeForm, setStoreForm] = useState({});
   const [showOriginalRates, setShowOriginalRates] = useState(false); // Toggle to show original rates without adjustments
+  const [baseRateFromSource, setBaseRateFromSource] = useState(null); // Current base rate from RB Gold
+  const [globalShowAsItIs, setGlobalShowAsItIs] = useState(false); // Global "Show As It Is" setting
 
   useEffect(() => {
     fetchUsers();
     fetchRates();
+    fetchShowAsItIsSetting();
     if (mainTab === 1) fetchNews();
     if (mainTab === 2) fetchStoreInfo();
   }, [mainTab]);
+
+  const fetchShowAsItIsSetting = async () => {
+    try {
+      const response = await api.get('/admin/show-as-it-is');
+      setGlobalShowAsItIs(response.data.showAsItIs || false);
+      setShowOriginalRates(response.data.showAsItIs || false); // Sync local view with global setting
+    } catch (error) {
+      console.warn('⚠️ Error fetching showAsItIs setting:', error.message);
+      setGlobalShowAsItIs(false);
+    }
+  };
+
+  const toggleShowAsItIs = async () => {
+    try {
+      setLoadingAction(true);
+      const response = await api.post('/admin/toggle-show-as-it-is');
+      const newValue = response.data.showAsItIs;
+      setGlobalShowAsItIs(newValue);
+      setShowOriginalRates(newValue); // Sync local view
+      alert(response.data.message || `"Show As It Is" ${newValue ? 'enabled' : 'disabled'} successfully`);
+      // Refresh rates to show updated values
+      await fetchRates();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Failed to toggle "Show As It Is" setting');
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const fetchBaseRate = async () => {
+    try {
+      const response = await api.get('/rates/base-rate');
+      console.log('✅ Base rate fetched from source:', response.data);
+      setBaseRateFromSource(response.data);
+      return response.data;
+    } catch (error) {
+      // Silently handle 404 - endpoint may not be deployed yet
+      // We'll calculate original rates from current rates and adjustments
+      if (error.response?.status === 404) {
+        console.log('ℹ️ Base rate endpoint not available, will calculate from current rates');
+      } else {
+        console.warn('⚠️ Error fetching base rate:', error.message);
+      }
+      return null;
+    }
+  };
 
   const fetchRates = async () => {
     try {
@@ -47,6 +96,11 @@ function AdminDashboardPage() {
       const response = await api.get('/rates');
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
       setRates(response.data || []);
+      
+      // If showing original rates, also fetch base rate from source
+      if (showOriginalRates) {
+        await fetchBaseRate();
+      }
     } catch (error) {
       console.error('❌ Error fetching rates:', error);
       console.error('Error message:', error.message);
@@ -247,7 +301,7 @@ function AdminDashboardPage() {
         payload.itemName = selectedItem;
       }
       const response = await api.post('/admin/adjust-rates', payload);
-      const message = `Rates ${adjustType === 'decrease' ? 'decreased' : 'increased'} by ${adjustValueType === 'percentage' ? `${Math.abs(value)}%` : `₹${Math.abs(value)}/gram`}${selectedItem !== 'all' ? ` for ${selectedItem}` : ' for all items'} successfully`;
+      const message = response.data?.message || `Rates ${adjustType === 'decrease' ? 'decreased' : 'increased'} by ${adjustValueType === 'percentage' ? `${Math.abs(value)}%` : `₹${Math.abs(value)}/gram`}${selectedItem !== 'all' ? ` for ${selectedItem}` : ' for all items'} successfully`;
       alert(message);
       setAdjustDialogOpen(false);
       setAdjustValue('');
@@ -256,7 +310,9 @@ function AdminDashboardPage() {
       // Refresh rates to show updated values
       await fetchRates();
     } catch (error) {
-      alert(error.response?.data?.message || 'Failed to adjust rates');
+      const errorMsg = error.response?.data?.message || error.response?.data?.error || 'Failed to adjust rates';
+      alert(errorMsg);
+      console.error('Adjust rates error:', error);
     } finally {
       setLoadingAction(false);
     }
@@ -450,17 +506,23 @@ function AdminDashboardPage() {
             >
               Increase Rates
             </Button>
-            <Box sx={{ ml: 'auto' }}>
+            <Box sx={{ ml: 'auto', display: 'flex', gap: 1, alignItems: 'center' }}>
+              <Chip 
+                label={globalShowAsItIs ? 'Global: Show As It Is ON' : 'Global: Show As It Is OFF'}
+                color={globalShowAsItIs ? "success" : "default"}
+                size="small"
+                sx={{ mr: 1 }}
+              />
               <Button
                 size="small"
-                variant={showOriginalRates ? "contained" : "outlined"}
-                {...(showOriginalRates ? { color: "primary" } : {})}
+                variant={globalShowAsItIs ? "contained" : "outlined"}
+                {...(globalShowAsItIs ? { color: "primary" } : {})}
                 startIcon={<RestartAlt />}
-                onClick={() => setShowOriginalRates(!showOriginalRates)}
-                disabled={loadingAction}
+                onClick={toggleShowAsItIs}
+                disabled={loadingAction || loadingRates}
                 sx={{ minWidth: 150 }}
               >
-                {showOriginalRates ? 'Show Adjusted' : 'Show As It Is'}
+                {globalShowAsItIs ? 'Disable Show As It Is' : 'Enable Show As It Is'}
               </Button>
             </Box>
           </Box>
@@ -520,25 +582,115 @@ function AdminDashboardPage() {
                     const currentTotalRate = rate.rate || 0;
                     
                     // Calculate true original rate from RB Gold (before any adjustments)
-                    // Formula: Original = Current - Adjustment
-                    // Example: If original was ₹184, decreased by 50% (-₹92), current is ₹92
-                    // Then: Original = ₹92 - (-₹92) = ₹184 ✓
-                    let originalRatePerGram = currentRatePerGram - adjustment;
+                    let originalRatePerGram;
                     
-                    // Debug logging (remove in production)
+                    // If showing "as it is" and we have base rate from source, use it
+                    if (showOriginalRates && baseRateFromSource && baseRateFromSource.baseRatePerGram) {
+                      // Calculate original rate based on current base rate from RB Gold and purity
+                      let baseRate = baseRateFromSource.baseRatePerGram;
+                      
+                      // Apply purity adjustments (same as backend does)
+                      if (rate.purity === '92.5%') {
+                        baseRate = baseRate * 0.96;
+                      } else if (rate.purity === '99.99%') {
+                        baseRate = baseRate * 1.005;
+                      }
+                      // 99.9% uses base rate as-is
+                      
+                      originalRatePerGram = Math.round(baseRate * 100) / 100;
+                      console.log(`[${rate.name}] Using live base rate from RB Gold: ₹${baseRateFromSource.baseRatePerGram}/gram → ${rate.purity} = ₹${originalRatePerGram}/gram`);
+                    } else if (showOriginalRates) {
+                      // Fallback: Calculate original from current rate - adjustment
+                      // Formula: Original = Current - Adjustment
+                      // This reverses the adjustment to get the true original rate from RB Gold
+                      originalRatePerGram = currentRatePerGram - adjustment;
+                      
+                      // Validate calculated original rate
+                      // If current rate is 0 (clamped), original should be positive
+                      if (currentRatePerGram === 0 && adjustment < 0) {
+                        // Rate was clamped to 0, so original = |adjustment| or higher
+                        // Try stored originalRatePerGram first
+                        if (rate.originalRatePerGram && rate.originalRatePerGram > Math.abs(adjustment)) {
+                          originalRatePerGram = rate.originalRatePerGram;
+                          console.log(`[${rate.name}] Rate is 0, using stored originalRatePerGram: ₹${originalRatePerGram}`);
+                        } else if (rate.originalRate && rate.originalRate > 0) {
+                          originalRatePerGram = rate.originalRate / weightInGrams;
+                          console.log(`[${rate.name}] Rate is 0, calculating from originalRate: ₹${originalRatePerGram}`);
+                        } else {
+                          // Estimate: if adjustment is -92.25, original was likely around 92-184
+                          // Use stored originalRatePerGram if reasonable, otherwise estimate
+                          if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
+                            originalRatePerGram = rate.originalRatePerGram;
+                          } else {
+                            // Conservative estimate: assume adjustment is 50% of original
+                            originalRatePerGram = Math.abs(adjustment) * 2;
+                          }
+                          console.log(`[${rate.name}] Rate is 0, estimated original: ₹${originalRatePerGram} (adjustment: ₹${adjustment})`);
+                        }
+                      } else if (originalRatePerGram <= 0) {
+                        // Calculated original is invalid, try stored values
+                        if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
+                          originalRatePerGram = rate.originalRatePerGram;
+                          console.log(`[${rate.name}] Calculated original invalid, using stored: ₹${originalRatePerGram}`);
+                        } else if (rate.originalRate && rate.originalRate > 0) {
+                          originalRatePerGram = rate.originalRate / weightInGrams;
+                          console.log(`[${rate.name}] Calculated original invalid, using from originalRate: ₹${originalRatePerGram}`);
+                        } else {
+                          // Last resort: estimate
+                          originalRatePerGram = Math.max(Math.abs(adjustment) * 2, 100);
+                          console.warn(`[${rate.name}] Could not determine original, estimating: ₹${originalRatePerGram}`);
+                        }
+                      }
+                      
+                      // Final validation: ensure original is reasonable
+                      if (originalRatePerGram <= 0) {
+                        originalRatePerGram = Math.max(Math.abs(adjustment), 50);
+                      }
+                    } else {
+                      // Fallback: Calculate from current rate and adjustment
+                      // Priority 1: Use stored originalRatePerGram if it exists and seems reasonable
+                      if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
+                        // Check if stored original makes sense
+                        const calculatedFromStored = rate.originalRatePerGram - adjustment;
+                        // If calculated rate from stored original matches current rate (within tolerance), use stored
+                        if (Math.abs(calculatedFromStored - currentRatePerGram) < 1 || currentRatePerGram === 0) {
+                          originalRatePerGram = rate.originalRatePerGram;
+                          console.log(`[${rate.name}] Using stored originalRatePerGram: ₹${originalRatePerGram}`);
+                        } else {
+                          // Stored original doesn't match, calculate from current
+                          originalRatePerGram = currentRatePerGram - adjustment;
+                          console.log(`[${rate.name}] Stored original (₹${rate.originalRatePerGram}) doesn't match, calculating: ₹${originalRatePerGram}`);
+                        }
+                      } else {
+                        // Priority 2: Calculate from current rate and adjustment
+                        originalRatePerGram = currentRatePerGram - adjustment;
+                        
+                        // If calculated original is unreasonable (too low), try stored originalRate
+                        if (originalRatePerGram <= 0 && rate.originalRate && rate.originalRate > 0) {
+                          // Calculate from total original rate
+                          originalRatePerGram = rate.originalRate / weightInGrams;
+                          console.log(`[${rate.name}] Calculated original was invalid, using from originalRate: ₹${originalRatePerGram}`);
+                        }
+                      }
+                      
+                      // Final validation: ensure original rate is positive and reasonable
+                      if (originalRatePerGram <= 0 || originalRatePerGram < Math.abs(adjustment)) {
+                        // If still invalid, use stored originalRatePerGram as last resort
+                        if (rate.originalRatePerGram && rate.originalRatePerGram > Math.abs(adjustment)) {
+                          originalRatePerGram = rate.originalRatePerGram;
+                          console.log(`[${rate.name}] Using stored originalRatePerGram as fallback: ₹${originalRatePerGram}`);
+                        } else {
+                          // Estimate: if adjustment is large negative, original was likely 2x the adjustment
+                          originalRatePerGram = Math.max(Math.abs(adjustment) * 2, 100); // At least ₹100/gram
+                          console.warn(`[${rate.name}] Could not determine original, estimating: ₹${originalRatePerGram} (adjustment: ₹${adjustment})`);
+                        }
+                      }
+                    }
+                    
+                    // Debug logging
                     if (showOriginalRates && hasAdjustment) {
-                      console.log(`[${rate.name}] Current: ₹${currentRatePerGram}, Adjustment: ₹${adjustment}, Calculated Original: ₹${originalRatePerGram}`);
+                      console.log(`[${rate.name}] Final - Current: ₹${currentRatePerGram}, Adjustment: ₹${adjustment}, Original: ₹${originalRatePerGram.toFixed(2)}, Stored Original: ₹${rate.originalRatePerGram || 'N/A'}`);
                     }
-                    
-                    // Safety check: If calculated original is negative or zero, try using stored originalRatePerGram
-                    // But only if it makes sense (stored value should be higher than current if adjustment is negative)
-                    if (originalRatePerGram <= 0 && rate.originalRatePerGram && rate.originalRatePerGram > currentRatePerGram) {
-                      console.log(`[${rate.name}] Using stored originalRatePerGram: ₹${rate.originalRatePerGram}`);
-                      originalRatePerGram = rate.originalRatePerGram;
-                    }
-                    
-                    // Ensure original rate is never negative
-                    originalRatePerGram = Math.max(0, originalRatePerGram);
                     const originalTotalPrice = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
                     
                     // Adjusted price (current rate, may be 0 if adjustment makes it negative)

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
 const SilverRate = require('../models/SilverRate');
+const Settings = require('../models/Settings');
 
 // Helper function to fetch manual adjustments from MongoDB
 const fetchManualAdjustments = async (rateNames) => {
@@ -21,40 +22,90 @@ const fetchManualAdjustments = async (rateNames) => {
   return adjustmentsMap;
 };
 
+// Helper function to get original rates (without adjustments) from base rate
+const getOriginalRates = async (baseRatePerGram) => {
+  const rateDefinitions = [
+    { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
+    { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
+    { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
+    { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
+    { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
+  ];
+
+  return rateDefinitions.map(rateDef => {
+    let ratePerGram = baseRatePerGram;
+    if (rateDef.purity === '92.5%') {
+      ratePerGram = baseRatePerGram * 0.96;
+    } else if (rateDef.purity === '99.99%') {
+      ratePerGram = baseRatePerGram * 1.005;
+    }
+    
+    ratePerGram = Math.round(ratePerGram * 100) / 100;
+    
+    let weightInGrams = rateDef.weight.value;
+    if (rateDef.weight.unit === 'kg') {
+      weightInGrams = rateDef.weight.value * 1000;
+    }
+    
+    const totalRate = Math.round(ratePerGram * weightInGrams * 100) / 100;
+    const id = Buffer.from(rateDef.name).toString('base64').substring(0, 24);
+    
+    return {
+      _id: id,
+      name: rateDef.name,
+      type: rateDef.type,
+      weight: rateDef.weight,
+      purity: rateDef.purity,
+      ratePerGram: ratePerGram,
+      rate: totalRate,
+      originalRatePerGram: ratePerGram,
+      originalRate: totalRate,
+      lastUpdated: new Date(),
+      location: 'Andhra Pradesh',
+      unit: 'INR',
+      manualAdjustment: 0
+    };
+  });
+};
+
 // Helper function to apply manual adjustments to rates from MongoDB
+// NOTE: Rates from MongoDB already have adjustments applied in ratePerGram
+// This function just ensures the data structure is correct for the API response
 const applyManualAdjustments = async (rates) => {
   // Fetch current adjustments from MongoDB
   const adjustmentsMap = await fetchManualAdjustments(rates.map(r => r.name));
 
   return rates.map(rate => {
     const manualAdjustment = adjustmentsMap[rate.name] || rate.manualAdjustment || 0;
-    // Store original rates before adjustment
-    const originalRatePerGram = rate.ratePerGram;
-    let originalTotalRate = rate.rate;
     
-    // If there's a manual adjustment, recalculate the rate
-    if (manualAdjustment !== 0) {
-      const adjustedRatePerGram = Math.max(0, Math.round((rate.ratePerGram + manualAdjustment) * 100) / 100);
-      let weightInGrams = rate.weight.value;
-      if (rate.weight.unit === 'kg') {
-        weightInGrams = rate.weight.value * 1000;
-      }
-      const adjustedTotalRate = Math.round(adjustedRatePerGram * weightInGrams * 100) / 100;
-      
-      return {
-        ...rate,
-        ratePerGram: adjustedRatePerGram,
-        rate: adjustedTotalRate,
-        originalRatePerGram: originalRatePerGram, // Store original for display
-        originalRate: originalTotalRate, // Store original total rate
-        manualAdjustment: manualAdjustment
-      };
+    // IMPORTANT: rate.ratePerGram in MongoDB already includes adjustments
+    // So original = current - adjustment
+    const currentRatePerGram = rate.ratePerGram || 0;
+    const originalRatePerGram = currentRatePerGram - manualAdjustment;
+    
+    // Calculate original total rate
+    let weightInGrams = rate.weight.value;
+    if (rate.weight.unit === 'kg') {
+      weightInGrams = rate.weight.value * 1000;
     }
+    const originalTotalRate = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
+    
+    // Current rate (already has adjustments) is what customers see
+    const adjustedRatePerGram = currentRatePerGram;
+    const adjustedTotalRate = rate.rate || Math.round(adjustedRatePerGram * weightInGrams * 100) / 100;
+    
     return {
       ...rate,
-      originalRatePerGram: originalRatePerGram, // Even without adjustment, store original
-      originalRate: originalTotalRate,
-      manualAdjustment: rate.manualAdjustment || 0
+      ratePerGram: adjustedRatePerGram, // Current rate with adjustments (what customers see)
+      rate: adjustedTotalRate,
+      originalRatePerGram: Math.max(0, originalRatePerGram), // Original without adjustments
+      originalRate: Math.max(0, originalTotalRate),
+      manualAdjustment: manualAdjustment
     };
   });
 };
@@ -330,6 +381,15 @@ router.get('/', async (req, res) => {
       // Continue without auth
     }
     
+    // Check if "Show As It Is" is enabled
+    let showAsItIs = false;
+    try {
+      const showAsItIsSetting = await Settings.getSetting('showAsItIs');
+      showAsItIs = showAsItIsSetting.value;
+    } catch (settingsError) {
+      console.warn('Could not fetch showAsItIs setting, defaulting to false:', settingsError.message);
+    }
+    
     // ALWAYS try to get rates from MongoDB first (primary source)
     // In serverless, we need to ensure connection on each request
     try {
@@ -533,12 +593,39 @@ router.get('/', async (req, res) => {
             console.log(`📦 Serving ${mongoRates.length} rates from MongoDB (${Math.round(mongoAge/1000)}s old, latest: ${latestRate.name} = ₹${latestRate.ratePerGram}/gram)`);
           }
           
-          // Apply manual adjustments to rates from MongoDB
-          // This ensures admin adjustments are reflected immediately
-          const ratesWithAdjustments = await applyManualAdjustments(mongoRates);
+          let finalRates;
+          if (showAsItIs) {
+            // If "Show As It Is" is enabled, return original rates without adjustments
+            // Fetch fresh base rate from source
+            let baseRatePerGram = cachedBaseRate.ratePerGram;
+            try {
+              const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
+              const liveRate = await Promise.race([
+                fetchSilverRatesFromMultipleSources(),
+                new Promise((_, reject) => 
+                  setTimeout(() => reject(new Error('Timeout after 5 seconds')), 5000)
+                )
+              ]);
+              if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0) {
+                baseRatePerGram = liveRate.ratePerGram;
+                console.log(`✅ Fetched fresh base rate for "Show As It Is": ₹${baseRatePerGram.toFixed(2)}/gram`);
+              }
+            } catch (fetchError) {
+              console.warn('Could not fetch fresh base rate, using cached:', fetchError.message);
+              // Use cached base rate as fallback
+            }
+            
+            // Get original rates from base rate
+            finalRates = await getOriginalRates(baseRatePerGram);
+            console.log(`✅ "Show As It Is" enabled - returning original rates (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
+          } else {
+            // Apply manual adjustments to rates from MongoDB
+            // This ensures admin adjustments are reflected immediately
+            finalRates = await applyManualAdjustments(mongoRates);
+          }
           
           // Add USD rate to all rates if available
-          const ratesWithUSD = ratesWithAdjustments.map(rate => ({
+          const ratesWithUSD = finalRates.map(rate => ({
             ...rate,
             usdInrRate: cachedBaseRate.usdInrRate || 89.25
           }));
@@ -602,55 +689,71 @@ router.get('/', async (req, res) => {
       { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
     ];
     
-    // Fetch manual adjustments from MongoDB
-    const adjustmentsMap = await fetchManualAdjustments(rateDefinitions.map(r => r.name));
+    // Check if "Show As It Is" is enabled
+    let showAsItIs = false;
+    try {
+      const showAsItIsSetting = await Settings.getSetting('showAsItIs');
+      showAsItIs = showAsItIsSetting.value;
+    } catch (settingsError) {
+      console.warn('Could not fetch showAsItIs setting, defaulting to false:', settingsError.message);
+    }
+    
+    let allRates;
+    if (showAsItIs) {
+      // If "Show As It Is" is enabled, return original rates without adjustments
+      allRates = await getOriginalRates(baseRatePerGram);
+      console.log(`✅ "Show As It Is" enabled - returning original rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
+    } else {
+      // Fetch manual adjustments from MongoDB
+      const adjustmentsMap = await fetchManualAdjustments(rateDefinitions.map(r => r.name));
 
-    const allRates = rateDefinitions.map(rateDef => {
-      let ratePerGram = baseRatePerGram;
-      if (rateDef.purity === '92.5%') {
-        ratePerGram = baseRatePerGram * 0.96;
-      } else if (rateDef.purity === '99.99%') {
-        ratePerGram = baseRatePerGram * 1.005;
-      }
-      
-      const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
-      ratePerGram = ratePerGram + manualAdjustment;
-      ratePerGram = Math.max(0, Math.round(ratePerGram * 100) / 100);
-      
-      let weightInGrams = rateDef.weight.value;
-      if (rateDef.weight.unit === 'kg') {
-        weightInGrams = rateDef.weight.value * 1000;
-      }
-      
-      const totalRate = Math.round(ratePerGram * weightInGrams * 100) / 100;
-      const id = Buffer.from(rateDef.name).toString('base64').substring(0, 24);
-      
-      // Store original rate before adjustment
-      const originalRatePerGram = ratePerGram - manualAdjustment;
-      let originalWeightInGrams = rateDef.weight.value;
-      if (rateDef.weight.unit === 'kg') {
-        originalWeightInGrams = rateDef.weight.value * 1000;
-      }
-      const originalTotalRate = Math.round(originalRatePerGram * originalWeightInGrams * 100) / 100;
-      
-      return {
-        _id: id,
-        name: rateDef.name,
-        type: rateDef.type,
-        weight: rateDef.weight,
-        purity: rateDef.purity,
-        ratePerGram: ratePerGram,
-        rate: totalRate,
-        originalRatePerGram: originalRatePerGram,
-        originalRate: originalTotalRate,
-        lastUpdated: currentTime,
-        usdInrRate: cachedBaseRate.usdInrRate,
-        source: cachedBaseRate.source,
-        location: 'Andhra Pradesh',
-        unit: 'INR',
-        manualAdjustment: manualAdjustment
-      };
-    });
+      allRates = rateDefinitions.map(rateDef => {
+        let ratePerGram = baseRatePerGram;
+        if (rateDef.purity === '92.5%') {
+          ratePerGram = baseRatePerGram * 0.96;
+        } else if (rateDef.purity === '99.99%') {
+          ratePerGram = baseRatePerGram * 1.005;
+        }
+        
+        const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
+        ratePerGram = ratePerGram + manualAdjustment;
+        ratePerGram = Math.max(0, Math.round(ratePerGram * 100) / 100);
+        
+        let weightInGrams = rateDef.weight.value;
+        if (rateDef.weight.unit === 'kg') {
+          weightInGrams = rateDef.weight.value * 1000;
+        }
+        
+        const totalRate = Math.round(ratePerGram * weightInGrams * 100) / 100;
+        const id = Buffer.from(rateDef.name).toString('base64').substring(0, 24);
+        
+        // Store original rate before adjustment
+        const originalRatePerGram = ratePerGram - manualAdjustment;
+        let originalWeightInGrams = rateDef.weight.value;
+        if (rateDef.weight.unit === 'kg') {
+          originalWeightInGrams = rateDef.weight.value * 1000;
+        }
+        const originalTotalRate = Math.round(originalRatePerGram * originalWeightInGrams * 100) / 100;
+        
+        return {
+          _id: id,
+          name: rateDef.name,
+          type: rateDef.type,
+          weight: rateDef.weight,
+          purity: rateDef.purity,
+          ratePerGram: ratePerGram,
+          rate: totalRate,
+          originalRatePerGram: originalRatePerGram,
+          originalRate: originalTotalRate,
+          lastUpdated: currentTime,
+          usdInrRate: cachedBaseRate.usdInrRate,
+          source: cachedBaseRate.source,
+          location: 'Andhra Pradesh',
+          unit: 'INR',
+          manualAdjustment: manualAdjustment
+        };
+      });
+    }
     
     console.log(`📦 Serving ${allRates.length} rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
     
@@ -1176,7 +1279,48 @@ router.post('/adjust', auth, async (req, res) => {
   }
 });
 
+// Get current base rate from source (without adjustments) - for "Show As It Is" feature
+router.get('/base-rate', async (req, res) => {
+  try {
+    // Fetch current live rate from RB Gold
+    const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
+    const liveRate = await Promise.race([
+      fetchSilverRatesFromMultipleSources(),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout after 10 seconds')), 10000)
+      )
+    ]);
+
+    if (!liveRate || !liveRate.ratePerGram || liveRate.ratePerGram <= 0) {
+      // Fallback to cached rate
+      return res.json({
+        baseRatePerGram: cachedBaseRate.ratePerGram,
+        baseRatePerKg: cachedBaseRate.ratePerKg,
+        source: cachedBaseRate.source,
+        lastUpdated: cachedBaseRate.lastUpdated
+      });
+    }
+
+    res.json({
+      baseRatePerGram: liveRate.ratePerGram,
+      baseRatePerKg: liveRate.ratePerKg,
+      source: liveRate.source || 'rbgoldspot',
+      lastUpdated: new Date()
+    });
+  } catch (error) {
+    console.error('Error fetching base rate:', error.message);
+    // Return cached rate as fallback
+    res.json({
+      baseRatePerGram: cachedBaseRate.ratePerGram,
+      baseRatePerKg: cachedBaseRate.ratePerKg,
+      source: cachedBaseRate.source,
+      lastUpdated: cachedBaseRate.lastUpdated
+    });
+  }
+});
+
 module.exports = router;
+
 // Manual adjustments are now stored in MongoDB (SilverRate.manualAdjustment field)
 // No longer using in-memory storage - all adjustments persist to database
 module.exports.updateRatesHandler = updateRatesHandler;

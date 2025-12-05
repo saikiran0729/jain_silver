@@ -5,6 +5,15 @@ const SilverRate = require('../models/SilverRate');
 const auth = require('../middleware/auth');
 const adminAuth = require('../middleware/adminAuth');
 
+// Load Settings model with error handling
+let Settings;
+try {
+  Settings = require('../models/Settings');
+} catch (error) {
+  console.error('⚠️ Settings model could not be loaded:', error.message);
+  Settings = null;
+}
+
 // Root route - get admin dashboard data from MongoDB
 router.get('/', auth, adminAuth, async (req, res) => {
   try {
@@ -477,10 +486,12 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
         continue;
       }
       
-      const originalRatePerGram = currentRate.ratePerGram || 0;
+      // IMPORTANT: ratePerGram in MongoDB already includes adjustments
+      // So: originalRatePerGram = currentRatePerGram - currentAdjustment
+      const currentEffectiveRate = currentRate.ratePerGram || 0; // This is what customers see
       const currentAdjustment = currentRate.manualAdjustment || 0;
-      // Current effective rate = original + existing adjustments
-      const currentEffectiveRate = originalRatePerGram + currentAdjustment;
+      // Calculate original rate by removing current adjustment
+      const originalRatePerGram = currentEffectiveRate - currentAdjustment;
       
       let adjustmentAmount = 0;
       let actualPercentageChange = 0;
@@ -585,6 +596,67 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
   } catch (error) {
     console.error('Admin adjust rates error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get showAsItIs setting
+router.get('/show-as-it-is', auth, adminAuth, async (req, res) => {
+  try {
+    // Ensure Settings model is available
+    if (!Settings) {
+      return res.status(500).json({ 
+        message: 'Settings model not available',
+        showAsItIs: false 
+      });
+    }
+    
+    const setting = await Settings.getSetting('showAsItIs');
+    res.json({ 
+      showAsItIs: setting.value || false,
+      lastUpdated: setting.lastUpdated || new Date()
+    });
+  } catch (error) {
+    console.error('Get showAsItIs setting error:', error);
+    // Return default value on error instead of 500
+    res.json({ 
+      showAsItIs: false,
+      lastUpdated: new Date(),
+      error: error.message 
+    });
+  }
+});
+
+// Toggle showAsItIs setting
+router.post('/toggle-show-as-it-is', auth, adminAuth, async (req, res) => {
+  try {
+    // Ensure Settings model is available
+    if (!Settings) {
+      return res.status(500).json({ 
+        message: 'Settings model not available',
+        error: 'Settings model not loaded'
+      });
+    }
+    
+    const currentSetting = await Settings.getSetting('showAsItIs');
+    const newValue = !currentSetting.value;
+    
+    await Settings.setSetting('showAsItIs', newValue, req.user.userId);
+    
+    console.log(`✅ Admin toggled "Show As It Is": ${newValue ? 'ENABLED' : 'DISABLED'}`);
+    
+    res.json({ 
+      message: `"Show As It Is" ${newValue ? 'enabled' : 'disabled'} successfully`,
+      showAsItIs: newValue,
+      lastUpdated: new Date()
+    });
+  } catch (error) {
+    console.error('Toggle showAsItIs setting error:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      message: 'Server error', 
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
