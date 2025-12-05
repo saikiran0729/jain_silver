@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Box, Card, CardContent, Typography, Button, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Chip, Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Tabs, Tab, CircularProgress, MenuItem, Select, FormControl, InputLabel, Grid, IconButton, TextareaAutosize } from '@mui/material';
-import { Logout, CheckCircle, Cancel, Visibility, Remove, Add, Edit, Delete, Add as AddIcon, Newspaper, Person, Store, RestartAlt } from '@mui/icons-material';
+import { Box, Card, CardContent, Typography, Button, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Chip, Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Tabs, Tab, CircularProgress, MenuItem, Select, FormControl, InputLabel, Grid, IconButton, TextareaAutosize, Accordion, AccordionSummary, AccordionDetails, Checkbox, FormControlLabel } from '@mui/material';
+import { Logout, CheckCircle, Cancel, Visibility, Remove, Add, Edit, Delete, Add as AddIcon, Newspaper, Person, Store, RestartAlt, ExpandMore } from '@mui/icons-material';
 import { AuthContext } from '../context/AuthContext';
 import api from '../config/api';
 import colors from '../theme/colors';
@@ -405,7 +405,8 @@ function AdminDashboardPage() {
         alert('News post created successfully');
       }
       setNewsDialogOpen(false);
-      fetchNews();
+      setNewsForm({ title: '', content: '', image: '', category: 'general', tags: '', published: false });
+      await fetchNews(); // Refresh news list
     } catch (error) {
       alert(error.response?.data?.message || 'Failed to save news post');
     } finally {
@@ -419,7 +420,7 @@ function AdminDashboardPage() {
       setLoadingAction(true);
       await api.delete(`/news/${id}`);
       alert('News post deleted successfully');
-      fetchNews();
+      await fetchNews(); // Refresh news list
     } catch (error) {
       alert(error.response?.data?.message || 'Failed to delete news post');
     } finally {
@@ -435,7 +436,7 @@ function AdminDashboardPage() {
       console.log('Store info saved:', response.data);
       alert('Store information updated successfully');
       setStoreDialogOpen(false);
-      fetchStoreInfo();
+      await fetchStoreInfo(); // Refresh store info display
     } catch (error) {
       console.error('Error saving store info:', error);
       console.error('Error response:', error.response?.data);
@@ -1063,6 +1064,32 @@ function AdminDashboardPage() {
                   <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>YouTube</Typography>
                   <Typography variant="body2" sx={{ mb: 2, wordBreak: 'break-all' }}>{storeInfo.youtube || 'N/A'}</Typography>
                 </Grid>
+                {storeInfo.storeTimings && storeInfo.storeTimings.length > 0 && (
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary, mb: 1 }}>Store Timings</Typography>
+                    {storeInfo.storeTimings.map((timing, index) => (
+                      <Box key={index} sx={{ mb: 1, p: 1, backgroundColor: colors.primaryVeryLight, borderRadius: 1 }}>
+                        <Typography variant="body2">
+                          <strong>{timing.day}:</strong> {timing.isClosed ? 'Closed' : `${timing.openTime} - ${timing.closeTime}`}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Grid>
+                )}
+                {storeInfo.bankDetails && storeInfo.bankDetails.length > 0 && (
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary, mb: 1 }}>Bank Details</Typography>
+                    {storeInfo.bankDetails.map((bank, index) => (
+                      <Box key={index} sx={{ mb: 2, p: 2, backgroundColor: colors.primaryVeryLight, borderRadius: 1 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>{bank.bankName}</Typography>
+                        <Typography variant="body2">Account: {bank.accountNumber}</Typography>
+                        <Typography variant="body2">IFSC: {bank.ifscCode}</Typography>
+                        <Typography variant="body2">Holder: {bank.accountHolderName}</Typography>
+                        <Typography variant="body2">Branch: {bank.branch}</Typography>
+                      </Box>
+                    ))}
+                  </Grid>
+                )}
               </Grid>
             ) : (
               <Alert severity="info">No store information available</Alert>
@@ -1210,6 +1237,195 @@ function AdminDashboardPage() {
             onChange={(e) => setStoreForm({ ...storeForm, youtube: e.target.value })}
             margin="normal"
           />
+          
+          {/* Store Timings */}
+          <Accordion sx={{ mt: 2 }}>
+            <AccordionSummary expandIcon={<ExpandMore />}>
+              <Typography variant="h6">Store Timings</Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              {(storeForm.storeTimings || []).map((timing, index) => (
+                <Box key={index} sx={{ mb: 2, p: 2, border: `1px solid ${colors.divider}`, borderRadius: 1 }}>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={3}>
+                      <TextField
+                        fullWidth
+                        label="Day"
+                        value={timing.day || ''}
+                        onChange={(e) => {
+                          const newTimings = [...(storeForm.storeTimings || [])];
+                          newTimings[index].day = e.target.value;
+                          setStoreForm({ ...storeForm, storeTimings: newTimings });
+                        }}
+                        size="small"
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={3}>
+                      <TextField
+                        fullWidth
+                        label="Open Time"
+                        value={timing.openTime || ''}
+                        onChange={(e) => {
+                          const newTimings = [...(storeForm.storeTimings || [])];
+                          newTimings[index].openTime = e.target.value;
+                          setStoreForm({ ...storeForm, storeTimings: newTimings });
+                        }}
+                        size="small"
+                        placeholder="11:00 AM"
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={3}>
+                      <TextField
+                        fullWidth
+                        label="Close Time"
+                        value={timing.closeTime || ''}
+                        onChange={(e) => {
+                          const newTimings = [...(storeForm.storeTimings || [])];
+                          newTimings[index].closeTime = e.target.value;
+                          setStoreForm({ ...storeForm, storeTimings: newTimings });
+                        }}
+                        size="small"
+                        placeholder="08:30 PM"
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={3}>
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={timing.isClosed || false}
+                            onChange={(e) => {
+                              const newTimings = [...(storeForm.storeTimings || [])];
+                              newTimings[index].isClosed = e.target.checked;
+                              setStoreForm({ ...storeForm, storeTimings: newTimings });
+                            }}
+                          />
+                        }
+                        label="Closed"
+                      />
+                    </Grid>
+                  </Grid>
+                </Box>
+              ))}
+              <Button
+                startIcon={<Add />}
+                onClick={() => {
+                  const newTimings = [...(storeForm.storeTimings || []), { day: '', openTime: '', closeTime: '', isClosed: false }];
+                  setStoreForm({ ...storeForm, storeTimings: newTimings });
+                }}
+                size="small"
+              >
+                Add Timing
+              </Button>
+            </AccordionDetails>
+          </Accordion>
+
+          {/* Bank Details */}
+          <Accordion sx={{ mt: 2 }}>
+            <AccordionSummary expandIcon={<ExpandMore />}>
+              <Typography variant="h6">Bank Details</Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              {(storeForm.bankDetails || []).map((bank, index) => (
+                <Box key={index} sx={{ mb: 2, p: 2, border: `1px solid ${colors.divider}`, borderRadius: 1 }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                    <Typography variant="subtitle2">Bank {index + 1}</Typography>
+                    <IconButton
+                      size="small"
+                      color="error"
+                      onClick={() => {
+                        const newBanks = storeForm.bankDetails.filter((_, i) => i !== index);
+                        setStoreForm({ ...storeForm, bankDetails: newBanks });
+                      }}
+                    >
+                      <DeleteIcon />
+                    </IconButton>
+                  </Box>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Bank Name"
+                        value={bank.bankName || ''}
+                        onChange={(e) => {
+                          const newBanks = [...(storeForm.bankDetails || [])];
+                          newBanks[index].bankName = e.target.value;
+                          setStoreForm({ ...storeForm, bankDetails: newBanks });
+                        }}
+                        size="small"
+                        margin="normal"
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Account Number"
+                        value={bank.accountNumber || ''}
+                        onChange={(e) => {
+                          const newBanks = [...(storeForm.bankDetails || [])];
+                          newBanks[index].accountNumber = e.target.value;
+                          setStoreForm({ ...storeForm, bankDetails: newBanks });
+                        }}
+                        size="small"
+                        margin="normal"
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="IFSC Code"
+                        value={bank.ifscCode || ''}
+                        onChange={(e) => {
+                          const newBanks = [...(storeForm.bankDetails || [])];
+                          newBanks[index].ifscCode = e.target.value;
+                          setStoreForm({ ...storeForm, bankDetails: newBanks });
+                        }}
+                        size="small"
+                        margin="normal"
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Account Holder Name"
+                        value={bank.accountHolderName || ''}
+                        onChange={(e) => {
+                          const newBanks = [...(storeForm.bankDetails || [])];
+                          newBanks[index].accountHolderName = e.target.value;
+                          setStoreForm({ ...storeForm, bankDetails: newBanks });
+                        }}
+                        size="small"
+                        margin="normal"
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <TextField
+                        fullWidth
+                        label="Branch"
+                        value={bank.branch || ''}
+                        onChange={(e) => {
+                          const newBanks = [...(storeForm.bankDetails || [])];
+                          newBanks[index].branch = e.target.value;
+                          setStoreForm({ ...storeForm, bankDetails: newBanks });
+                        }}
+                        size="small"
+                        margin="normal"
+                      />
+                    </Grid>
+                  </Grid>
+                </Box>
+              ))}
+              <Button
+                startIcon={<Add />}
+                onClick={() => {
+                  const newBanks = [...(storeForm.bankDetails || []), { bankName: '', accountNumber: '', ifscCode: '', accountHolderName: '', branch: '' }];
+                  setStoreForm({ ...storeForm, bankDetails: newBanks });
+                }}
+                size="small"
+              >
+                Add Bank
+              </Button>
+            </AccordionDetails>
+          </Accordion>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setStoreDialogOpen(false)} disabled={loadingAction}>

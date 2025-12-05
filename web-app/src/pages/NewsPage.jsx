@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Card, CardContent, Typography, Button, Divider, Chip, Grid } from '@mui/material';
-import { LocationOn, Phone, Star, AccessTime, Share, CheckCircle, Instagram, Facebook, YouTube, Verified, LocalShipping, Security, TrendingUp, EmojiEvents } from '@mui/icons-material';
+import { Box, Card, CardContent, Typography, Button, Divider, Chip, Grid, CircularProgress, Alert } from '@mui/material';
+import { LocationOn, Phone, Star, AccessTime, Share, CheckCircle, Instagram, Facebook, YouTube, Verified, LocalShipping, Security, TrendingUp, EmojiEvents, Newspaper } from '@mui/icons-material';
 import api from '../config/api';
 import colors from '../theme/colors';
 
 function NewsPage() {
   const [storeInfo, setStoreInfo] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [newsPosts, setNewsPosts] = useState([]);
+  const [loadingNews, setLoadingNews] = useState(true);
 
   useEffect(() => {
     fetchStoreInfo();
+    fetchNews();
   }, []);
 
   const fetchStoreInfo = async () => {
@@ -34,6 +37,23 @@ function NewsPage() {
     }
   };
 
+  const fetchNews = async () => {
+    try {
+      setLoadingNews(true);
+      const response = await api.get('/news', {
+        params: { limit: 20, page: 1 }
+      });
+      if (response.data?.news) {
+        setNewsPosts(response.data.news);
+      }
+    } catch (error) {
+      console.error('Error fetching news:', error);
+      setNewsPosts([]);
+    } finally {
+      setLoadingNews(false);
+    }
+  };
+
   const handleSocialMediaClick = (url) => {
     if (url) {
       window.open(url, '_blank');
@@ -48,6 +68,100 @@ function NewsPage() {
 
   return (
     <Box sx={{ p: 3, maxWidth: 1000, mx: 'auto' }}>
+      {/* News Posts Section */}
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+            <Newspaper sx={{ mr: 1, color: colors.primary }} />
+            <Typography variant="h5" sx={{ fontWeight: 700 }}>
+              Latest News & Updates
+            </Typography>
+          </Box>
+          <Divider sx={{ mb: 2 }} />
+          {loadingNews ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : newsPosts.length === 0 ? (
+            <Alert severity="info">No news posts available at the moment. Check back soon!</Alert>
+          ) : (
+            <Grid container spacing={2}>
+              {newsPosts.map((post) => (
+                <Grid item xs={12} key={post._id}>
+                  <Card sx={{ 
+                    borderLeft: `4px solid ${colors.primary}`,
+                    '&:hover': { boxShadow: 4 }
+                  }}>
+                    <CardContent>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 1 }}>
+                        <Box sx={{ flex: 1 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                            <Chip 
+                              label={post.category || 'general'} 
+                              size="small" 
+                              sx={{ textTransform: 'capitalize' }}
+                            />
+                            {post.published && (
+                              <Chip 
+                                label="Published" 
+                                size="small" 
+                                color="success"
+                              />
+                            )}
+                          </Box>
+                          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
+                            {post.title}
+                          </Typography>
+                          <Typography variant="body2" sx={{ color: colors.textSecondary, mb: 2 }}>
+                            {new Date(post.publishedAt || post.createdAt).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric'
+                            })}
+                          </Typography>
+                        </Box>
+                      </Box>
+                      {post.image && (
+                        <Box sx={{ mb: 2, borderRadius: 2, overflow: 'hidden' }}>
+                          <img 
+                            src={post.image} 
+                            alt={post.title}
+                            style={{ width: '100%', maxHeight: '300px', objectFit: 'cover' }}
+                            onError={(e) => { e.target.style.display = 'none'; }}
+                          />
+                        </Box>
+                      )}
+                      <Typography 
+                        variant="body1" 
+                        sx={{ 
+                          color: colors.textPrimary, 
+                          lineHeight: 1.8,
+                          whiteSpace: 'pre-wrap'
+                        }}
+                      >
+                        {post.content}
+                      </Typography>
+                      {post.tags && post.tags.length > 0 && (
+                        <Box sx={{ mt: 2, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                          {post.tags.map((tag, idx) => (
+                            <Chip 
+                              key={idx} 
+                              label={tag} 
+                              size="small" 
+                              variant="outlined"
+                            />
+                          ))}
+                        </Box>
+                      )}
+                    </CardContent>
+                  </Card>
+                </Grid>
+              ))}
+            </Grid>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Welcome Card */}
       <Card sx={{ mb: 3, background: `linear-gradient(135deg, ${colors.primaryVeryLight} 0%, ${colors.white} 100%)`, border: `2px solid ${colors.primary}` }}>
         <CardContent>
