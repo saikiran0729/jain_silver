@@ -689,13 +689,14 @@ router.get('/', async (req, res) => {
       { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
     ];
     
-    // Check if "Show As It Is" is enabled
-    let showAsItIs = false;
+    // Check if "Show As It Is" is enabled (variable already declared at top of function)
+    // Re-fetch setting in case it changed, but don't redeclare the variable
     try {
       const showAsItIsSetting = await Settings.getSetting('showAsItIs');
       showAsItIs = showAsItIsSetting.value;
     } catch (settingsError) {
-      console.warn('Could not fetch showAsItIs setting, defaulting to false:', settingsError.message);
+      console.warn('Could not fetch showAsItIs setting in fallback, using previous value:', settingsError.message);
+      // Keep existing showAsItIs value from top of function
     }
     
     let allRates;
