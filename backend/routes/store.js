@@ -439,6 +439,14 @@ router.put('/info', auth, adminAuth, async (req, res) => {
     // Re-fetch to ensure we have the latest data
     storeInfo = await StoreInfo.findById(storeInfo._id);
     
+    if (!storeInfo) {
+      console.error('❌ Store info not found after save');
+      return res.status(500).json({ 
+        message: 'Store information was saved but could not be retrieved',
+        error: 'Please refresh and try again'
+      });
+    }
+    
     const savedInfo = storeInfo.toObject ? storeInfo.toObject() : storeInfo;
     console.log('✅ Store info updated successfully');
     
@@ -448,10 +456,28 @@ router.put('/info', auth, adminAuth, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Update store info error:', error);
+    console.error('Error name:', error.name);
+    console.error('Error message:', error.message);
     console.error('Error stack:', error.stack);
+    
+    // Handle specific MongoDB errors
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ 
+        message: 'Validation error', 
+        error: error.message
+      });
+    }
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({ 
+        message: 'Invalid data format', 
+        error: error.message
+      });
+    }
+    
     res.status(500).json({ 
       message: 'Server error', 
-      error: error.message,
+      error: error.message || 'An unexpected error occurred',
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }

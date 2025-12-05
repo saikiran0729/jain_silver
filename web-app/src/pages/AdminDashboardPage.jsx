@@ -444,8 +444,22 @@ function AdminDashboardPage() {
         bankDetails: Array.isArray(storeForm.bankDetails) ? storeForm.bankDetails : []
       };
       
+      // Validate data before sending
+      if (!dataToSend.welcomeMessage && !dataToSend.address && !dataToSend.phoneNumber) {
+        alert('Please fill in at least one field (Welcome Message, Address, or Phone Number)');
+        return;
+      }
+      
       console.log('Saving store info:', JSON.stringify(dataToSend, null, 2));
-      const response = await api.put('/store/info', dataToSend);
+      console.log('Request URL:', '/store/info');
+      console.log('Request method:', 'PUT');
+      
+      const response = await api.put('/store/info', dataToSend, {
+        timeout: 30000,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
       console.log('Store info saved response:', response.data);
       
       if (response.data && response.data.storeInfo) {
@@ -468,8 +482,38 @@ function AdminDashboardPage() {
       await fetchStoreInfo(); // Refresh store info display
     } catch (error) {
       console.error('Error saving store info:', error);
-      console.error('Error response:', error.response?.data);
-      alert(error.response?.data?.message || error.response?.data?.error || 'Failed to update store information. Please check console for details.');
+      console.error('Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        config: {
+          url: error.config?.url,
+          method: error.config?.method,
+          data: error.config?.data
+        }
+      });
+      
+      let errorMessage = 'Failed to update store information.';
+      if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      } else if (error.message) {
+        errorMessage = `Error: ${error.message}`;
+      }
+      
+      if (error.response?.status === 401) {
+        errorMessage = 'Unauthorized. Please login again.';
+      } else if (error.response?.status === 403) {
+        errorMessage = 'Forbidden. Admin access required.';
+      } else if (error.response?.status === 503) {
+        errorMessage = 'Database connection unavailable. Please try again later.';
+      } else if (!error.response) {
+        errorMessage = 'Network error. Please check your connection and try again.';
+      }
+      
+      alert(errorMessage);
     } finally {
       setLoadingAction(false);
     }
