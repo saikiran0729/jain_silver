@@ -228,7 +228,8 @@ router.post('/register',
     const uploadMiddleware = upload.fields([
       { name: 'aadharFront', maxCount: 1 },
       { name: 'aadharBack', maxCount: 1 },
-      { name: 'panImage', maxCount: 1 }
+      { name: 'panImage', maxCount: 1 },
+      { name: 'selfie', maxCount: 1 }
     ]);
     
     // Add timeout to multer processing (increased for large files)
@@ -253,7 +254,7 @@ router.post('/register',
           return res.status(400).json({ message: 'File size too large. Maximum 5MB allowed per file.' });
         }
         if (err.code === 'LIMIT_FILE_COUNT') {
-          return res.status(400).json({ message: 'Too many files. Maximum 3 files allowed.' });
+          return res.status(400).json({ message: 'Too many files. Maximum 4 files allowed (Aadhar Front, Aadhar Back, PAN Image, Selfie).' });
         }
         if (err.message && err.message.includes('Only images')) {
           return res.status(400).json({ message: 'Only image files (JPEG, PNG) are allowed.' });
@@ -458,6 +459,11 @@ router.post('/register',
             location: panImageFile?.location,
             key: panImageFile?.key,
             storage: panImageFile?.storage
+          },
+          selfie: {
+            location: selfieFile?.location,
+            key: selfieFile?.key,
+            storage: selfieFile?.storage
           }
         });
 

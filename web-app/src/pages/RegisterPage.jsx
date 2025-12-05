@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -8,6 +8,8 @@ import {
   Button,
   Typography,
   Alert,
+  Menu,
+  MenuItem,
 } from '@mui/material';
 import api from '../config/api';
 import colors from '../theme/colors';
@@ -32,9 +34,45 @@ function RegisterPage() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [anchorEl, setAnchorEl] = useState(null);
+  const [currentField, setCurrentField] = useState(null);
+  const cameraInputs = useRef({});
+  const galleryInputs = useRef({});
 
   const handleFileChange = (field, event) => {
-    setFiles({ ...files, [field]: event.target.files[0] });
+    if (event.target.files && event.target.files[0]) {
+      setFiles({ ...files, [field]: event.target.files[0] });
+    }
+  };
+
+  const handleUploadClick = (event, field) => {
+    setCurrentField(field);
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleMenuClose = () => {
+    setAnchorEl(null);
+    setCurrentField(null);
+  };
+
+  const handleCameraSelect = () => {
+    if (currentField) {
+      const input = cameraInputs.current[currentField];
+      if (input) {
+        input.click();
+      }
+    }
+    handleMenuClose();
+  };
+
+  const handleGallerySelect = () => {
+    if (currentField) {
+      const input = galleryInputs.current[currentField];
+      if (input) {
+        input.click();
+      }
+    }
+    handleMenuClose();
   };
 
   const handleRegister = async () => {
@@ -109,23 +147,127 @@ function RegisterPage() {
           <TextField fullWidth label="Password" type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} margin="normal" />
           <TextField fullWidth label="Confirm Password" type="password" value={formData.confirmPassword} onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })} margin="normal" />
           <TextField fullWidth label="Aadhar Number" value={formData.aadharNumber} onChange={(e) => setFormData({ ...formData, aadharNumber: e.target.value })} margin="normal" />
-          <Button variant="outlined" component="label" fullWidth sx={{ mt: 2 }}>
-            Upload Aadhar Front
-            <input type="file" hidden accept="image/*" onChange={(e) => handleFileChange('aadharFront', e)} />
+          <Button 
+            variant="outlined" 
+            fullWidth 
+            sx={{ mt: 2 }}
+            onClick={(e) => handleUploadClick(e, 'aadharFront')}
+          >
+            {files.aadharFront ? 'Aadhar Front Uploaded ✓' : 'Upload Aadhar Front'}
           </Button>
-          <Button variant="outlined" component="label" fullWidth sx={{ mt: 1 }}>
-            Upload Aadhar Back
-            <input type="file" hidden accept="image/*" onChange={(e) => handleFileChange('aadharBack', e)} />
+          <input
+            type="file"
+            hidden
+            accept="image/*"
+            capture="environment"
+            ref={(input) => {
+              if (input) cameraInputs.current.aadharFront = input;
+            }}
+            onChange={(e) => handleFileChange('aadharFront', e)}
+          />
+          <input
+            type="file"
+            hidden
+            accept="image/*"
+            ref={(input) => {
+              if (input) galleryInputs.current.aadharFront = input;
+            }}
+            onChange={(e) => handleFileChange('aadharFront', e)}
+          />
+          <Button 
+            variant="outlined" 
+            fullWidth 
+            sx={{ mt: 1 }}
+            onClick={(e) => handleUploadClick(e, 'aadharBack')}
+          >
+            {files.aadharBack ? 'Aadhar Back Uploaded ✓' : 'Upload Aadhar Back'}
           </Button>
+          <input
+            type="file"
+            hidden
+            accept="image/*"
+            capture="environment"
+            ref={(input) => {
+              if (input) cameraInputs.current.aadharBack = input;
+            }}
+            onChange={(e) => handleFileChange('aadharBack', e)}
+          />
+          <input
+            type="file"
+            hidden
+            accept="image/*"
+            ref={(input) => {
+              if (input) galleryInputs.current.aadharBack = input;
+            }}
+            onChange={(e) => handleFileChange('aadharBack', e)}
+          />
           <TextField fullWidth label="PAN Number" value={formData.panNumber} onChange={(e) => setFormData({ ...formData, panNumber: e.target.value.toUpperCase() })} margin="normal" />
-          <Button variant="outlined" component="label" fullWidth sx={{ mt: 1 }}>
-            Upload PAN Image
-            <input type="file" hidden accept="image/*" onChange={(e) => handleFileChange('panImage', e)} />
+          <Button 
+            variant="outlined" 
+            fullWidth 
+            sx={{ mt: 1 }}
+            onClick={(e) => handleUploadClick(e, 'panImage')}
+          >
+            {files.panImage ? 'PAN Image Uploaded ✓' : 'Upload PAN Image'}
           </Button>
-          <Button variant="outlined" component="label" fullWidth sx={{ mt: 1 }}>
+          <input
+            type="file"
+            hidden
+            accept="image/*"
+            capture="environment"
+            ref={(input) => {
+              if (input) cameraInputs.current.panImage = input;
+            }}
+            onChange={(e) => handleFileChange('panImage', e)}
+          />
+          <input
+            type="file"
+            hidden
+            accept="image/*"
+            ref={(input) => {
+              if (input) galleryInputs.current.panImage = input;
+            }}
+            onChange={(e) => handleFileChange('panImage', e)}
+          />
+          <Button 
+            variant="outlined" 
+            fullWidth 
+            sx={{ mt: 1 }}
+            onClick={(e) => handleUploadClick(e, 'selfie')}
+          >
             {files.selfie ? 'Selfie Uploaded ✓' : 'Upload Selfie'}
-            <input type="file" hidden accept="image/*" capture="user" onChange={(e) => handleFileChange('selfie', e)} />
           </Button>
+          <input
+            type="file"
+            hidden
+            accept="image/*"
+            capture="user"
+            ref={(input) => {
+              if (input) cameraInputs.current.selfie = input;
+            }}
+            onChange={(e) => handleFileChange('selfie', e)}
+          />
+          <input
+            type="file"
+            hidden
+            accept="image/*"
+            ref={(input) => {
+              if (input) galleryInputs.current.selfie = input;
+            }}
+            onChange={(e) => handleFileChange('selfie', e)}
+          />
+          <Menu
+            anchorEl={anchorEl}
+            open={Boolean(anchorEl)}
+            onClose={handleMenuClose}
+          >
+            <MenuItem onClick={handleCameraSelect}>
+              📷 Camera
+            </MenuItem>
+            <MenuItem onClick={handleGallerySelect}>
+              📁 Gallery
+            </MenuItem>
+          </Menu>
           <Button fullWidth variant="contained" onClick={handleRegister} disabled={loading} sx={{ mt: 3 }}>
             {loading ? 'Registering...' : 'Register'}
           </Button>

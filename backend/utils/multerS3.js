@@ -12,7 +12,7 @@ const upload = multer({
   limits: { 
     fileSize: 5 * 1024 * 1024, // 5MB limit per file
     fieldSize: 10 * 1024 * 1024, // 10MB for fields
-    files: 3, // Maximum 3 files
+    files: 4, // Maximum 4 files (aadharFront, aadharBack, panImage, selfie)
     fields: 10 // Maximum 10 fields
   },
   fileFilter: (req, file, cb) => {
