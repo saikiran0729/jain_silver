@@ -43,6 +43,11 @@ const formatDocumentUrls = (documents) => {
     };
   }
   
+  // Format selfie
+  if (documents.selfie) {
+    formatted.selfie = getCloudFrontUrl(documents.selfie);
+  }
+  
   // Format other documents
   if (documents.other && Array.isArray(documents.other)) {
     formatted.other = documents.other.map(doc => ({

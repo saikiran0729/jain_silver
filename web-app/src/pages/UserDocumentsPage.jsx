@@ -317,9 +317,24 @@ function UserDocumentsPage() {
                   </Box>
                 </ImageListItem>
               )}
+              {user.documents.selfie && (
+                <ImageListItem>
+                  <img 
+                    src={user.documents.selfie} 
+                    alt="Selfie" 
+                    style={{ width: '100%', height: 'auto', borderRadius: '8px' }}
+                    loading="lazy"
+                  />
+                  <Box sx={{ mt: 1, textAlign: 'center' }}>
+                    <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                      Selfie
+                    </Typography>
+                  </Box>
+                </ImageListItem>
+              )}
             </ImageList>
           )}
-          {(!user?.documents?.aadhar?.front && !user?.documents?.aadhar?.back && !user?.documents?.pan?.image) && (
+          {(!user?.documents?.aadhar?.front && !user?.documents?.aadhar?.back && !user?.documents?.pan?.image && !user?.documents?.selfie) && (
             <Typography variant="body2" sx={{ color: colors.textSecondary, textAlign: 'center', py: 4 }}>
               No documents uploaded yet
             </Typography>
