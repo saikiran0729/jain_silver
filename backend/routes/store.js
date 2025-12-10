@@ -29,25 +29,11 @@ router.get('/', async (req, res) => {
       mapLink: 'https://www.google.com/maps/place/16%C2%B030\'41.3%22N+80%C2%B037\'33.3%22E/@16.511483,80.62592,17z/data=!3m1!1b4!4m4!3m3!8m2!3d16.511483!4d80.62592?entry=ttu&g_ep=EgoyMDI1MTEyMy4xIKXMDSoASAFQAw%3D%3D',
       bankDetails: [
         {
-          bankName: 'State Bank of India',
-          accountNumber: '50200012345678',
-          ifscCode: 'SBIN0001234',
-          accountHolderName: 'Jain Silver Plaza',
-          branch: 'Governerpet, Vijayawada'
-        },
-        {
-          bankName: 'HDFC Bank',
-          accountNumber: '50100234567890',
-          ifscCode: 'HDFC0002345',
-          accountHolderName: 'Jain Silver Plaza',
-          branch: 'Benz Circle, Vijayawada'
-        },
-        {
-          bankName: 'ICICI Bank',
-          accountNumber: '60345678901234',
-          ifscCode: 'ICIC0003456',
-          accountHolderName: 'Jain Silver Plaza',
-          branch: 'MG Road, Vijayawada'
+          bankName: 'HDFC BANK',
+          accountNumber: '50200039209361',
+          ifscCode: 'HDFC0009380',
+          accountHolderName: 'jain silver plaza',
+          branch: 'besant road,vijayawada'
         }
       ]
     };
@@ -112,25 +98,11 @@ router.get('/', async (req, res) => {
       mapLink: 'https://www.google.com/maps/place/16%C2%B030\'41.3%22N+80%C2%B037\'33.3%22E/@16.511483,80.62592,17z/data=!3m1!1b4!4m4!3m3!8m2!3d16.511483!4d80.62592?entry=ttu&g_ep=EgoyMDI1MTEyMy4xIKXMDSoASAFQAw%3D%3D',
       bankDetails: [
         {
-          bankName: 'State Bank of India',
-          accountNumber: '50200012345678',
-          ifscCode: 'SBIN0001234',
-          accountHolderName: 'Jain Silver Plaza',
-          branch: 'Governerpet, Vijayawada'
-        },
-        {
-          bankName: 'HDFC Bank',
-          accountNumber: '50100234567890',
-          ifscCode: 'HDFC0002345',
-          accountHolderName: 'Jain Silver Plaza',
-          branch: 'Benz Circle, Vijayawada'
-        },
-        {
-          bankName: 'ICICI Bank',
-          accountNumber: '60345678901234',
-          ifscCode: 'ICIC0003456',
-          accountHolderName: 'Jain Silver Plaza',
-          branch: 'MG Road, Vijayawada'
+          bankName: 'HDFC BANK',
+          accountNumber: '50200039209361',
+          ifscCode: 'HDFC0009380',
+          accountHolderName: 'jain silver plaza',
+          branch: 'besant road,vijayawada'
         }
       ]
     });
@@ -176,25 +148,11 @@ router.get('/info', async (req, res) => {
       mapLink: 'https://www.google.com/maps/place/16%C2%B030\'41.3%22N+80%C2%B037\'33.3%22E/@16.511483,80.62592,17z/data=!3m1!1b4!4m4!3m3!8m2!3d16.511483!4d80.62592?entry=ttu&g_ep=EgoyMDI1MTEyMy4xIKXMDSoASAFQAw%3D%3D',
       bankDetails: [
         {
-          bankName: 'State Bank of India',
-          accountNumber: '50200012345678',
-          ifscCode: 'SBIN0001234',
-          accountHolderName: 'Jain Silver Plaza',
-          branch: 'Governerpet, Vijayawada'
-        },
-        {
-          bankName: 'HDFC Bank',
-          accountNumber: '50100234567890',
-          ifscCode: 'HDFC0002345',
-          accountHolderName: 'Jain Silver Plaza',
-          branch: 'Benz Circle, Vijayawada'
-        },
-        {
-          bankName: 'ICICI Bank',
-          accountNumber: '60345678901234',
-          ifscCode: 'ICIC0003456',
-          accountHolderName: 'Jain Silver Plaza',
-          branch: 'MG Road, Vijayawada'
+          bankName: 'HDFC BANK',
+          accountNumber: '50200039209361',
+          ifscCode: 'HDFC0009380',
+          accountHolderName: 'jain silver plaza',
+          branch: 'besant road,vijayawada'
         }
       ]
     };
@@ -275,25 +233,11 @@ router.get('/info', async (req, res) => {
       mapLink: 'https://www.google.com/maps/place/16%C2%B030\'41.3%22N+80%C2%B037\'33.3%22E/@16.511483,80.62592,17z/data=!3m1!1b4!4m4!3m3!8m2!3d16.511483!4d80.62592?entry=ttu&g_ep=EgoyMDI1MTEyMy4xIKXMDSoASAFQAw%3D%3D',
       bankDetails: [
         {
-          bankName: 'State Bank of India',
-          accountNumber: '50200012345678',
-          ifscCode: 'SBIN0001234',
-          accountHolderName: 'Jain Silver Plaza',
-          branch: 'Governerpet, Vijayawada'
-        },
-        {
-          bankName: 'HDFC Bank',
-          accountNumber: '50100234567890',
-          ifscCode: 'HDFC0002345',
-          accountHolderName: 'Jain Silver Plaza',
-          branch: 'Benz Circle, Vijayawada'
-        },
-        {
-          bankName: 'ICICI Bank',
-          accountNumber: '60345678901234',
-          ifscCode: 'ICIC0003456',
-          accountHolderName: 'Jain Silver Plaza',
-          branch: 'MG Road, Vijayawada'
+          bankName: 'HDFC BANK',
+          accountNumber: '50200039209361',
+          ifscCode: 'HDFC0009380',
+          accountHolderName: 'jain silver plaza',
+          branch: 'besant road,vijayawada'
         }
       ]
     });
