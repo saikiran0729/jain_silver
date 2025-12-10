@@ -8,40 +8,29 @@ router.get('/', async (req, res) => {
   try {
     const mongoose = require('mongoose');
     
-    // Use centralized connection helper if available, otherwise connect directly
+    // Check MongoDB connection (same pattern as auth route that works)
     let isConnected = false;
-    if (req.app.locals && req.app.locals.ensureDBConnection) {
-      isConnected = await req.app.locals.ensureDBConnection();
+    if (mongoose.connection.readyState === 1) {
+      isConnected = true;
     } else {
-      // Fallback: try to connect directly with better timeout for serverless
-      if (mongoose.connection.readyState !== 1) {
-        try {
-          const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/jain_silver';
-          await mongoose.connect(mongoURI, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-            serverSelectionTimeoutMS: 10000, // Increased to 10s for Vercel serverless
-            socketTimeoutMS: 45000,
-            maxPoolSize: 1, // Serverless-friendly pool size
-            minPoolSize: 0,
-          });
-          isConnected = mongoose.connection.readyState === 1;
-        } catch (connError) {
-          console.error('❌ MongoDB connection failed:', connError.message || connError);
-          console.error('   Error details:', {
-            name: connError.name,
-            code: connError.code,
-            hasMongoURI: !!process.env.MONGODB_URI
-          });
-          isConnected = false;
-        }
-      } else {
-        isConnected = true;
+      // Try to connect
+      try {
+        await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/jain_silver', {
+          useNewUrlParser: true,
+          useUnifiedTopology: true,
+          serverSelectionTimeoutMS: 10000, // Increased timeout for serverless
+          socketTimeoutMS: 45000,
+          maxPoolSize: 1,
+          minPoolSize: 0,
+        });
+        isConnected = mongoose.connection.readyState === 1;
+      } catch (connError) {
+        console.error('MongoDB connection failed:', connError.message);
+        isConnected = false;
       }
     }
     
-    if (!isConnected || mongoose.connection.readyState !== 1) {
-      console.error('⚠️ MongoDB connection not ready, returning empty data');
+    if (!isConnected) {
       return res.json({
         message: 'Users API',
         data: [],
