@@ -21,7 +21,7 @@ function ProfilePage() {
   const fetchProfile = async () => {
     try {
       const response = await api.get('/users/profile', {
-        timeout: 10000
+        timeout: 30000 // Increased to 30 seconds for serverless MongoDB connection
       });
       if (response.data) {
         setProfile(response.data);

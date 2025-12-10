@@ -60,11 +60,28 @@ function AuthPage() {
         setError('Invalid response from server');
       }
     } catch (err) {
-      const errorMessage =
-        err.response?.data?.message ||
-        err.response?.data?.errors?.[0]?.msg ||
-        err.message ||
-        'Sign in failed. Please check your connection and try again.';
+      // Handle different error types
+      let errorMessage = 'Sign in failed. Please check your connection and try again.';
+      
+      if (err.response?.status === 400) {
+        // Validation errors
+        const errors = err.response?.data?.errors;
+        if (errors && Array.isArray(errors) && errors.length > 0) {
+          errorMessage = errors.map(e => e.msg || e.message).join(', ');
+        } else {
+          errorMessage = err.response?.data?.message || 'Invalid credentials. Please check your email/phone and password.';
+        }
+      } else if (err.response?.status === 401) {
+        errorMessage = 'Invalid credentials. Please check your email/phone and password.';
+      } else if (err.response?.status === 503) {
+        errorMessage = 'Database connection failed. Please try again in a moment.';
+      } else if (err.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err.response?.data?.errors?.[0]?.msg) {
+        errorMessage = err.response.data.errors[0].msg;
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
       
       // Show status information if available
       const userStatus = err.response?.data?.userStatus || err.response?.data?.status;

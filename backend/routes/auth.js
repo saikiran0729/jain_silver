@@ -726,7 +726,10 @@ router.post('/signin',
           await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/jain_silver', {
             useNewUrlParser: true,
             useUnifiedTopology: true,
-            serverSelectionTimeoutMS: 5000,
+            serverSelectionTimeoutMS: 10000, // Increased to 10s for serverless
+            socketTimeoutMS: 45000,
+            maxPoolSize: 1,
+            minPoolSize: 0,
           });
           console.log('✅ MongoDB connected for signin');
         } catch (connError) {

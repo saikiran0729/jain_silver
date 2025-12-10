@@ -105,6 +105,28 @@ router.get('/', async (req, res) => {
 // Get current user profile
 router.get('/profile', auth, async (req, res) => {
   try {
+    const mongoose = require('mongoose');
+    
+    // Ensure MongoDB connection
+    if (mongoose.connection.readyState !== 1) {
+      try {
+        await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/jain_silver', {
+          useNewUrlParser: true,
+          useUnifiedTopology: true,
+          serverSelectionTimeoutMS: 10000,
+          socketTimeoutMS: 45000,
+          maxPoolSize: 1,
+          minPoolSize: 0,
+        });
+      } catch (connError) {
+        console.error('MongoDB connection failed for profile:', connError.message);
+        return res.status(503).json({ 
+          message: 'Database connection failed', 
+          error: 'Please try again later' 
+        });
+      }
+    }
+    
     const user = await User.findById(req.user.userId).select('-password -otp -resetPasswordOTP');
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
