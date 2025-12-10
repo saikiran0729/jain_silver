@@ -7,18 +7,42 @@ const auth = require('../middleware/auth');
 router.get('/', async (req, res) => {
   try {
     const mongoose = require('mongoose');
-    // Check MongoDB connection
-    if (mongoose.connection.readyState !== 1) {
-      // Try to connect
-      try {
-        await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/jain_silver', {
-          useNewUrlParser: true,
-          useUnifiedTopology: true,
-          serverSelectionTimeoutMS: 5000,
-        });
-      } catch (connError) {
-        console.error('MongoDB connection failed, returning empty data:', connError);
-        return res.json({
+    
+    // Use centralized connection helper if available, otherwise connect directly
+    let isConnected = false;
+    if (req.app.locals && req.app.locals.ensureDBConnection) {
+      isConnected = await req.app.locals.ensureDBConnection();
+    } else {
+      // Fallback: try to connect directly with better timeout for serverless
+      if (mongoose.connection.readyState !== 1) {
+        try {
+          const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/jain_silver';
+          await mongoose.connect(mongoURI, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+            serverSelectionTimeoutMS: 10000, // Increased to 10s for Vercel serverless
+            socketTimeoutMS: 45000,
+            maxPoolSize: 1, // Serverless-friendly pool size
+            minPoolSize: 0,
+          });
+          isConnected = mongoose.connection.readyState === 1;
+        } catch (connError) {
+          console.error('❌ MongoDB connection failed:', connError.message || connError);
+          console.error('   Error details:', {
+            name: connError.name,
+            code: connError.code,
+            hasMongoURI: !!process.env.MONGODB_URI
+          });
+          isConnected = false;
+        }
+      } else {
+        isConnected = true;
+      }
+    }
+    
+    if (!isConnected || mongoose.connection.readyState !== 1) {
+      console.error('⚠️ MongoDB connection not ready, returning empty data');
+      return res.json({
         message: 'Users API',
         data: [],
         pagination: {
@@ -32,7 +56,7 @@ router.get('/', async (req, res) => {
           approved: 0,
           pending: 0,
           rejected: 0,
-          note: 'MongoDB connection not ready'
+          note: 'MongoDB connection not ready. Check MONGODB_URI environment variable and MongoDB Atlas network access.'
         },
         endpoints: {
           profile: {
@@ -41,9 +65,7 @@ router.get('/', async (req, res) => {
             description: 'Get or update user profile (requires authentication)'
           }
         }
-        });
-        return;
-      }
+      });
     }
 
     const { status, limit = 10, page = 1 } = req.query;
