@@ -1,4 +1,4 @@
-import React, { useContext } from 'react';
+import React, { useContext, useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
@@ -7,11 +7,20 @@ import {
   Typography,
   Avatar,
   Chip,
+  IconButton,
+  Menu,
+  MenuItem,
+  Drawer,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemText,
 } from '@mui/material';
 import {
   Newspaper as NewsIcon,
   AccountCircle as ProfileIcon,
   TrendingUp as RatesIcon,
+  Menu as MenuIcon,
 } from '@mui/icons-material';
 import { Button } from '@mui/material';
 import { AuthContext } from '../context/AuthContext';
@@ -21,6 +30,7 @@ function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useContext(AuthContext);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
 
   return (
@@ -56,6 +66,7 @@ function Layout() {
             }}
             onClick={() => navigate('/')}
           />
+          {/* Desktop Navigation */}
           <Box sx={{ display: { xs: 'none', md: 'flex' }, gap: 0, alignItems: 'center', flex: 1, justifyContent: 'center' }}>
             <Button
               onClick={() => navigate('/')}
@@ -115,7 +126,9 @@ function Layout() {
               Profile
             </Button>
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+
+          {/* Location Chip - Center on mobile, hidden on desktop */}
+          <Box sx={{ display: { xs: 'flex', md: 'none' }, alignItems: 'center', justifyContent: 'center', flex: 1 }}>
             <Chip
               label={user?.location || 'Andhra Pradesh'}
               size="small"
@@ -125,12 +138,100 @@ function Layout() {
                 fontWeight: 600,
                 fontSize: '0.75rem',
                 height: 28,
-                display: { xs: 'none', sm: 'flex' },
               }}
             />
           </Box>
+
+          {/* Right side - Mobile Menu Button */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {/* Mobile Menu Button - At the end */}
+            <IconButton
+              sx={{ display: { xs: 'flex', md: 'none' }, color: '#333333' }}
+              onClick={() => setMobileMenuOpen(true)}
+            >
+              <MenuIcon />
+            </IconButton>
+          </Box>
         </Toolbar>
       </AppBar>
+
+      {/* Mobile Drawer Menu */}
+      <Drawer
+        anchor="right"
+        open={mobileMenuOpen}
+        onClose={() => setMobileMenuOpen(false)}
+        sx={{
+          display: { xs: 'block', md: 'none' },
+        }}
+      >
+        <Box sx={{ width: 250, pt: 2 }}>
+          <List>
+            <ListItem disablePadding>
+              <ListItemButton
+                onClick={() => {
+                  navigate('/');
+                  setMobileMenuOpen(false);
+                }}
+                sx={{
+                  backgroundColor: location.pathname === '/' ? 'rgba(211, 47, 47, 0.1)' : 'transparent',
+                  borderLeft: location.pathname === '/' ? '4px solid #d32f2f' : '4px solid transparent',
+                }}
+              >
+                <RatesIcon sx={{ mr: 2, color: location.pathname === '/' ? '#d32f2f' : '#333333' }} />
+                <ListItemText
+                  primary="Live Rates"
+                  sx={{
+                    color: location.pathname === '/' ? '#d32f2f' : '#333333',
+                    fontWeight: location.pathname === '/' ? 700 : 500,
+                  }}
+                />
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding>
+              <ListItemButton
+                onClick={() => {
+                  navigate('/news');
+                  setMobileMenuOpen(false);
+                }}
+                sx={{
+                  backgroundColor: location.pathname === '/news' ? 'rgba(211, 47, 47, 0.1)' : 'transparent',
+                  borderLeft: location.pathname === '/news' ? '4px solid #d32f2f' : '4px solid transparent',
+                }}
+              >
+                <NewsIcon sx={{ mr: 2, color: location.pathname === '/news' ? '#d32f2f' : '#333333' }} />
+                <ListItemText
+                  primary="News"
+                  sx={{
+                    color: location.pathname === '/news' ? '#d32f2f' : '#333333',
+                    fontWeight: location.pathname === '/news' ? 700 : 500,
+                  }}
+                />
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding>
+              <ListItemButton
+                onClick={() => {
+                  navigate('/profile');
+                  setMobileMenuOpen(false);
+                }}
+                sx={{
+                  backgroundColor: location.pathname === '/profile' ? 'rgba(211, 47, 47, 0.1)' : 'transparent',
+                  borderLeft: location.pathname === '/profile' ? '4px solid #d32f2f' : '4px solid transparent',
+                }}
+              >
+                <ProfileIcon sx={{ mr: 2, color: location.pathname === '/profile' ? '#d32f2f' : '#333333' }} />
+                <ListItemText
+                  primary="Profile"
+                  sx={{
+                    color: location.pathname === '/profile' ? '#d32f2f' : '#333333',
+                    fontWeight: location.pathname === '/profile' ? 700 : 500,
+                  }}
+                />
+              </ListItemButton>
+            </ListItem>
+          </List>
+        </Box>
+      </Drawer>
 
       <Box sx={{ flexGrow: 1, backgroundColor: colors.background }}>
         <Outlet />
