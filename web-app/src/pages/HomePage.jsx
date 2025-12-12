@@ -298,7 +298,7 @@ function HomePage() {
   }
 
   return (
-    <Box sx={{ p: 2, maxWidth: 1200, mx: 'auto', height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ p: { xs: 1, sm: 2 }, maxWidth: 1200, mx: 'auto', height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography
           variant="h5"
@@ -320,12 +320,12 @@ function HomePage() {
       {rates.length === 0 ? (
         <Alert severity="info">No rates available</Alert>
       ) : (
-        <TableContainer component={Paper} sx={{ boxShadow: 2, flex: 1, overflow: 'hidden' }}>
-          <Table sx={{ minWidth: 650 }} size="small" stickyHeader>
+        <TableContainer component={Paper} sx={{ boxShadow: 2, flex: 1, overflow: 'auto' }}>
+          <Table sx={{ minWidth: { xs: 400, sm: 650 } }} size="small" stickyHeader>
             <TableHead>
               <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
-                <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', py: 1 }}>Product</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 700, fontSize: '0.85rem', py: 1 }}>Sell Price</TableCell>
+                <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 1 }}>Product</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 1, whiteSpace: 'nowrap' }}>Sell Price</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -388,13 +388,13 @@ function HomePage() {
                         </Box>
                       </Box>
                     </TableCell>
-                    <TableCell align="right" sx={{ py: 0.75 }}>
+                    <TableCell align="right" sx={{ py: 0.75, whiteSpace: 'nowrap' }}>
                       <Typography
                         variant="body2"
                         sx={{
                           fontWeight: 700,
                           color: rateColor || '#d32f2f',
-                          fontSize: '0.95rem',
+                          fontSize: { xs: '0.85rem', sm: '0.95rem' },
                         }}
                       >
                         {formatPrice(rate.rate)}
@@ -403,7 +403,7 @@ function HomePage() {
                         variant="caption"
                         sx={{
                           color: colors.textSecondary,
-                          fontSize: '0.7rem',
+                          fontSize: { xs: '0.65rem', sm: '0.7rem' },
                           display: 'block',
                         }}
                       >
