@@ -312,7 +312,7 @@ function HomePage() {
   }
 
   return (
-    <Box sx={{ p: { xs: 1, sm: 2 }, maxWidth: 1200, mx: 'auto', height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ p: { xs: 0.5, sm: 1 }, maxWidth: 1000, mx: 'auto', height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography
           variant="h5"
@@ -335,11 +335,11 @@ function HomePage() {
         <Alert severity="info">No rates available</Alert>
       ) : (
         <TableContainer component={Paper} sx={{ boxShadow: 2, flex: 1, overflow: 'auto' }}>
-          <Table sx={{ minWidth: { xs: 400, sm: 650 } }} size="small" stickyHeader>
+          <Table sx={{ minWidth: { xs: 350, sm: 550 }, width: '100%' }} size="small" stickyHeader>
             <TableHead>
               <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
-                <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 0.75, px: 1 }}>Product</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 0.75, px: 1, whiteSpace: 'nowrap' }}>Sell Price</TableCell>
+                <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.7rem', sm: '0.8rem' }, py: 0.5, px: 0.75 }}>Product</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700, fontSize: { xs: '0.7rem', sm: '0.8rem' }, py: 0.5, px: 0.75, whiteSpace: 'nowrap' }}>Sell Price</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -365,16 +365,16 @@ function HomePage() {
                         : 'white',
                     }}
                   >
-                    <TableCell sx={{ py: 0.5, px: 1 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <TableCell sx={{ py: 0.4, px: 0.75 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                         {productImage ? (
                           <Box
                             component="img"
                             src={productImage}
                             alt={rate.name}
                             sx={{
-                              width: 36,
-                              height: 36,
+                              width: 32,
+                              height: 32,
                               borderRadius: 0.5,
                               objectFit: 'cover',
                               border: `1px solid ${colors.border}`,
@@ -387,10 +387,10 @@ function HomePage() {
                         ) : (
                           <Avatar
                             sx={{
-                              width: 36,
-                              height: 36,
+                              width: 32,
+                              height: 32,
                               backgroundColor: colors.primaryVeryLight,
-                              fontSize: 14,
+                              fontSize: 12,
                               flexShrink: 0,
                             }}
                           >
@@ -398,16 +398,16 @@ function HomePage() {
                           </Avatar>
                         )}
                         <Box sx={{ minWidth: 0 }}>
-                          <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.75rem', lineHeight: 1.1 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.7rem', lineHeight: 1.1 }}>
                             {rate.name}
                           </Typography>
-                          <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.65rem', lineHeight: 1.1 }}>
+                          <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.6rem', lineHeight: 1.1 }}>
                             {rate.purity} • {formatWeight(rate.weight)}
                           </Typography>
                         </Box>
                       </Box>
                     </TableCell>
-                    <TableCell align="right" sx={{ py: 0.5, px: 1, whiteSpace: 'nowrap' }}>
+                    <TableCell align="right" sx={{ py: 0.4, px: 0.75, whiteSpace: 'nowrap' }}>
                       <Typography
                         variant="body2"
                         sx={{
