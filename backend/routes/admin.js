@@ -660,6 +660,52 @@ router.post('/toggle-show-as-it-is', auth, adminAuth, async (req, res) => {
   }
 });
 
+// Update product name and visibility by name (this must come before /product/:id to match correctly)
+router.put('/product', auth, adminAuth, async (req, res) => {
+  try {
+    const { productName, displayName, isVisible } = req.body;
+
+    if (!productName) {
+      return res.status(400).json({ message: 'Product name is required' });
+    }
+
+    // Find the rate by name and location
+    const rate = await SilverRate.findOne({ 
+      name: productName, 
+      location: 'Andhra Pradesh' 
+    });
+
+    if (!rate) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+
+    // Update fields if provided
+    if (displayName !== undefined) {
+      rate.displayName = displayName.trim() || null;
+    }
+    if (isVisible !== undefined) {
+      rate.isVisible = Boolean(isVisible);
+    }
+
+    await rate.save();
+
+    console.log(`✅ Admin updated product ${rate.name}: displayName=${rate.displayName || 'default'}, isVisible=${rate.isVisible}`);
+
+    res.json({
+      message: 'Product updated successfully',
+      product: {
+        _id: rate._id,
+        name: rate.name,
+        displayName: rate.displayName,
+        isVisible: rate.isVisible
+      }
+    });
+  } catch (error) {
+    console.error('Update product error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 module.exports = router;
 
 

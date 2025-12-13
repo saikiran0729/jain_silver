@@ -55,6 +55,16 @@ const silverRateSchema = new mongoose.Schema({
   lastUpdated: {
     type: Date,
     default: Date.now
+  },
+  // Display name (custom name shown to users, if not set, uses name)
+  displayName: {
+    type: String,
+    default: null
+  },
+  // Whether this product should be visible to users
+  isVisible: {
+    type: Boolean,
+    default: true
   }
 }, {
   timestamps: true

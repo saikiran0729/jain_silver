@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Box, Card, CardContent, Typography, Button, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Chip, Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Tabs, Tab, CircularProgress, MenuItem, Select, FormControl, InputLabel, Grid, IconButton, TextareaAutosize, Accordion, AccordionSummary, AccordionDetails, Checkbox, FormControlLabel } from '@mui/material';
+import { Box, Card, CardContent, Typography, Button, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Chip, Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Tabs, Tab, CircularProgress, MenuItem, Select, FormControl, InputLabel, Grid, IconButton, TextareaAutosize, Accordion, AccordionSummary, AccordionDetails, Checkbox, FormControlLabel, Switch } from '@mui/material';
 import { Logout, CheckCircle, Cancel, Visibility, Remove, Add, Edit, Delete, Delete as DeleteIcon, Add as AddIcon, Newspaper, Person, Store, RestartAlt, ExpandMore } from '@mui/icons-material';
 import { AuthContext } from '../context/AuthContext';
 import api from '../config/api';
@@ -34,6 +34,9 @@ function AdminDashboardPage() {
   const [showOriginalRates, setShowOriginalRates] = useState(false); // Toggle to show original rates without adjustments
   const [baseRateFromSource, setBaseRateFromSource] = useState(null); // Current base rate from RB Gold
   const [globalShowAsItIs, setGlobalShowAsItIs] = useState(false); // Global "Show As It Is" setting
+  const [editProductDialogOpen, setEditProductDialogOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [editProductName, setEditProductName] = useState('');
 
   useEffect(() => {
     fetchUsers();
@@ -287,6 +290,61 @@ function AdminDashboardPage() {
 
   const handleViewDocuments = (userId) => {
     navigate(`/admin/users/${userId}/documents`);
+  };
+
+  const handleEditProduct = (product) => {
+    setEditingProduct(product);
+    // Use displayName if it's different from original, otherwise use current name
+    const currentDisplayName = product.displayName !== undefined && product.displayName !== null 
+      ? product.displayName 
+      : (product.originalName || product.name || '');
+    setEditProductName(currentDisplayName);
+    setEditProductDialogOpen(true);
+  };
+
+  const handleSaveProduct = async () => {
+    if (!editingProduct) return;
+    
+    try {
+      setLoadingAction(true);
+      // Use originalName if available (for admin), otherwise use name
+      const productName = editingProduct.originalName || editingProduct.name || editingProduct._id;
+      const response = await api.put('/admin/product', {
+        productName: productName,
+        displayName: editProductName.trim() || null, // null means use original name
+        isVisible: editingProduct.isVisible !== undefined ? editingProduct.isVisible : true
+      });
+      alert(response.data.message || 'Product updated successfully');
+      setEditProductDialogOpen(false);
+      setEditingProduct(null);
+      setEditProductName('');
+      await fetchRates(true); // Refresh rates
+    } catch (error) {
+      alert(error.response?.data?.message || 'Failed to update product');
+      console.error('Update product error:', error);
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const handleToggleVisibility = async (product) => {
+    try {
+      setLoadingAction(true);
+      const newVisibility = !(product.isVisible !== undefined ? product.isVisible : true);
+      // Use originalName if available (for admin), otherwise use name
+      const productName = product.originalName || product.name || product._id;
+      const response = await api.put('/admin/product', {
+        productName: productName,
+        isVisible: newVisibility
+      });
+      await fetchRates(true); // Refresh rates
+      // Don't show alert for visibility toggle to avoid spam
+    } catch (error) {
+      alert(error.response?.data?.message || 'Failed to update product visibility');
+      console.error('Toggle visibility error:', error);
+    } finally {
+      setLoadingAction(false);
+    }
   };
 
   const handleAdjustRates = async () => {
@@ -641,6 +699,8 @@ function AdminDashboardPage() {
                         <TableCell align="right" sx={{ fontWeight: 700 }}>Adjustment</TableCell>
                       </>
                     )}
+                    <TableCell align="center" sx={{ fontWeight: 700 }}>Visible</TableCell>
+                    <TableCell align="center" sx={{ fontWeight: 700 }}>Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -787,6 +847,24 @@ function AdminDashboardPage() {
                               ₹{originalRatePerGram.toFixed(2)}/gram
                             </Typography>
                           </TableCell>
+                          <TableCell align="center">
+                            <Switch
+                              checked={rate.isVisible !== undefined ? rate.isVisible : true}
+                              onChange={() => handleToggleVisibility(rate)}
+                              size="small"
+                              disabled={loadingAction}
+                            />
+                          </TableCell>
+                          <TableCell align="center">
+                            <IconButton
+                              size="small"
+                              onClick={() => handleEditProduct(rate)}
+                              disabled={loadingAction}
+                              color="primary"
+                            >
+                              <Edit fontSize="small" />
+                            </IconButton>
+                          </TableCell>
                         </TableRow>
                       );
                     }
@@ -840,6 +918,24 @@ function AdminDashboardPage() {
                               No adjustment
                             </Typography>
                           )}
+                        </TableCell>
+                        <TableCell align="center">
+                          <Switch
+                            checked={rate.isVisible !== undefined ? rate.isVisible : true}
+                            onChange={() => handleToggleVisibility(rate)}
+                            size="small"
+                            disabled={loadingAction}
+                          />
+                        </TableCell>
+                        <TableCell align="center">
+                          <IconButton
+                            size="small"
+                            onClick={() => handleEditProduct(rate)}
+                            disabled={loadingAction}
+                            color="primary"
+                          >
+                            <Edit fontSize="small" />
+                          </IconButton>
                         </TableCell>
                       </TableRow>
                     );
@@ -1022,6 +1118,50 @@ function AdminDashboardPage() {
             disabled={loadingAction || !adjustValue}
           >
             {loadingAction ? 'Applying...' : adjustType === 'decrease' ? 'Decrease' : 'Increase'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Edit Product Dialog */}
+      <Dialog 
+        open={editProductDialogOpen} 
+        onClose={() => {
+          setEditProductDialogOpen(false);
+          setEditingProduct(null);
+          setEditProductName('');
+        }} 
+        maxWidth="sm" 
+        fullWidth
+      >
+        <DialogTitle>Edit Product</DialogTitle>
+        <DialogContent>
+          {editingProduct && (
+            <>
+              <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
+                Original Name: <strong>{editingProduct.originalName || editingProduct.name}</strong>
+              </Typography>
+              <TextField
+                fullWidth
+                label="Display Name"
+                value={editProductName}
+                onChange={(e) => setEditProductName(e.target.value)}
+                margin="normal"
+                placeholder="Leave empty to use original name"
+                helperText="Leave empty to show the original product name to users"
+              />
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => {
+            setEditProductDialogOpen(false);
+            setEditingProduct(null);
+            setEditProductName('');
+          }} disabled={loadingAction}>
+            Cancel
+          </Button>
+          <Button onClick={handleSaveProduct} variant="contained" disabled={loadingAction}>
+            {loadingAction ? 'Saving...' : 'Save'}
           </Button>
         </DialogActions>
       </Dialog>

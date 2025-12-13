@@ -73,14 +73,33 @@ const getOriginalRates = async (baseRatePerGram) => {
   });
 };
 
+// Helper function to check if user is admin from token
+const isAdminUser = (req) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) return false;
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jain_silver_secret_key_2024_change_in_production');
+    return decoded.role === 'admin';
+  } catch (error) {
+    return false;
+  }
+};
+
 // Helper function to apply manual adjustments to rates from MongoDB
 // NOTE: Rates from MongoDB already have adjustments applied in ratePerGram
 // This function just ensures the data structure is correct for the API response
-const applyManualAdjustments = async (rates) => {
+const applyManualAdjustments = async (rates, isAdmin = false) => {
   // Fetch current adjustments from MongoDB
   const adjustmentsMap = await fetchManualAdjustments(rates.map(r => r.name));
 
-  return rates.map(rate => {
+  // Filter out invisible products for non-admin users
+  let filteredRates = rates;
+  if (!isAdmin) {
+    filteredRates = rates.filter(rate => rate.isVisible !== false); // Default to true if not set
+  }
+
+  return filteredRates.map(rate => {
     const manualAdjustment = adjustmentsMap[rate.name] || rate.manualAdjustment || 0;
     
     // IMPORTANT: rate.ratePerGram in MongoDB already includes adjustments
@@ -99,8 +118,16 @@ const applyManualAdjustments = async (rates) => {
     const adjustedRatePerGram = currentRatePerGram;
     const adjustedTotalRate = rate.rate || Math.round(adjustedRatePerGram * weightInGrams * 100) / 100;
     
+    // Use displayName if set, otherwise use name
+    const displayName = rate.displayName || rate.name;
+    const originalName = rate.name; // Keep original name for admin updates
+    
     return {
       ...rate,
+      name: displayName, // Use displayName for the name field in response (what users see)
+      originalName: originalName, // Keep original name for admin reference
+      displayName: displayName, // Also include it as displayName
+      isVisible: rate.isVisible !== undefined ? rate.isVisible : true, // Default to true
       ratePerGram: adjustedRatePerGram, // Current rate with adjustments (what customers see)
       rate: adjustedTotalRate,
       originalRatePerGram: Math.max(0, originalRatePerGram), // Original without adjustments
@@ -373,6 +400,9 @@ router.get('/', async (req, res) => {
     // Check for skipUpdate query parameter (for admin dashboard to avoid waiting for slow external updates)
     const skipUpdate = req.query.skipUpdate === 'true' || req.query.skipUpdate === true;
     
+    // Check if user is admin
+    const isAdmin = isAdminUser(req);
+    
     // Auth check (optional)
     try {
       const token = req.headers.authorization?.replace('Bearer ', '');
@@ -510,7 +540,7 @@ router.get('/', async (req, res) => {
                     .sort({ name: 1 })
                     .lean();
                   if (retryRates && retryRates.length > 0) {
-                    const ratesWithAdjustments = await applyManualAdjustments(retryRates);
+                    const ratesWithAdjustments = await applyManualAdjustments(retryRates, isAdmin);
                     const ratesWithUSD = ratesWithAdjustments.map(rate => ({
                       ...rate,
                       usdInrRate: cachedBaseRate.usdInrRate || 89.25
@@ -529,7 +559,7 @@ router.get('/', async (req, res) => {
                   const freshAge = Date.now() - new Date(freshLatest.lastUpdated).getTime();
                   console.log(`✅ Fresh rates loaded: ${freshRates.length} rates (${Math.round(freshAge/1000)}s old, latest: ${freshLatest.name} = ₹${freshLatest.ratePerGram}/gram)`);
                   
-                  const ratesWithAdjustments = await applyManualAdjustments(freshRates);
+                  const ratesWithAdjustments = await applyManualAdjustments(freshRates, isAdmin);
                   const ratesWithUSD = ratesWithAdjustments.map(rate => ({
                       ...rate,
                       usdInrRate: cachedBaseRate.usdInrRate || 89.25
@@ -571,7 +601,7 @@ router.get('/', async (req, res) => {
                 const freshAge = Date.now() - new Date(freshLatest.lastUpdated).getTime();
                 console.log(`✅ Fresh rates fetched: ${freshRates.length} rates (${Math.round(freshAge/1000)}s old, latest: ${freshLatest.name} = ₹${freshLatest.ratePerGram}/gram)`);
                 
-                const ratesWithAdjustments = await applyManualAdjustments(freshRates);
+                const ratesWithAdjustments = await applyManualAdjustments(freshRates, isAdmin);
                 const ratesWithUSD = ratesWithAdjustments.map(rate => ({
                   ...rate,
                   usdInrRate: cachedBaseRate.usdInrRate || 89.25
@@ -608,7 +638,7 @@ router.get('/', async (req, res) => {
                 .sort({ name: 1 })
                 .lean();
               if (freshRates && freshRates.length > 0) {
-                const ratesWithAdjustments = await applyManualAdjustments(freshRates);
+                const ratesWithAdjustments = await applyManualAdjustments(freshRates, isAdmin);
                 const ratesWithUSD = ratesWithAdjustments.map(rate => ({
                   ...rate,
                   usdInrRate: cachedBaseRate.usdInrRate || 89.25
@@ -662,7 +692,7 @@ router.get('/', async (req, res) => {
           } else {
             // Apply manual adjustments to rates from MongoDB
             // This ensures admin adjustments are reflected immediately
-            finalRates = await applyManualAdjustments(mongoRates);
+            finalRates = await applyManualAdjustments(mongoRates, isAdmin);
           }
           
           // Add USD rate to all rates if available
