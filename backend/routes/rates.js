@@ -103,7 +103,10 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null) => {
     { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
   ];
   
-  const existingNames = new Set(rates.map(r => r.name || (r.originalName || r._id?.toString())));
+  const existingNames = new Set(rates.map(r => {
+    // Check both name and originalName to handle cases where displayName is set
+    return r.name || r.originalName || r._id?.toString();
+  }));
   const missingProducts = allRateDefinitions.filter(def => !existingNames.has(def.name));
   
   if (missingProducts.length > 0) {
