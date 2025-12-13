@@ -517,6 +517,9 @@ router.get('/', async (req, res) => {
     
     // Check if user is admin
     const isAdmin = isAdminUser(req);
+    if (isAdmin) {
+      console.log('👤 Admin user detected in /rates endpoint');
+    }
     
     // Auth check (optional)
     try {
@@ -601,11 +604,17 @@ router.get('/', async (req, res) => {
               estimatedBaseRate = latestRate.ratePerGram;
             }
           }
+          const ratesBeforeEnsure = mongoRates.length;
           mongoRates = ensureAllProductsForAdmin(mongoRates, isAdmin, estimatedBaseRate);
+          const ratesAfterEnsure = mongoRates.length;
           
           // Log after ensuring all products
           const disabledCountAfter = mongoRates.filter(r => r.isVisible === false).length;
-          console.log(`📊 Admin view after ensureAllProducts: ${mongoRates.length} total products (${disabledCountAfter} disabled)`);
+          console.log(`📊 Admin view after ensureAllProducts: ${ratesBeforeEnsure} → ${ratesAfterEnsure} products (${disabledCountAfter} disabled)`);
+          if (ratesAfterEnsure > ratesBeforeEnsure) {
+            const addedProducts = mongoRates.slice(ratesBeforeEnsure).map(r => r.name || r.originalName);
+            console.log(`✅ Added ${ratesAfterEnsure - ratesBeforeEnsure} missing products:`, addedProducts.join(', '));
+          }
         }
         
         if (mongoRates && mongoRates.length > 0) {
@@ -627,6 +636,11 @@ router.get('/', async (req, res) => {
           // If skipUpdate is true, skip waiting for updates and return current rates immediately
           if (skipUpdate) {
             console.log('⏩ Skipping rate update (skipUpdate=true), returning current MongoDB rates immediately');
+            if (isAdmin) {
+              console.log(`📊 skipUpdate path: mongoRates has ${mongoRates.length} products`);
+              const mongoProductNames = mongoRates.map(r => r.name || r.originalName || 'unnamed');
+              console.log(`📋 skipUpdate path - MongoDB product names:`, mongoProductNames.join(', '));
+            }
             let finalRates;
             if (showAsItIs) {
               // If "Show As It Is" is enabled, return original rates without adjustments
@@ -1098,19 +1112,26 @@ router.get('/', async (req, res) => {
           }
           
           // Add USD rate to all rates if available
-          const ratesWithUSD = finalRates.map(rate => ({
-            ...rate,
-            usdInrRate: cachedBaseRate.usdInrRate || 89.25
-          }));
-          
-          // Set headers to prevent caching
-          res.set({
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
-          });
-          
-          return res.json(ratesWithUSD);
+            const ratesWithUSD = finalRates.map(rate => ({
+              ...rate,
+              usdInrRate: cachedBaseRate.usdInrRate || 89.25
+            }));
+            
+            // Log final response for admin
+            if (isAdmin && skipUpdate) {
+              console.log(`📤 skipUpdate response: Returning ${ratesWithUSD.length} rates to admin`);
+              const responseProductNames = ratesWithUSD.map(r => r.name || r.originalName || 'unnamed');
+              console.log(`📋 skipUpdate response product names:`, responseProductNames.join(', '));
+            }
+            
+            // Set headers to prevent caching
+            res.set({
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0'
+            });
+            
+            return res.json(ratesWithUSD);
         } else {
           console.warn('⚠️ No rates found in MongoDB, triggering update...');
           // If no rates exist, try to update immediately
