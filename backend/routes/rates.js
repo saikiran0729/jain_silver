@@ -166,9 +166,17 @@ const applyManualAdjustments = async (rates, isAdmin = false) => {
   const adjustmentsMap = await fetchManualAdjustments(rates.map(r => r.name));
 
   // Filter out invisible products for non-admin users
+  // IMPORTANT: For admin, include ALL products (including disabled ones)
   let filteredRates = rates;
   if (!isAdmin) {
     filteredRates = rates.filter(rate => rate.isVisible !== false); // Default to true if not set
+  } else {
+    // For admin, log disabled products for debugging
+    const disabledProducts = rates.filter(rate => rate.isVisible === false);
+    if (disabledProducts.length > 0) {
+      console.log(`👁️ Admin view: Including ${disabledProducts.length} disabled products:`, 
+        disabledProducts.map(p => p.name || p.originalName).join(', '));
+    }
   }
 
   return filteredRates.map(rate => {
@@ -187,8 +195,9 @@ const applyManualAdjustments = async (rates, isAdmin = false) => {
     const originalTotalRate = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
     
     // Current rate (already has adjustments) is what customers see
+    // Always recalculate from ratePerGram to ensure accuracy (don't rely on stored rate which might be stale)
     const adjustedRatePerGram = currentRatePerGram;
-    const adjustedTotalRate = rate.rate || Math.round(adjustedRatePerGram * weightInGrams * 100) / 100;
+    const adjustedTotalRate = Math.round(adjustedRatePerGram * weightInGrams * 100) / 100;
     
     // Use displayName if set, otherwise use name
     const displayName = rate.displayName || rate.name;
@@ -535,9 +544,16 @@ router.get('/', async (req, res) => {
       }
       
       if (mongoose.connection.readyState === 1) {
-        const mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+        // Fetch ALL products from MongoDB (including disabled ones) - no filter on isVisible
+        let mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' })
           .sort({ name: 1 })
           .lean();
+        
+        // Log for debugging
+        if (isAdmin) {
+          const disabledCount = mongoRates.filter(r => r.isVisible === false).length;
+          console.log(`📊 Admin view: Found ${mongoRates.length} total products (${disabledCount} disabled)`);
+        }
         
         // Ensure all defined products exist for admins (if missing from MongoDB, add with defaults)
         if (isAdmin && mongoRates) {
@@ -557,6 +573,10 @@ router.get('/', async (req, res) => {
             }
           }
           mongoRates = ensureAllProductsForAdmin(mongoRates, isAdmin, estimatedBaseRate);
+          
+          // Log after ensuring all products
+          const disabledCountAfter = mongoRates.filter(r => r.isVisible === false).length;
+          console.log(`📊 Admin view after ensureAllProducts: ${mongoRates.length} total products (${disabledCountAfter} disabled)`);
         }
         
         if (mongoRates && mongoRates.length > 0) {
