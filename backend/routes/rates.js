@@ -86,6 +86,72 @@ const isAdminUser = (req) => {
   }
 };
 
+// Helper function to ensure all defined products exist in rates array (for admin view)
+const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null) => {
+  if (!isAdmin || !rates) return rates;
+  
+  const allRateDefinitions = [
+    { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
+    { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
+    { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
+    { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
+    { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
+  ];
+  
+  const existingNames = new Set(rates.map(r => r.name || (r.originalName || r._id?.toString())));
+  const missingProducts = allRateDefinitions.filter(def => !existingNames.has(def.name));
+  
+  if (missingProducts.length > 0) {
+    console.log(`⚠️ Missing products for admin view: ${missingProducts.map(p => p.name).join(', ')}`);
+    const ratesCopy = [...rates];
+    
+    missingProducts.forEach(def => {
+      // Calculate rate if baseRatePerGram provided
+      let ratePerGram = baseRatePerGram || 0;
+      if (baseRatePerGram) {
+        if (def.purity === '92.5%') {
+          ratePerGram = baseRatePerGram * 0.96;
+        } else if (def.purity === '99.99%') {
+          ratePerGram = baseRatePerGram * 1.005;
+        }
+        ratePerGram = Math.round(ratePerGram * 100) / 100;
+      }
+      
+      let weightInGrams = def.weight.value;
+      if (def.weight.unit === 'kg') {
+        weightInGrams = def.weight.value * 1000;
+      }
+      const totalRate = Math.round(ratePerGram * weightInGrams * 100) / 100;
+      
+      ratesCopy.push({
+        _id: Buffer.from(def.name).toString('base64').substring(0, 24),
+        name: def.name,
+        type: def.type,
+        weight: def.weight,
+        purity: def.purity,
+        ratePerGram: ratePerGram,
+        rate: totalRate,
+        manualAdjustment: 0,
+        location: 'Andhra Pradesh',
+        unit: 'INR',
+        isVisible: true,
+        displayName: null,
+        originalName: def.name,
+        lastUpdated: new Date()
+      });
+    });
+    
+    return ratesCopy;
+  }
+  
+  return rates;
+};
+
 // Helper function to apply manual adjustments to rates from MongoDB
 // NOTE: Rates from MongoDB already have adjustments applied in ratePerGram
 // This function just ensures the data structure is correct for the API response
@@ -468,43 +534,23 @@ router.get('/', async (req, res) => {
           .lean();
         
         // Ensure all defined products exist for admins (if missing from MongoDB, add with defaults)
-        if (isAdmin && mongoRates && mongoRates.length > 0) {
-          const allRateDefinitions = [
-            { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
-            { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
-            { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
-            { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
-            { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
-            { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
-            { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
-            { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
-            { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
-            { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
-          ];
-          
-          const existingNames = new Set(mongoRates.map(r => r.name));
-          const missingProducts = allRateDefinitions.filter(def => !existingNames.has(def.name));
-          
-          if (missingProducts.length > 0) {
-            console.log(`⚠️ Missing products in MongoDB for admin view: ${missingProducts.map(p => p.name).join(', ')}`);
-            // Add missing products with default values for admin view
-            missingProducts.forEach(def => {
-              mongoRates.push({
-                name: def.name,
-                type: def.type,
-                weight: def.weight,
-                purity: def.purity,
-                ratePerGram: 0,
-                rate: 0,
-                manualAdjustment: 0,
-                location: 'Andhra Pradesh',
-                unit: 'INR',
-                isVisible: true, // Default to visible
-                displayName: null,
-                lastUpdated: new Date()
-              });
-            });
+        if (isAdmin && mongoRates) {
+          const latestRate = mongoRates.length > 0 ? mongoRates.reduce((latest, rate) => {
+            return rate.lastUpdated > latest.lastUpdated ? rate : latest;
+          }, mongoRates[0]) : null;
+          // Use latest rate's ratePerGram to estimate base rate, or use cached
+          let estimatedBaseRate = cachedBaseRate.ratePerGram;
+          if (latestRate && latestRate.ratePerGram > 0) {
+            // Reverse calculate base rate from latest rate
+            if (latestRate.purity === '92.5%') {
+              estimatedBaseRate = latestRate.ratePerGram / 0.96;
+            } else if (latestRate.purity === '99.99%') {
+              estimatedBaseRate = latestRate.ratePerGram / 1.005;
+            } else {
+              estimatedBaseRate = latestRate.ratePerGram;
+            }
           }
+          mongoRates = ensureAllProductsForAdmin(mongoRates, isAdmin, estimatedBaseRate);
         }
         
         if (mongoRates && mongoRates.length > 0) {
@@ -590,9 +636,28 @@ router.get('/', async (req, res) => {
             try {
               await updateRatesHandler(req, null); // Wait for update
               // Fetch fresh rates after update
-              const freshRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+              let freshRates = await SilverRate.find({ location: 'Andhra Pradesh' })
                 .sort({ name: 1 })
                 .lean();
+              
+              // Ensure all defined products exist for admins
+              if (isAdmin && freshRates) {
+                const latestRate = freshRates.length > 0 ? freshRates.reduce((latest, rate) => {
+                  return rate.lastUpdated > latest.lastUpdated ? rate : latest;
+                }, freshRates[0]) : null;
+                let estimatedBaseRate = cachedBaseRate.ratePerGram;
+                if (latestRate && latestRate.ratePerGram > 0) {
+                  if (latestRate.purity === '92.5%') {
+                    estimatedBaseRate = latestRate.ratePerGram / 0.96;
+                  } else if (latestRate.purity === '99.99%') {
+                    estimatedBaseRate = latestRate.ratePerGram / 1.005;
+                  } else {
+                    estimatedBaseRate = latestRate.ratePerGram;
+                  }
+                }
+                freshRates = ensureAllProductsForAdmin(freshRates, isAdmin, estimatedBaseRate);
+              }
+              
               if (freshRates && freshRates.length > 0) {
                 // Verify no old 99.9% rates in fresh data
                 const stillHasOldRates = freshRates.some(rate => 
@@ -604,9 +669,28 @@ router.get('/', async (req, res) => {
                   // Try one more time with longer timeout
                   await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
                   await updateRatesHandler(req, null);
-                  const retryRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+                  let retryRates = await SilverRate.find({ location: 'Andhra Pradesh' })
                     .sort({ name: 1 })
                     .lean();
+                  
+                  // Ensure all defined products exist for admins
+                  if (isAdmin && retryRates) {
+                    const latestRate = retryRates.length > 0 ? retryRates.reduce((latest, rate) => {
+                      return rate.lastUpdated > latest.lastUpdated ? rate : latest;
+                    }, retryRates[0]) : null;
+                    let estimatedBaseRate = cachedBaseRate.ratePerGram;
+                    if (latestRate && latestRate.ratePerGram > 0) {
+                      if (latestRate.purity === '92.5%') {
+                        estimatedBaseRate = latestRate.ratePerGram / 0.96;
+                      } else if (latestRate.purity === '99.99%') {
+                        estimatedBaseRate = latestRate.ratePerGram / 1.005;
+                      } else {
+                        estimatedBaseRate = latestRate.ratePerGram;
+                      }
+                    }
+                    retryRates = ensureAllProductsForAdmin(retryRates, isAdmin, estimatedBaseRate);
+                  }
+                  
                   if (retryRates && retryRates.length > 0) {
                     // For "Show As It Is", handle specially
                     let processedRates;
@@ -713,9 +797,28 @@ router.get('/', async (req, res) => {
               // Wait for update to complete (blocking) to ensure fresh rates
               await updateRatesHandler(req, null);
               // Fetch fresh rates after update
-              const freshRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+              let freshRates = await SilverRate.find({ location: 'Andhra Pradesh' })
                 .sort({ name: 1 })
                 .lean();
+              
+              // Ensure all defined products exist for admins
+              if (isAdmin && freshRates) {
+                const latestRate = freshRates.length > 0 ? freshRates.reduce((latest, rate) => {
+                  return rate.lastUpdated > latest.lastUpdated ? rate : latest;
+                }, freshRates[0]) : null;
+                let estimatedBaseRate = cachedBaseRate.ratePerGram;
+                if (latestRate && latestRate.ratePerGram > 0) {
+                  if (latestRate.purity === '92.5%') {
+                    estimatedBaseRate = latestRate.ratePerGram / 0.96;
+                  } else if (latestRate.purity === '99.99%') {
+                    estimatedBaseRate = latestRate.ratePerGram / 1.005;
+                  } else {
+                    estimatedBaseRate = latestRate.ratePerGram;
+                  }
+                }
+                freshRates = ensureAllProductsForAdmin(freshRates, isAdmin, estimatedBaseRate);
+              }
+              
               if (freshRates && freshRates.length > 0) {
                 const freshLatest = freshRates.reduce((latest, rate) => {
                   return rate.lastUpdated > latest.lastUpdated ? rate : latest;
@@ -756,9 +859,28 @@ router.get('/', async (req, res) => {
             console.error(`❌ BLOCKED: Attempted to serve old 99.9% rates (₹169 detected). Fetching fresh rates...`);
             try {
               await updateRatesHandler(req, null);
-              const freshRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+              let freshRates = await SilverRate.find({ location: 'Andhra Pradesh' })
                 .sort({ name: 1 })
                 .lean();
+              
+              // Ensure all defined products exist for admins
+              if (isAdmin && freshRates) {
+                const latestRate = freshRates.length > 0 ? freshRates.reduce((latest, rate) => {
+                  return rate.lastUpdated > latest.lastUpdated ? rate : latest;
+                }, freshRates[0]) : null;
+                let estimatedBaseRate = cachedBaseRate.ratePerGram;
+                if (latestRate && latestRate.ratePerGram > 0) {
+                  if (latestRate.purity === '92.5%') {
+                    estimatedBaseRate = latestRate.ratePerGram / 0.96;
+                  } else if (latestRate.purity === '99.99%') {
+                    estimatedBaseRate = latestRate.ratePerGram / 1.005;
+                  } else {
+                    estimatedBaseRate = latestRate.ratePerGram;
+                  }
+                }
+                freshRates = ensureAllProductsForAdmin(freshRates, isAdmin, estimatedBaseRate);
+              }
+              
               if (freshRates && freshRates.length > 0) {
                 const ratesWithAdjustments = await applyManualAdjustments(freshRates, isAdmin);
                 const ratesWithUSD = ratesWithAdjustments.map(rate => ({
