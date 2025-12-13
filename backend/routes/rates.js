@@ -341,17 +341,24 @@ const updateMongoDBRates = async (liveRate) => {
         await SilverRate.findOneAndUpdate(
           { name: rateDef.name, location: 'Andhra Pradesh' },
           {
-            name: rateDef.name,
-            type: rateDef.type,
-            weight: rateDef.weight,
-            purity: rateDef.purity,
-            ratePerGram: ratePerGram,
-            rate: totalRate,
-            lastUpdated: new Date(),
-            location: 'Andhra Pradesh',
-            unit: 'INR',
-            manualAdjustment: manualAdjustment,
-            source: 'rbgoldspot'
+            $set: {
+              name: rateDef.name,
+              type: rateDef.type,
+              weight: rateDef.weight,
+              purity: rateDef.purity,
+              ratePerGram: ratePerGram,
+              rate: totalRate,
+              lastUpdated: new Date(),
+              location: 'Andhra Pradesh',
+              unit: 'INR',
+              manualAdjustment: manualAdjustment,
+              source: 'rbgoldspot'
+            },
+            $setOnInsert: {
+              // Set defaults only when inserting new documents (not when updating existing)
+              isVisible: true,
+              displayName: null
+            }
           },
           { upsert: true, new: true }
         );
@@ -459,6 +466,46 @@ router.get('/', async (req, res) => {
         const mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' })
           .sort({ name: 1 })
           .lean();
+        
+        // Ensure all defined products exist for admins (if missing from MongoDB, add with defaults)
+        if (isAdmin && mongoRates && mongoRates.length > 0) {
+          const allRateDefinitions = [
+            { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+            { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
+            { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
+            { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
+            { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
+            { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
+            { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
+            { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
+            { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
+            { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
+          ];
+          
+          const existingNames = new Set(mongoRates.map(r => r.name));
+          const missingProducts = allRateDefinitions.filter(def => !existingNames.has(def.name));
+          
+          if (missingProducts.length > 0) {
+            console.log(`⚠️ Missing products in MongoDB for admin view: ${missingProducts.map(p => p.name).join(', ')}`);
+            // Add missing products with default values for admin view
+            missingProducts.forEach(def => {
+              mongoRates.push({
+                name: def.name,
+                type: def.type,
+                weight: def.weight,
+                purity: def.purity,
+                ratePerGram: 0,
+                rate: 0,
+                manualAdjustment: 0,
+                location: 'Andhra Pradesh',
+                unit: 'INR',
+                isVisible: true, // Default to visible
+                displayName: null,
+                lastUpdated: new Date()
+              });
+            });
+          }
+        }
         
         if (mongoRates && mongoRates.length > 0) {
           // Always use MongoDB rates if available (they're updated every second)
@@ -1191,6 +1238,11 @@ const updateRatesHandler = async (req, res = null) => {
               unit: 'INR',
               manualAdjustment: manualAdjustment,
               source: liveRate.source || 'cron-update'
+            },
+            $setOnInsert: {
+              // Set defaults only when inserting new documents (not when updating existing)
+              isVisible: true,
+              displayName: null
             }
           },
           upsert: true
