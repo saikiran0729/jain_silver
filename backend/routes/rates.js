@@ -87,8 +87,10 @@ const isAdminUser = (req) => {
 };
 
 // Helper function to ensure all defined products exist in rates array (for admin view)
-const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null) => {
-  if (!isAdmin || !rates) return rates;
+// Also works when skipUpdate is true (admin dashboard requests)
+const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null, skipUpdate = false) => {
+  // Allow if admin OR skipUpdate (admin dashboard always uses skipUpdate)
+  if ((!isAdmin && !skipUpdate) || !rates) return rates;
   
   const allRateDefinitions = [
     { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
@@ -119,14 +121,14 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null) => {
   });
   
   // Debug: log what products we found
-  if (isAdmin && existingNames.size > 0) {
+  if ((isAdmin || skipUpdate) && existingNames.size > 0) {
     console.log(`🔍 ensureAllProductsForAdmin: Found ${existingNames.size} existing products:`, Array.from(existingNames).join(', '));
   }
   
   const missingProducts = allRateDefinitions.filter(def => !existingNames.has(def.name));
   
   // Debug: log missing products
-  if (isAdmin && missingProducts.length > 0) {
+  if ((isAdmin || skipUpdate) && missingProducts.length > 0) {
     console.log(`⚠️ ensureAllProductsForAdmin: Missing ${missingProducts.length} products:`, missingProducts.map(p => p.name).join(', '));
   }
   
@@ -579,16 +581,17 @@ router.get('/', async (req, res) => {
           .sort({ name: 1 })
           .lean();
         
-        // Log for debugging
-        if (isAdmin) {
+        // Log for debugging - always log when skipUpdate is true (likely admin dashboard)
+        if (skipUpdate || isAdmin) {
           const disabledCount = mongoRates.filter(r => r.isVisible === false).length;
-          console.log(`📊 Admin view: Found ${mongoRates.length} total products (${disabledCount} disabled)`);
+          console.log(`📊 ${skipUpdate ? 'skipUpdate' : 'Admin'} view: Found ${mongoRates.length} total products (${disabledCount} disabled)`);
           const productNames = mongoRates.map(r => `${r.name}${r.displayName ? ` (display: ${r.displayName})` : ''}${r.isVisible === false ? ' [DISABLED]' : ''}`);
           console.log(`📋 Products in MongoDB:`, productNames.join(', '));
         }
         
-        // Ensure all defined products exist for admins (if missing from MongoDB, add with defaults)
-        if (isAdmin && mongoRates) {
+        // Ensure all defined products exist for admins OR when skipUpdate is true (admin dashboard)
+        // This ensures admin dashboard always shows all products even if admin check fails
+        if ((isAdmin || skipUpdate) && mongoRates) {
           const latestRate = mongoRates.length > 0 ? mongoRates.reduce((latest, rate) => {
             return rate.lastUpdated > latest.lastUpdated ? rate : latest;
           }, mongoRates[0]) : null;
@@ -605,7 +608,7 @@ router.get('/', async (req, res) => {
             }
           }
           const ratesBeforeEnsure = mongoRates.length;
-          mongoRates = ensureAllProductsForAdmin(mongoRates, isAdmin, estimatedBaseRate);
+          mongoRates = ensureAllProductsForAdmin(mongoRates, isAdmin, estimatedBaseRate, skipUpdate);
           const ratesAfterEnsure = mongoRates.length;
           
           // Log after ensuring all products
