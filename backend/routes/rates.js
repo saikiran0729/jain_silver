@@ -184,7 +184,7 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null, skipU
 // Helper function to apply manual adjustments to rates from MongoDB
 // NOTE: Rates from MongoDB already have adjustments applied in ratePerGram
 // This function just ensures the data structure is correct for the API response
-const applyManualAdjustments = async (rates, isAdmin = false) => {
+const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false) => {
   // Fetch current adjustments from MongoDB
   // Use originalName if available (for admin), otherwise use name
   // This ensures we fetch adjustments correctly even when displayName is set
@@ -192,9 +192,9 @@ const applyManualAdjustments = async (rates, isAdmin = false) => {
   const adjustmentsMap = await fetchManualAdjustments(rateNames);
 
   // Filter out invisible products for non-admin users
-  // IMPORTANT: For admin, include ALL products (including disabled ones)
+  // IMPORTANT: For admin OR skipUpdate (admin dashboard), include ALL products (including disabled ones)
   let filteredRates = rates;
-  if (!isAdmin) {
+  if (!isAdmin && !skipUpdate) {
     filteredRates = rates.filter(rate => rate.isVisible !== false); // Default to true if not set
   } else {
     // For admin, log disabled products for debugging
@@ -713,7 +713,7 @@ router.get('/', async (req, res) => {
                 const productNames = mongoRates.map(r => r.name || r.originalName || 'unnamed');
                 console.log(`📋 Product names:`, productNames.join(', '));
               }
-              finalRates = await applyManualAdjustments(mongoRates, isAdmin);
+              finalRates = await applyManualAdjustments(mongoRates, isAdmin, skipUpdate);
               // Log after applying adjustments
               if (isAdmin) {
                 console.log(`📊 After applyManualAdjustments: ${finalRates.length} products`);
