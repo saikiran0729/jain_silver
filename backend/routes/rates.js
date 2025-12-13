@@ -107,13 +107,32 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null) => {
   rates.forEach(r => {
     // Check both name and originalName to handle cases where displayName is set
     // In MongoDB, name is always the original name, but in API responses it might be displayName
-    if (r.name) existingNames.add(r.name);
-    if (r.originalName) existingNames.add(r.originalName);
+    // Priority: originalName (if exists) > name
+    const productName = r.originalName || r.name;
+    if (productName) {
+      existingNames.add(productName);
+      // Also add the name field in case it's different
+      if (r.name && r.name !== productName) {
+        existingNames.add(r.name);
+      }
+    }
   });
+  
+  // Debug: log what products we found
+  if (isAdmin && existingNames.size > 0) {
+    console.log(`🔍 ensureAllProductsForAdmin: Found ${existingNames.size} existing products:`, Array.from(existingNames).join(', '));
+  }
+  
   const missingProducts = allRateDefinitions.filter(def => !existingNames.has(def.name));
+  
+  // Debug: log missing products
+  if (isAdmin && missingProducts.length > 0) {
+    console.log(`⚠️ ensureAllProductsForAdmin: Missing ${missingProducts.length} products:`, missingProducts.map(p => p.name).join(', '));
+  }
   
   if (missingProducts.length > 0) {
     console.log(`⚠️ Missing products for admin view: ${missingProducts.map(p => p.name).join(', ')}`);
+    console.log(`📋 All existing product names:`, Array.from(existingNames).join(', '));
     const ratesCopy = [...rates];
     
     missingProducts.forEach(def => {
@@ -134,7 +153,7 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null) => {
       }
       const totalRate = Math.round(ratePerGram * weightInGrams * 100) / 100;
       
-      ratesCopy.push({
+      const newProduct = {
         _id: Buffer.from(def.name).toString('base64').substring(0, 24),
         name: def.name,
         type: def.type,
@@ -149,7 +168,9 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null) => {
         displayName: null,
         originalName: def.name,
         lastUpdated: new Date()
-      });
+      };
+      ratesCopy.push(newProduct);
+      console.log(`✅ Added missing product: ${def.name} (ratePerGram: ₹${ratePerGram.toFixed(2)}, total: ₹${totalRate.toFixed(2)})`);
     });
     
     return ratesCopy;
@@ -163,7 +184,10 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null) => {
 // This function just ensures the data structure is correct for the API response
 const applyManualAdjustments = async (rates, isAdmin = false) => {
   // Fetch current adjustments from MongoDB
-  const adjustmentsMap = await fetchManualAdjustments(rates.map(r => r.name));
+  // Use originalName if available (for admin), otherwise use name
+  // This ensures we fetch adjustments correctly even when displayName is set
+  const rateNames = rates.map(r => r.originalName || r.name);
+  const adjustmentsMap = await fetchManualAdjustments(rateNames);
 
   // Filter out invisible products for non-admin users
   // IMPORTANT: For admin, include ALL products (including disabled ones)
@@ -180,7 +204,9 @@ const applyManualAdjustments = async (rates, isAdmin = false) => {
   }
 
   return filteredRates.map(rate => {
-    const manualAdjustment = adjustmentsMap[rate.name] || rate.manualAdjustment || 0;
+    // Use originalName to fetch adjustment if available, otherwise use name
+    const productName = rate.originalName || rate.name;
+    const manualAdjustment = adjustmentsMap[productName] || rate.manualAdjustment || 0;
     
     // IMPORTANT: rate.ratePerGram in MongoDB already includes adjustments
     // So original = current - adjustment
@@ -201,7 +227,8 @@ const applyManualAdjustments = async (rates, isAdmin = false) => {
     
     // Use displayName if set, otherwise use name
     const displayName = rate.displayName || rate.name;
-    const originalName = rate.name; // Keep original name for admin updates
+    // Preserve originalName if it exists (from ensureAllProductsForAdmin), otherwise use name
+    const originalName = rate.originalName || rate.name;
     
     return {
       ...rate,
@@ -553,6 +580,8 @@ router.get('/', async (req, res) => {
         if (isAdmin) {
           const disabledCount = mongoRates.filter(r => r.isVisible === false).length;
           console.log(`📊 Admin view: Found ${mongoRates.length} total products (${disabledCount} disabled)`);
+          const productNames = mongoRates.map(r => `${r.name}${r.displayName ? ` (display: ${r.displayName})` : ''}${r.isVisible === false ? ' [DISABLED]' : ''}`);
+          console.log(`📋 Products in MongoDB:`, productNames.join(', '));
         }
         
         // Ensure all defined products exist for admins (if missing from MongoDB, add with defaults)
@@ -661,7 +690,19 @@ router.get('/', async (req, res) => {
                 name: rate.displayName || rate.name
               }));
             } else {
+              // Log before applying adjustments
+              if (isAdmin) {
+                console.log(`📊 Before applyManualAdjustments: ${mongoRates.length} products`);
+                const productNames = mongoRates.map(r => r.name || r.originalName || 'unnamed');
+                console.log(`📋 Product names:`, productNames.join(', '));
+              }
               finalRates = await applyManualAdjustments(mongoRates, isAdmin);
+              // Log after applying adjustments
+              if (isAdmin) {
+                console.log(`📊 After applyManualAdjustments: ${finalRates.length} products`);
+                const finalProductNames = finalRates.map(r => r.name || r.originalName || 'unnamed');
+                console.log(`📋 Final product names:`, finalProductNames.join(', '));
+              }
             }
             const ratesWithUSD = finalRates.map(rate => ({
               ...rate,
