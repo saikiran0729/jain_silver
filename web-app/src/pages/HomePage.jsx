@@ -256,16 +256,30 @@ function HomePage() {
     return prevRate.isUp ? colors.success : colors.error;
   };
 
-  const getTypeIcon = (type, name) => {
+  const getTypeIcon = (type, name, weight) => {
     if (type === 'coin') {
       return 'coin-image';
     }
-    if (type === 'bar' && name) {
-      const nameLower = name.toLowerCase();
-      if (nameLower.includes('1 kg') || nameLower.includes('1kg') || 
-          nameLower.includes('100 grams') || nameLower.includes('100g') ||
-          nameLower.includes('500 grams') || nameLower.includes('500g')) {
-        return 'bar-image';
+    if (type === 'bar') {
+      // Check weight first (more reliable than name)
+      if (weight) {
+        const weightValue = weight.value;
+        const weightUnit = weight.unit;
+        if (weightUnit === 'kg' && weightValue === 1) {
+          return 'bar-image';
+        }
+        if (weightUnit === 'grams' && (weightValue === 100 || weightValue === 500)) {
+          return 'bar-image';
+        }
+      }
+      // Fallback to name check (for backward compatibility)
+      if (name) {
+        const nameLower = name.toLowerCase();
+        if (nameLower.includes('1 kg') || nameLower.includes('1kg') || 
+            nameLower.includes('100 grams') || nameLower.includes('100g') ||
+            nameLower.includes('500 grams') || nameLower.includes('500g')) {
+          return 'bar-image';
+        }
       }
     }
     switch (type) {
@@ -275,8 +289,8 @@ function HomePage() {
     }
   };
 
-  const getProductImage = (type, name) => {
-    const iconType = getTypeIcon(type, name);
+  const getProductImage = (type, name, weight) => {
+    const iconType = getTypeIcon(type, name, weight);
     if (iconType === 'coin-image') {
       return '/silver-coin.jpg';
     }
@@ -333,8 +347,11 @@ function HomePage() {
                 const rateKey = rate._id?.toString() || `${rate.name}-${rate.weight?.value}`;
                 const prevRate = previousRates[rateKey];
                 const rateColor = getRateColor(rateKey);
-                const productImage = getProductImage(rate.type, rate.name);
-                const iconType = getTypeIcon(rate.type, rate.name);
+                // Use originalName for icon determination to keep icon consistent even when displayName changes
+                // Also use weight for more reliable icon detection
+                const productNameForIcon = rate.originalName || rate.name;
+                const productImage = getProductImage(rate.type, productNameForIcon, rate.weight);
+                const iconType = getTypeIcon(rate.type, productNameForIcon, rate.weight);
 
                 return (
                   <TableRow
