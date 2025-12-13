@@ -338,8 +338,8 @@ function HomePage() {
           <Table sx={{ minWidth: { xs: 400, sm: 650 } }} size="small" stickyHeader>
             <TableHead>
               <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
-                <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 1 }}>Product</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 1, whiteSpace: 'nowrap' }}>Sell Price</TableCell>
+                <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 0.75, px: 1 }}>Product</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 0.75, px: 1, whiteSpace: 'nowrap' }}>Sell Price</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -365,19 +365,20 @@ function HomePage() {
                         : 'white',
                     }}
                   >
-                    <TableCell sx={{ py: 0.75 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <TableCell sx={{ py: 0.5, px: 1 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                         {productImage ? (
                           <Box
                             component="img"
                             src={productImage}
                             alt={rate.name}
                             sx={{
-                              width: 40,
-                              height: 40,
+                              width: 36,
+                              height: 36,
                               borderRadius: 0.5,
                               objectFit: 'cover',
                               border: `1px solid ${colors.border}`,
+                              flexShrink: 0,
                             }}
                             onError={(e) => {
                               e.target.style.display = 'none';
@@ -386,32 +387,34 @@ function HomePage() {
                         ) : (
                           <Avatar
                             sx={{
-                              width: 40,
-                              height: 40,
+                              width: 36,
+                              height: 36,
                               backgroundColor: colors.primaryVeryLight,
-                              fontSize: 16,
+                              fontSize: 14,
+                              flexShrink: 0,
                             }}
                           >
                             {iconType}
                           </Avatar>
                         )}
-                        <Box>
-                          <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', lineHeight: 1.2 }}>
+                        <Box sx={{ minWidth: 0 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.75rem', lineHeight: 1.1 }}>
                             {rate.name}
                           </Typography>
-                          <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.7rem' }}>
+                          <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.65rem', lineHeight: 1.1 }}>
                             {rate.purity} • {formatWeight(rate.weight)}
                           </Typography>
                         </Box>
                       </Box>
                     </TableCell>
-                    <TableCell align="right" sx={{ py: 0.75, whiteSpace: 'nowrap' }}>
+                    <TableCell align="right" sx={{ py: 0.5, px: 1, whiteSpace: 'nowrap' }}>
                       <Typography
                         variant="body2"
                         sx={{
                           fontWeight: 700,
                           color: rateColor || '#d32f2f',
-                          fontSize: { xs: '0.85rem', sm: '0.95rem' },
+                          fontSize: { xs: '0.8rem', sm: '0.9rem' },
+                          lineHeight: 1.1,
                         }}
                       >
                         {formatPrice(rate.rate)}
@@ -420,8 +423,10 @@ function HomePage() {
                         variant="caption"
                         sx={{
                           color: colors.textSecondary,
-                          fontSize: { xs: '0.65rem', sm: '0.7rem' },
+                          fontSize: { xs: '0.6rem', sm: '0.65rem' },
                           display: 'block',
+                          lineHeight: 1.1,
+                          mt: 0.25,
                         }}
                       >
                         ₹{rate.ratePerGram?.toFixed(2)}/gram
