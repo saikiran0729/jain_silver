@@ -62,8 +62,8 @@ function AdminDashboardPage() {
       setGlobalShowAsItIs(newValue);
       setShowOriginalRates(newValue); // Sync local view
       alert(response.data.message || `"Show As It Is" ${newValue ? 'enabled' : 'disabled'} successfully`);
-      // Refresh rates to show updated values
-      await fetchRates();
+      // Refresh rates to show updated values - skip update to avoid timeout
+      await fetchRates(true);
     } catch (error) {
       alert(error.response?.data?.message || 'Failed to toggle "Show As It Is" setting');
     } finally {
@@ -89,11 +89,16 @@ function AdminDashboardPage() {
     }
   };
 
-  const fetchRates = async () => {
+  const fetchRates = async (skipUpdate = false) => {
     try {
       setLoadingRates(true);
-      console.log('📡 Fetching rates from /rates endpoint...');
-      const response = await api.get('/rates');
+      console.log('📡 Fetching rates from /rates endpoint...', skipUpdate ? '(skipping update)' : '');
+      // Use skipUpdate parameter to avoid waiting for slow external rate updates
+      // This prevents timeouts when admin adjusts rates and immediately fetches them
+      const response = await api.get('/rates', {
+        params: { skipUpdate: skipUpdate ? 'true' : undefined },
+        timeout: 60000 // 60 seconds timeout for admin dashboard (increased from 30s)
+      });
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
       setRates(response.data || []);
       
@@ -307,8 +312,8 @@ function AdminDashboardPage() {
       setAdjustValue('');
       setSelectedItem('all');
       setAdjustValueType('amount');
-      // Refresh rates to show updated values
-      await fetchRates();
+      // Refresh rates to show updated values - skip update to avoid timeout
+      await fetchRates(true);
     } catch (error) {
       const errorMsg = error.response?.data?.message || error.response?.data?.error || 'Failed to adjust rates';
       alert(errorMsg);

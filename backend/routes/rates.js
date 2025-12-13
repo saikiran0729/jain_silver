@@ -370,6 +370,9 @@ const updateMongoDBRates = async (liveRate) => {
 // Get all silver rates - First tries MongoDB, then live API
 router.get('/', async (req, res) => {
   try {
+    // Check for skipUpdate query parameter (for admin dashboard to avoid waiting for slow external updates)
+    const skipUpdate = req.query.skipUpdate === 'true' || req.query.skipUpdate === true;
+    
     // Auth check (optional)
     try {
       const token = req.headers.authorization?.replace('Bearer ', '');
@@ -443,6 +446,43 @@ router.get('/', async (req, res) => {
             rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
           );
           
+          // If skipUpdate is true, skip waiting for updates and return current rates immediately
+          if (skipUpdate) {
+            console.log('⏩ Skipping rate update (skipUpdate=true), returning current MongoDB rates immediately');
+            let finalRates;
+            if (showAsItIs) {
+              // If "Show As It Is" is enabled, return original rates without adjustments
+              let baseRatePerGram = cachedBaseRate.ratePerGram;
+              try {
+                const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
+                const liveRate = await Promise.race([
+                  fetchSilverRatesFromMultipleSources(),
+                  new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Timeout after 5 seconds')), 5000)
+                  )
+                ]);
+                if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0) {
+                  baseRatePerGram = liveRate.ratePerGram;
+                }
+              } catch (fetchError) {
+                console.warn('Could not fetch fresh base rate, using cached:', fetchError.message);
+              }
+              finalRates = await getOriginalRates(baseRatePerGram);
+            } else {
+              finalRates = await applyManualAdjustments(mongoRates);
+            }
+            const ratesWithUSD = finalRates.map(rate => ({
+              ...rate,
+              usdInrRate: cachedBaseRate.usdInrRate || 89.25
+            }));
+            res.set({
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0'
+            });
+            return res.json(ratesWithUSD);
+          }
+          
           // If rates are very stale OR contain old 99.9% rates, wait for update before serving
           if (mongoAge > VERY_STALE_THRESHOLD || hasOld99_9Rates) {
             const reason = hasOld99_9Rates 
@@ -514,7 +554,8 @@ router.get('/', async (req, res) => {
           
           // If rates are stale (older than 1 second), wait for update to complete
           // Since mobile app polls every second, this ensures rates update every second
-          if (mongoAge > STALE_THRESHOLD) {
+          // Skip this if skipUpdate is true (for admin dashboard)
+          if (!skipUpdate && mongoAge > STALE_THRESHOLD) {
             console.log(`🔄 Rates are stale (${Math.round(mongoAge/1000)}s old), fetching fresh rates...`);
             try {
               // Wait for update to complete (blocking) to ensure fresh rates
