@@ -497,9 +497,30 @@ router.get('/', async (req, res) => {
               } catch (fetchError) {
                 console.warn('Could not fetch fresh base rate, using cached:', fetchError.message);
               }
-              finalRates = await getOriginalRates(baseRatePerGram);
+              // For "Show As It Is", merge with MongoDB visibility info
+              const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
+              const mongoRatesMap = new Map();
+              mongoRates.forEach(rate => {
+                mongoRatesMap.set(rate.name, rate);
+              });
+              let mergedRates = calculatedOriginalRates.map(calcRate => {
+                const mongoRate = mongoRatesMap.get(calcRate.name);
+                return {
+                  ...calcRate,
+                  isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
+                  displayName: mongoRate?.displayName || null,
+                  originalName: calcRate.name
+                };
+              });
+              if (!isAdmin) {
+                mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
+              }
+              finalRates = mergedRates.map(rate => ({
+                ...rate,
+                name: rate.displayName || rate.name
+              }));
             } else {
-              finalRates = await applyManualAdjustments(mongoRates);
+              finalRates = await applyManualAdjustments(mongoRates, isAdmin);
             }
             const ratesWithUSD = finalRates.map(rate => ({
               ...rate,
@@ -540,8 +561,35 @@ router.get('/', async (req, res) => {
                     .sort({ name: 1 })
                     .lean();
                   if (retryRates && retryRates.length > 0) {
-                    const ratesWithAdjustments = await applyManualAdjustments(retryRates, isAdmin);
-                    const ratesWithUSD = ratesWithAdjustments.map(rate => ({
+                    // For "Show As It Is", handle specially
+                    let processedRates;
+                    if (showAsItIs) {
+                      let baseRatePerGram = cachedBaseRate.ratePerGram;
+                      const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
+                      const retryRatesMap = new Map();
+                      retryRates.forEach(rate => {
+                        retryRatesMap.set(rate.name, rate);
+                      });
+                      let mergedRates = calculatedOriginalRates.map(calcRate => {
+                        const mongoRate = retryRatesMap.get(calcRate.name);
+                        return {
+                          ...calcRate,
+                          isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
+                          displayName: mongoRate?.displayName || null,
+                          originalName: calcRate.name
+                        };
+                      });
+                      if (!isAdmin) {
+                        mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
+                      }
+                      processedRates = mergedRates.map(rate => ({
+                        ...rate,
+                        name: rate.displayName || rate.name
+                      }));
+                    } else {
+                      processedRates = await applyManualAdjustments(retryRates, isAdmin);
+                    }
+                    const ratesWithUSD = processedRates.map(rate => ({
                       ...rate,
                       usdInrRate: cachedBaseRate.usdInrRate || 89.25
                     }));
@@ -559,8 +607,35 @@ router.get('/', async (req, res) => {
                   const freshAge = Date.now() - new Date(freshLatest.lastUpdated).getTime();
                   console.log(`✅ Fresh rates loaded: ${freshRates.length} rates (${Math.round(freshAge/1000)}s old, latest: ${freshLatest.name} = ₹${freshLatest.ratePerGram}/gram)`);
                   
-                  const ratesWithAdjustments = await applyManualAdjustments(freshRates, isAdmin);
-                  const ratesWithUSD = ratesWithAdjustments.map(rate => ({
+                  // For "Show As It Is", handle specially
+                  let processedRates;
+                  if (showAsItIs) {
+                    let baseRatePerGram = cachedBaseRate.ratePerGram;
+                    const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
+                    const freshRatesMap = new Map();
+                    freshRates.forEach(rate => {
+                      freshRatesMap.set(rate.name, rate);
+                    });
+                    let mergedRates = calculatedOriginalRates.map(calcRate => {
+                      const mongoRate = freshRatesMap.get(calcRate.name);
+                      return {
+                        ...calcRate,
+                        isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
+                        displayName: mongoRate?.displayName || null,
+                        originalName: calcRate.name
+                      };
+                    });
+                    if (!isAdmin) {
+                      mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
+                    }
+                    processedRates = mergedRates.map(rate => ({
+                      ...rate,
+                      name: rate.displayName || rate.name
+                    }));
+                  } else {
+                    processedRates = await applyManualAdjustments(freshRates, isAdmin);
+                  }
+                  const ratesWithUSD = processedRates.map(rate => ({
                       ...rate,
                       usdInrRate: cachedBaseRate.usdInrRate || 89.25
                     }));
@@ -667,6 +742,7 @@ router.get('/', async (req, res) => {
           let finalRates;
           if (showAsItIs) {
             // If "Show As It Is" is enabled, return original rates without adjustments
+            // But still need to filter by visibility for non-admin users
             // Fetch fresh base rate from source
             let baseRatePerGram = cachedBaseRate.ratePerGram;
             try {
@@ -686,8 +762,37 @@ router.get('/', async (req, res) => {
               // Use cached base rate as fallback
             }
             
-            // Get original rates from base rate
-            finalRates = await getOriginalRates(baseRatePerGram);
+            // Get original rates from base rate, but merge with MongoDB data for visibility info
+            const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
+            
+            // Create a map of MongoDB rates by name for visibility lookup
+            const mongoRatesMap = new Map();
+            mongoRates.forEach(rate => {
+              mongoRatesMap.set(rate.name, rate);
+            });
+            
+            // Merge calculated rates with MongoDB visibility info and filter
+            let mergedRates = calculatedOriginalRates.map(calcRate => {
+              const mongoRate = mongoRatesMap.get(calcRate.name);
+              return {
+                ...calcRate,
+                isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
+                displayName: mongoRate?.displayName || null,
+                originalName: calcRate.name
+              };
+            });
+            
+            // Filter by visibility for non-admin users
+            if (!isAdmin) {
+              mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
+            }
+            
+            // Apply displayName if set
+            finalRates = mergedRates.map(rate => ({
+              ...rate,
+              name: rate.displayName || rate.name
+            }));
+            
             console.log(`✅ "Show As It Is" enabled - returning original rates (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
           } else {
             // Apply manual adjustments to rates from MongoDB
@@ -773,7 +878,20 @@ router.get('/', async (req, res) => {
     let allRates;
     if (showAsItIs) {
       // If "Show As It Is" is enabled, return original rates without adjustments
-      allRates = await getOriginalRates(baseRatePerGram);
+      // But still filter by visibility for non-admin users
+      const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
+      
+      // In fallback mode, we don't have MongoDB rates, so we can't filter by visibility
+      // Default all to visible, but this is fallback only
+      allRates = calculatedOriginalRates.map(rate => ({
+        ...rate,
+        isVisible: true, // Default to visible in fallback mode
+        displayName: null,
+        originalName: rate.name
+      }));
+      
+      // For non-admin users, we'd filter here, but in fallback we don't have visibility data
+      // So we show all in fallback mode (which shouldn't happen often)
       console.log(`✅ "Show As It Is" enabled - returning original rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
     } else {
       // Fetch manual adjustments from MongoDB
