@@ -103,10 +103,13 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null) => {
     { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
   ];
   
-  const existingNames = new Set(rates.map(r => {
+  const existingNames = new Set();
+  rates.forEach(r => {
     // Check both name and originalName to handle cases where displayName is set
-    return r.name || r.originalName || r._id?.toString();
-  }));
+    // In MongoDB, name is always the original name, but in API responses it might be displayName
+    if (r.name) existingNames.add(r.name);
+    if (r.originalName) existingNames.add(r.originalName);
+  });
   const missingProducts = allRateDefinitions.filter(def => !existingNames.has(def.name));
   
   if (missingProducts.length > 0) {
@@ -608,6 +611,28 @@ router.get('/', async (req, res) => {
                   originalName: calcRate.name
                 };
               });
+              
+              // For admin users, also include any MongoDB products that aren't in calculated rates
+              // This ensures disabled products still appear for admin
+              if (isAdmin) {
+                const calculatedNames = new Set(calculatedOriginalRates.map(r => r.name));
+                mongoRates.forEach(mongoRate => {
+                  if (!calculatedNames.has(mongoRate.name)) {
+                    // Product exists in MongoDB but not in calculated rates - include it for admin
+                    let weightInGrams = mongoRate.weight.value;
+                    if (mongoRate.weight.unit === 'kg') {
+                      weightInGrams = mongoRate.weight.value * 1000;
+                    }
+                    mergedRates.push({
+                      ...mongoRate,
+                      originalName: mongoRate.name,
+                      name: mongoRate.displayName || mongoRate.name,
+                      isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true
+                    });
+                  }
+                });
+              }
+              
               if (!isAdmin) {
                 mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
               }
@@ -713,6 +738,24 @@ router.get('/', async (req, res) => {
                           originalName: calcRate.name
                         };
                       });
+                      
+                      // For admin users, also include any MongoDB products that aren't in calculated rates
+                      // This ensures disabled products still appear for admin
+                      if (isAdmin) {
+                        const calculatedNames = new Set(calculatedOriginalRates.map(r => r.name));
+                        retryRates.forEach(mongoRate => {
+                          if (!calculatedNames.has(mongoRate.name)) {
+                            // Product exists in MongoDB but not in calculated rates - include it for admin
+                            mergedRates.push({
+                              ...mongoRate,
+                              originalName: mongoRate.name,
+                              name: mongoRate.displayName || mongoRate.name,
+                              isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true
+                            });
+                          }
+                        });
+                      }
+                      
                       if (!isAdmin) {
                         mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
                       }
@@ -953,6 +996,27 @@ router.get('/', async (req, res) => {
                 originalName: calcRate.name
               };
             });
+            
+            // For admin users, also include any MongoDB products that aren't in calculated rates
+            // This ensures disabled products still appear for admin
+            if (isAdmin) {
+              const calculatedNames = new Set(calculatedOriginalRates.map(r => r.name));
+              mongoRates.forEach(mongoRate => {
+                if (!calculatedNames.has(mongoRate.name)) {
+                  // Product exists in MongoDB but not in calculated rates - include it for admin
+                  let weightInGrams = mongoRate.weight.value;
+                  if (mongoRate.weight.unit === 'kg') {
+                    weightInGrams = mongoRate.weight.value * 1000;
+                  }
+                  mergedRates.push({
+                    ...mongoRate,
+                    originalName: mongoRate.name,
+                    name: mongoRate.displayName || mongoRate.name,
+                    isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true
+                  });
+                }
+              });
+            }
             
             // Filter by visibility for non-admin users
             if (!isAdmin) {
