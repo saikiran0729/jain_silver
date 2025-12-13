@@ -312,7 +312,7 @@ function HomePage() {
   }
 
   return (
-    <Box sx={{ p: { xs: 0.5, sm: 1 }, maxWidth: 1000, mx: 'auto', height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ p: { xs: 1, sm: 2 }, maxWidth: 1200, mx: 'auto', height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography
           variant="h5"
@@ -335,11 +335,11 @@ function HomePage() {
         <Alert severity="info">No rates available</Alert>
       ) : (
         <TableContainer component={Paper} sx={{ boxShadow: 2, flex: 1, overflow: 'auto' }}>
-          <Table sx={{ minWidth: { xs: 350, sm: 550 }, width: '100%' }} size="small" stickyHeader>
+          <Table sx={{ minWidth: { xs: 400, sm: 650 }, width: '100%' }} size="small" stickyHeader>
             <TableHead>
               <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
-                <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.7rem', sm: '0.8rem' }, py: 0.5, px: 0.75 }}>Product</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 700, fontSize: { xs: '0.7rem', sm: '0.8rem' }, py: 0.5, px: 0.75, whiteSpace: 'nowrap' }}>Sell Price</TableCell>
+                <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 1, px: 1, pr: 0.5 }}>Product</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 1, pl: 0.5, pr: 1, whiteSpace: 'nowrap' }}>Sell Price</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -365,16 +365,16 @@ function HomePage() {
                         : 'white',
                     }}
                   >
-                    <TableCell sx={{ py: 0.4, px: 0.75 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <TableCell sx={{ py: 0.75, px: 1, pr: 0.5, width: 'auto' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         {productImage ? (
                           <Box
                             component="img"
                             src={productImage}
                             alt={rate.name}
                             sx={{
-                              width: 32,
-                              height: 32,
+                              width: 40,
+                              height: 40,
                               borderRadius: 0.5,
                               objectFit: 'cover',
                               border: `1px solid ${colors.border}`,
@@ -387,10 +387,10 @@ function HomePage() {
                         ) : (
                           <Avatar
                             sx={{
-                              width: 32,
-                              height: 32,
+                              width: 40,
+                              height: 40,
                               backgroundColor: colors.primaryVeryLight,
-                              fontSize: 12,
+                              fontSize: 16,
                               flexShrink: 0,
                             }}
                           >
@@ -398,23 +398,22 @@ function HomePage() {
                           </Avatar>
                         )}
                         <Box sx={{ minWidth: 0 }}>
-                          <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.7rem', lineHeight: 1.1 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', lineHeight: 1.2 }}>
                             {rate.name}
                           </Typography>
-                          <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.6rem', lineHeight: 1.1 }}>
+                          <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.7rem' }}>
                             {rate.purity} • {formatWeight(rate.weight)}
                           </Typography>
                         </Box>
                       </Box>
                     </TableCell>
-                    <TableCell align="right" sx={{ py: 0.4, px: 0.75, whiteSpace: 'nowrap' }}>
+                    <TableCell align="right" sx={{ py: 0.75, pl: 0.5, pr: 1, whiteSpace: 'nowrap', width: 'auto' }}>
                       <Typography
                         variant="body2"
                         sx={{
                           fontWeight: 700,
                           color: rateColor || '#d32f2f',
-                          fontSize: { xs: '0.8rem', sm: '0.9rem' },
-                          lineHeight: 1.1,
+                          fontSize: { xs: '0.85rem', sm: '0.95rem' },
                         }}
                       >
                         {formatPrice(rate.rate)}
@@ -423,10 +422,8 @@ function HomePage() {
                         variant="caption"
                         sx={{
                           color: colors.textSecondary,
-                          fontSize: { xs: '0.6rem', sm: '0.65rem' },
+                          fontSize: { xs: '0.65rem', sm: '0.7rem' },
                           display: 'block',
-                          lineHeight: 1.1,
-                          mt: 0.25,
                         }}
                       >
                         ₹{rate.ratePerGram?.toFixed(2)}/gram
