@@ -312,7 +312,7 @@ function HomePage() {
   }
 
   return (
-    <Box sx={{ p: { xs: 1, sm: 2 }, maxWidth: 1200, mx: 'auto', height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ p: { xs: 1, sm: 2 }, maxWidth: 1400, mx: 'auto', height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography
           variant="h5"
@@ -331,111 +331,145 @@ function HomePage() {
         )}
       </Box>
 
-      {rates.length === 0 ? (
-        <Alert severity="info">No rates available</Alert>
-      ) : (
-        <TableContainer component={Paper} sx={{ boxShadow: 2, flex: 1, overflow: 'auto' }}>
-          <Table sx={{ minWidth: { xs: 400, sm: 650 }, width: '100%' }} size="small" stickyHeader>
-            <TableHead>
-              <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
-                <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 1, px: 1, pr: 0.5 }}>Product</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 1, pl: 0.5, pr: 1, whiteSpace: 'nowrap' }}>Sell Price</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {rates.map((rate) => {
-                const rateKey = rate._id?.toString() || `${rate.name}-${rate.weight?.value}`;
-                const prevRate = previousRates[rateKey];
-                const rateColor = getRateColor(rateKey);
-                // Use originalName for icon determination to keep icon consistent even when displayName changes
-                // Also use weight for more reliable icon detection
-                const productNameForIcon = rate.originalName || rate.name;
-                const productImage = getProductImage(rate.type, productNameForIcon, rate.weight);
-                const iconType = getTypeIcon(rate.type, productNameForIcon, rate.weight);
+      <Grid container spacing={2} sx={{ flex: 1, minHeight: 0 }}>
+        <Grid item xs={12} md={3} sx={{ order: { xs: 2, md: 0 } }}>
+          <Box
+            component="img"
+            src="/banner2.png"
+            alt="Banner"
+            sx={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              objectPosition: 'center',
+              borderRadius: 1,
+              boxShadow: 2,
+            }}
+          />
+        </Grid>
+        <Grid item xs={12} md={6} sx={{ order: { xs: 1, md: 0 } }}>
+          {rates.length === 0 ? (
+            <Alert severity="info">No rates available</Alert>
+          ) : (
+            <TableContainer component={Paper} sx={{ boxShadow: 2, height: '100%', overflow: 'auto' }}>
+              <Table sx={{ minWidth: { xs: 400, sm: 650 }, width: '100%' }} size="small" stickyHeader>
+                <TableHead>
+                  <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
+                    <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 1, pl: 1, pr: 0.5 }}>Product</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 1, pl: 0.5, pr: 1, whiteSpace: 'nowrap' }}>Sell Price</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {rates.map((rate) => {
+                    const rateKey = rate._id?.toString() || `${rate.name}-${rate.weight?.value}`;
+                    const prevRate = previousRates[rateKey];
+                    const rateColor = getRateColor(rateKey);
+                    // Use originalName for icon determination to keep icon consistent even when displayName changes
+                    // Also use weight for more reliable icon detection
+                    const productNameForIcon = rate.originalName || rate.name;
+                    const productImage = getProductImage(rate.type, productNameForIcon, rate.weight);
+                    const iconType = getTypeIcon(rate.type, productNameForIcon, rate.weight);
 
-                return (
-                  <TableRow
-                    key={rate._id || rateKey}
-                    sx={{
-                      '&:hover': { backgroundColor: '#fafafa' },
-                      backgroundColor: prevRate
-                        ? prevRate.isUp
-                          ? '#E8F5E9'
-                          : '#FFEBEE'
-                        : 'white',
-                    }}
-                  >
-                    <TableCell sx={{ py: 0.75, px: 1, pr: 0.5, width: 'auto' }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        {productImage ? (
-                          <Box
-                            component="img"
-                            src={productImage}
-                            alt={rate.name}
+                    return (
+                      <TableRow
+                        key={rate._id || rateKey}
+                        sx={{
+                          '&:hover': { backgroundColor: '#fafafa' },
+                          backgroundColor: prevRate
+                            ? prevRate.isUp
+                              ? '#E8F5E9'
+                              : '#FFEBEE'
+                            : 'white',
+                        }}
+                      >
+                        <TableCell sx={{ py: 0.75, pl: 1, pr: 0.5, width: 'auto' }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            {productImage ? (
+                              <Box
+                                component="img"
+                                src={productImage}
+                                alt={rate.name}
+                                sx={{
+                                  width: 40,
+                                  height: 40,
+                                  borderRadius: 0.5,
+                                  objectFit: 'cover',
+                                  border: `1px solid ${colors.border}`,
+                                  flexShrink: 0,
+                                }}
+                                onError={(e) => {
+                                  e.target.style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              <Avatar
+                                sx={{
+                                  width: 40,
+                                  height: 40,
+                                  backgroundColor: colors.primaryVeryLight,
+                                  fontSize: 16,
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {iconType}
+                              </Avatar>
+                            )}
+                            <Box sx={{ minWidth: 0 }}>
+                              <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', lineHeight: 1.2 }}>
+                                {rate.name}
+                              </Typography>
+                              <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.7rem' }}>
+                                {rate.purity} • {formatWeight(rate.weight)}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </TableCell>
+                        <TableCell align="right" sx={{ py: 0.75, pl: 0.5, pr: 1, whiteSpace: 'nowrap', width: 'auto' }}>
+                          <Typography
+                            variant="body2"
                             sx={{
-                              width: 40,
-                              height: 40,
-                              borderRadius: 0.5,
-                              objectFit: 'cover',
-                              border: `1px solid ${colors.border}`,
-                              flexShrink: 0,
-                            }}
-                            onError={(e) => {
-                              e.target.style.display = 'none';
-                            }}
-                          />
-                        ) : (
-                          <Avatar
-                            sx={{
-                              width: 40,
-                              height: 40,
-                              backgroundColor: colors.primaryVeryLight,
-                              fontSize: 16,
-                              flexShrink: 0,
+                              fontWeight: 700,
+                              color: rateColor || '#d32f2f',
+                              fontSize: { xs: '0.85rem', sm: '0.95rem' },
                             }}
                           >
-                            {iconType}
-                          </Avatar>
-                        )}
-                        <Box sx={{ minWidth: 0 }}>
-                          <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', lineHeight: 1.2 }}>
-                            {rate.name}
+                            {formatPrice(rate.rate)}
                           </Typography>
-                          <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.7rem' }}>
-                            {rate.purity} • {formatWeight(rate.weight)}
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              color: colors.textSecondary,
+                              fontSize: { xs: '0.65rem', sm: '0.7rem' },
+                              display: 'block',
+                            }}
+                          >
+                            ₹{rate.ratePerGram?.toFixed(2)}/gram
                           </Typography>
-                        </Box>
-                      </Box>
-                    </TableCell>
-                    <TableCell align="right" sx={{ py: 0.75, pl: 0.5, pr: 1, whiteSpace: 'nowrap', width: 'auto' }}>
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          fontWeight: 700,
-                          color: rateColor || '#d32f2f',
-                          fontSize: { xs: '0.85rem', sm: '0.95rem' },
-                        }}
-                      >
-                        {formatPrice(rate.rate)}
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: colors.textSecondary,
-                          fontSize: { xs: '0.65rem', sm: '0.7rem' },
-                          display: 'block',
-                        }}
-                      >
-                        ₹{rate.ratePerGram?.toFixed(2)}/gram
-                      </Typography>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </Grid>
+        <Grid item xs={12} md={3} sx={{ order: { xs: 3, md: 0 } }}>
+          <Box
+            component="img"
+            src="/banner.png"
+            alt="Banner"
+            sx={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              objectPosition: 'center',
+              borderRadius: 1,
+              boxShadow: 2,
+            }}
+          />
+        </Grid>
+      </Grid>
     </Box>
   );
 }
