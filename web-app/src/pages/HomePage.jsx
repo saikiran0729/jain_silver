@@ -109,13 +109,13 @@ function HomePage() {
 
         setRates((prevRates) => {
           const updatedRates = newRates.map((newRate) => {
-            const prevRate = prevRates.find(
+            const prevRate = Array.isArray(prevRates) ? prevRates.find(
               (rate) =>
                 rate._id?.toString() === newRate._id?.toString() ||
                 (rate.name === newRate.name &&
                   rate.weight?.value === newRate.weight?.value &&
                   rate.purity === newRate.purity)
-            );
+            ) : null;
 
             const rateKey = newRate._id?.toString() || `${newRate.name}-${newRate.weight?.value}`;
 
@@ -251,7 +251,7 @@ function HomePage() {
   };
 
   const getRateColor = (rateKey) => {
-    const prevRate = previousRates[rateKey];
+    const prevRate = previousRates?.[rateKey];
     if (!prevRate) return colors.textPrimary;
     return prevRate.isUp ? colors.success : colors.error;
   };
@@ -360,9 +360,9 @@ function HomePage() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {rates.map((rate) => {
+                  {rates && Array.isArray(rates) && rates.map((rate) => {
                     const rateKey = rate._id?.toString() || `${rate.name}-${rate.weight?.value}`;
-                    const prevRate = previousRates[rateKey];
+                    const prevRate = previousRates?.[rateKey];
                     const rateColor = getRateColor(rateKey);
                     // Use originalName for icon determination to keep icon consistent even when displayName changes
                     // Also use weight for more reliable icon detection

@@ -30,30 +30,29 @@ router.get('/', auth, adminAuth, async (req, res) => {
       } catch (connError) {
         console.error('MongoDB connection failed, returning default dashboard:', connError);
         return res.json({
-        message: 'Admin API',
-        dashboard: {
-          users: {
-            total: 0,
-            approved: 0,
-            pending: 0,
-            rejected: 0,
-            verified: 0,
-            note: 'MongoDB connection not ready'
+          message: 'Admin API',
+          dashboard: {
+            users: {
+              total: 0,
+              approved: 0,
+              pending: 0,
+              rejected: 0,
+              verified: 0,
+              note: 'MongoDB connection not ready'
+            },
+            rates: {
+              total: 0
+            },
+            recentUsers: []
           },
-          rates: {
-            total: 0
-          },
-          recentUsers: []
-        },
-        endpoints: {
-          pendingUsers: 'GET /api/admin/pending-users',
-          allUsers: 'GET /api/admin/users',
-          userDetails: 'GET /api/admin/user/:userId',
-          approveUser: 'PUT /api/admin/approve-user/:userId',
-          rejectUser: 'PUT /api/admin/reject-user/:userId'
-        }
+          endpoints: {
+            pendingUsers: 'GET /api/admin/pending-users',
+            allUsers: 'GET /api/admin/users',
+            userDetails: 'GET /api/admin/user/:userId',
+            approveUser: 'PUT /api/admin/approve-user/:userId',
+            rejectUser: 'PUT /api/admin/reject-user/:userId'
+          }
         });
-        return;
       }
     }
 
