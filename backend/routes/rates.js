@@ -734,7 +734,12 @@ router.get('/', async (req, res) => {
           }
           
           // If rates are very stale OR contain old 99.9% rates, wait for update before serving
-          if (mongoAge > VERY_STALE_THRESHOLD || hasOld99_9Rates) {
+          // NOTE: On Vercel/serverless we must avoid long blocking calls here or the client
+          // (web/mobile app) will hit its 10s timeout and show polling errors.
+          // So this strict "wait for fresh update before responding" logic only runs
+          // on non-serverless platforms. On Vercel we fall back to serving the latest
+          // MongoDB values and rely on the external updater/cron to refresh rates.
+          if (!process.env.VERCEL && (mongoAge > VERY_STALE_THRESHOLD || hasOld99_9Rates)) {
             const reason = hasOld99_9Rates 
               ? `contains old 99.9% rates (₹169 detected, expected ~₹176-177)`
               : `very stale (${Math.round(mongoAge/1000)}s old)`;
@@ -912,10 +917,13 @@ router.get('/', async (req, res) => {
             }
           }
           
-          // If rates are stale (older than 1 second), wait for update to complete
-          // Since mobile app polls every second, this ensures rates update every second
-          // Skip this if skipUpdate is true (for admin dashboard)
-          if (!skipUpdate && mongoAge > STALE_THRESHOLD) {
+          // If rates are stale (older than 1 second), wait for update to complete.
+          // Since mobile app polls every second, this ensures rates update every second.
+          // Skip this if skipUpdate is true (for admin dashboard).
+          // IMPORTANT: On Vercel we must NOT block here, otherwise the request can
+          // easily exceed the frontend's 10s timeout. So this blocking refresh only
+          // runs on non-serverless platforms.
+          if (!process.env.VERCEL && !skipUpdate && mongoAge > STALE_THRESHOLD) {
             console.log(`🔄 Rates are stale (${Math.round(mongoAge/1000)}s old), fetching fresh rates...`);
             try {
               // Wait for update to complete (blocking) to ensure fresh rates
@@ -979,7 +987,9 @@ router.get('/', async (req, res) => {
             rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
           );
           
-          if (hasOld99_9InResponse) {
+          // On Vercel, avoid blocking here as well – better to serve the latest
+          // known values than to time out the client while waiting for an update.
+          if (!process.env.VERCEL && hasOld99_9InResponse) {
             console.error(`❌ BLOCKED: Attempted to serve old 99.9% rates (₹169 detected). Fetching fresh rates...`);
             try {
               await updateRatesHandler(req, null);
