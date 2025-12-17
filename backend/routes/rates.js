@@ -752,19 +752,26 @@ router.get('/', async (req, res) => {
             return res.json(ratesWithUSD);
           }
           
-          // If rates are very stale OR contain old 99.9% rates, wait for update before serving
-          // NOTE: On Vercel/serverless we must avoid long blocking calls here or the client
-          // (web/mobile app) will hit its 10s timeout and show polling errors.
-          // So this strict "wait for fresh update before responding" logic only runs
-          // on non-serverless platforms. On Vercel we fall back to serving the latest
-          // MongoDB values and rely on the external updater/cron to refresh rates.
-          if (!process.env.VERCEL && (mongoAge > VERY_STALE_THRESHOLD || hasOld99_9Rates)) {
-            const reason = hasOld99_9Rates 
-              ? `contains old 99.9% rates (below ₹100 detected, expected ~₹200-210)`
-              : `very stale (${Math.round(mongoAge/1000)}s old)`;
-            console.log(`⚠️ Rates are ${reason}, fetching fresh rates before serving...`);
-            try {
-              await updateRatesHandler(req, null); // Wait for update
+          // If rates are very stale OR contain old 99.9% rates, trigger update
+          // On Vercel, trigger non-blocking update. On other platforms, wait for update.
+          if (mongoAge > VERY_STALE_THRESHOLD || hasOld99_9Rates) {
+            if (process.env.VERCEL) {
+              // On Vercel, trigger non-blocking update immediately
+              const reason = hasOld99_9Rates 
+                ? `contains old 99.9% rates (below ₹100 detected, expected ~₹200-210)`
+                : `very stale (${Math.round(mongoAge/1000)}s old)`;
+              console.log(`⚠️ Rates are ${reason}, triggering immediate update on Vercel...`);
+              updateRatesHandler(req, null).catch(err => {
+                console.error('❌ Immediate rate update failed:', err.message);
+              });
+              // Continue to serve current rates (they'll be updated in background)
+            } else {
+              const reason = hasOld99_9Rates 
+                ? `contains old 99.9% rates (below ₹100 detected, expected ~₹200-210)`
+                : `very stale (${Math.round(mongoAge/1000)}s old)`;
+              console.log(`⚠️ Rates are ${reason}, fetching fresh rates before serving...`);
+              try {
+                await updateRatesHandler(req, null); // Wait for update
               // Fetch fresh rates after update
               let freshRates = await SilverRate.find({ location: 'Andhra Pradesh' })
                 .sort({ name: 1 })
@@ -1006,6 +1013,44 @@ router.get('/', async (req, res) => {
           // Warn if serving old rates (might indicate update failures)
           if (mongoAge > 5000) {
             console.warn(`⚠️ Serving rates that are ${Math.round(mongoAge/1000)}s old - updates may be failing!`);
+          }
+          
+          // If rates are extremely stale (more than 1 hour), trigger immediate update
+          const EXTREMELY_STALE_THRESHOLD = 3600000; // 1 hour in milliseconds
+          if (mongoAge > EXTREMELY_STALE_THRESHOLD) {
+            console.error(`🚨 CRITICAL: Rates are extremely stale (${Math.round(mongoAge/3600000)} hours old)! Triggering immediate update...`);
+            // Trigger update immediately (non-blocking on Vercel, blocking on other platforms)
+            if (process.env.VERCEL) {
+              updateRatesHandler(req, null).catch(err => {
+                console.error('❌ Critical rate update failed:', err.message);
+              });
+            } else {
+              try {
+                await updateRatesHandler(req, null);
+                // Re-fetch rates after update
+                mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+                  .sort({ name: 1 })
+                  .lean();
+                if (isAdmin && mongoRates) {
+                  const latestRate = mongoRates.length > 0 ? mongoRates.reduce((latest, rate) => {
+                    return rate.lastUpdated > latest.lastUpdated ? rate : latest;
+                  }, mongoRates[0]) : null;
+                  let estimatedBaseRate = cachedBaseRate.ratePerGram;
+                  if (latestRate && latestRate.ratePerGram > 0) {
+                    if (latestRate.purity === '92.5%') {
+                      estimatedBaseRate = latestRate.ratePerGram / 0.96;
+                    } else if (latestRate.purity === '99.99%') {
+                      estimatedBaseRate = latestRate.ratePerGram / 1.005;
+                    } else {
+                      estimatedBaseRate = latestRate.ratePerGram;
+                    }
+                  }
+                  mongoRates = ensureAllProductsForAdmin(mongoRates, isAdmin, estimatedBaseRate);
+                }
+              } catch (updateErr) {
+                console.error('❌ Critical update failed:', updateErr.message);
+              }
+            }
           }
           
           // Check if we're about to serve old 99.9% rates - if so, don't serve them
@@ -1404,10 +1449,9 @@ router.post('/force-update', auth, async (req, res) => {
 const updateRatesHandler = async (req, res = null) => {
   const startTime = Date.now();
   try {
-    // Only log occasionally to avoid spam (every 10th update)
-    if (Math.random() < 0.1) {
-      console.log('🔄 Updating rates from live source...');
-    }
+    // ALWAYS log for cron jobs and manual triggers (critical for debugging)
+    console.log('🔄 Updating rates from live source...');
+    console.log(`📅 Update triggered at: ${new Date().toISOString()}`);
     
     // Import rate fetcher
     const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
@@ -1583,6 +1627,9 @@ const updateRatesHandler = async (req, res = null) => {
       if (bulkResult.modifiedCount === 0 && bulkResult.upsertedCount === 0) {
         console.error('❌ CRITICAL: Bulk write returned 0 updates! MongoDB may not be saving changes.');
         console.error('   This could indicate: connection issue, write permission issue, or filter mismatch');
+        console.error('   Attempting individual updates as fallback...');
+        // Fall through to individual update fallback
+        throw new Error('Bulk write failed - no documents updated');
       }
       
       // Log first rate for verification
@@ -1718,7 +1765,7 @@ const updateRatesHandler = async (req, res = null) => {
       console.error('   This indicates MongoDB write failed or connection issue');
     }
     
-    // Only send response if res object is provided (not for background calls)
+    // ALWAYS send response (even for cron) so we can see if updates are working
     if (res) {
       res.json({ 
         success: true,
@@ -1736,6 +1783,9 @@ const updateRatesHandler = async (req, res = null) => {
           bid: liveRate.rawData?.bid || null
         }
       });
+    } else {
+      // For cron jobs, log success even without response object
+      console.log(`✅ Cron update completed: ${updatedCount} rates updated in ${duration}ms`);
     }
   } catch (error) {
     const duration = Date.now() - startTime;
