@@ -249,8 +249,8 @@ const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false
 
 // Cache for live base rate (updated on every request)
 let cachedBaseRate = {
-  ratePerGram: 169.0, // Default fallback rate
-  ratePerKg: 169000,
+  ratePerGram: 207.0, // Default fallback rate (updated for current market rate ~₹207,000/kg)
+  ratePerKg: 207000,
   source: 'cache',
   lastUpdated: new Date(),
   usdInrRate: 89.25
@@ -306,9 +306,28 @@ const calculateSmoothedRate = (newRate) => {
 
 // Update rates from endpoints (non-blocking)
 const updateRatesFromEndpoints = async () => {
-  // Skip on serverless - rate updates should be handled externally
-  if (process.env.VERCEL) {
-    return; // Don't fetch on serverless to avoid timeouts
+  // On Vercel, we still allow updates but they should be called via the /update endpoint
+  // This function can be called from the /rates endpoint when rates are stale
+  // Skip only if we're in a cold start scenario to avoid timeouts
+  if (process.env.VERCEL && process.env.VERCEL_ENV === 'production') {
+    // On Vercel production, trigger update via internal call (non-blocking)
+    // This ensures rates are updated even when cron hasn't run recently
+    try {
+      // Call update endpoint internally (fire and forget)
+      const http = require('http');
+      const url = require('url');
+      const vercelUrl = process.env.VERCEL_URL || 'localhost:5000';
+      const protocol = vercelUrl.includes('localhost') ? 'http' : 'https';
+      const updateUrl = `${protocol}://${vercelUrl}/api/rates/update`;
+      
+      // Make non-blocking internal request
+      http.get(updateUrl, () => {}).on('error', () => {
+        // Silently fail - cron will handle updates
+      });
+    } catch (err) {
+      // Silently fail - cron will handle updates
+    }
+    return; // Don't block the request
   }
   
   const now = Date.now();
@@ -350,7 +369,7 @@ const updateRatesFromEndpoints = async () => {
       // Only update if change is significant OR if cache is stale (older than 10 seconds)
       const cacheAge = Date.now() - cachedBaseRate.lastUpdated.getTime();
       const isStale = cacheAge > 10000;
-      const isInitial = oldRate === 169.0 && cachedBaseRate.source === 'cache';
+      const isInitial = (oldRate === 169.0 || oldRate === 207.0) && cachedBaseRate.source === 'cache';
       
       if (rateChange >= RATE_CHANGE_THRESHOLD || isStale || isInitial) {
         cachedBaseRate = {
@@ -629,9 +648,9 @@ router.get('/', async (req, res) => {
           const mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
           const STALE_THRESHOLD = 1000; // 1 second - update every second for live rates
           const VERY_STALE_THRESHOLD = 3000; // 3 seconds - if very stale, wait for update before serving
-          const OLD_RATE_THRESHOLD = 170; // If rate is below this, it's likely old cached data
+          const OLD_RATE_THRESHOLD = 100; // If rate is below this, it's likely old cached data (updated for current rates ~207)
           
-          // Check if ANY 99.9% rate is old cached data (should be ~₹176-177, not ₹169)
+          // Check if ANY 99.9% rate is old cached data (should be ~₹200-210, not below ₹100)
           const hasOld99_9Rates = mongoRates.some(rate => 
             rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
           );
@@ -741,7 +760,7 @@ router.get('/', async (req, res) => {
           // MongoDB values and rely on the external updater/cron to refresh rates.
           if (!process.env.VERCEL && (mongoAge > VERY_STALE_THRESHOLD || hasOld99_9Rates)) {
             const reason = hasOld99_9Rates 
-              ? `contains old 99.9% rates (₹169 detected, expected ~₹176-177)`
+              ? `contains old 99.9% rates (below ₹100 detected, expected ~₹200-210)`
               : `very stale (${Math.round(mongoAge/1000)}s old)`;
             console.log(`⚠️ Rates are ${reason}, fetching fresh rates before serving...`);
             try {
@@ -917,16 +936,23 @@ router.get('/', async (req, res) => {
             }
           }
           
-          // If rates are stale (older than 1 second), wait for update to complete.
+          // If rates are stale (older than 1 second), trigger update.
           // Since mobile app polls every second, this ensures rates update every second.
           // Skip this if skipUpdate is true (for admin dashboard).
-          // IMPORTANT: On Vercel we must NOT block here, otherwise the request can
-          // easily exceed the frontend's 10s timeout. So this blocking refresh only
-          // runs on non-serverless platforms.
-          if (!process.env.VERCEL && !skipUpdate && mongoAge > STALE_THRESHOLD) {
+          // On Vercel, trigger non-blocking update. On other platforms, wait for update.
+          if (!skipUpdate && mongoAge > STALE_THRESHOLD) {
+            if (process.env.VERCEL) {
+              // On Vercel, trigger non-blocking update (fire and forget)
+              console.log(`🔄 Rates are stale (${Math.round(mongoAge/1000)}s old), triggering non-blocking update on Vercel...`);
+              updateRatesHandler(req, null).catch(err => {
+                console.error('❌ Background rate update failed:', err.message);
+              });
+              // Continue to serve current rates (they'll be updated in background)
+            } else {
             console.log(`🔄 Rates are stale (${Math.round(mongoAge/1000)}s old), fetching fresh rates...`);
             try {
               // Wait for update to complete (blocking) to ensure fresh rates
+              console.log(`🔄 Rates are stale (${Math.round(mongoAge/1000)}s old), fetching fresh rates...`);
               await updateRatesHandler(req, null);
               // Fetch fresh rates after update
               let freshRates = await SilverRate.find({ location: 'Andhra Pradesh' })
@@ -990,7 +1016,7 @@ router.get('/', async (req, res) => {
           // On Vercel, avoid blocking here as well – better to serve the latest
           // known values than to time out the client while waiting for an update.
           if (!process.env.VERCEL && hasOld99_9InResponse) {
-            console.error(`❌ BLOCKED: Attempted to serve old 99.9% rates (₹169 detected). Fetching fresh rates...`);
+            console.error(`❌ BLOCKED: Attempted to serve old 99.9% rates (below ₹100 detected). Fetching fresh rates...`);
             try {
               await updateRatesHandler(req, null);
               let freshRates = await SilverRate.find({ location: 'Andhra Pradesh' })
@@ -1411,8 +1437,9 @@ const updateRatesHandler = async (req, res = null) => {
     console.log(`📊 Source: ${liveRate.source}, Raw Ask: ${liveRate.rawData?.ask || 'N/A'}, Raw High: ${liveRate.rawData?.high || 'N/A'}`);
     
     // Warn if rate seems too low (might be old/cached)
-    if (liveRate.ratePerGram < 170) {
-      console.warn(`⚠️ WARNING: Fetched rate (₹${liveRate.ratePerGram.toFixed(2)}/gram) seems low. Expected ~₹176-177/gram. Check source!`);
+    // Updated threshold: current rates are ~207 per gram, so flag anything below 100 as suspicious
+    if (liveRate.ratePerGram < 100) {
+      console.warn(`⚠️ WARNING: Fetched rate (₹${liveRate.ratePerGram.toFixed(2)}/gram) seems unusually low. Expected ~₹200-210/gram. Check source!`);
     }
 
     // Update MongoDB directly with fresh rate

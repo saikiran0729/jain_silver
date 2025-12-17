@@ -34,11 +34,11 @@ function HomePage() {
   const pollingIntervalRef = React.useRef(null);
   const currentRequestRef = React.useRef(null);
 
-  // Check if rates are default/old (₹169) - should show fetching instead
+  // Check if rates are default/old (below ₹100) - should show fetching instead
   const areRatesDefault = (ratesToCheck) => {
     if (!ratesToCheck || ratesToCheck.length === 0) return true;
-    // Check if any 99.9% rate is the default ₹169 (or close to it)
-    const OLD_RATE_THRESHOLD = 170;
+    // Check if any 99.9% rate is below ₹100 (current rates should be ~₹200-210)
+    const OLD_RATE_THRESHOLD = 100;
     return ratesToCheck.some(rate => 
       rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
     );
@@ -99,7 +99,7 @@ function HomePage() {
       if (newRates && Array.isArray(newRates) && newRates.length > 0) {
         // Check if rates are default/old - if so, keep loading state
         if (areRatesDefault(newRates)) {
-          console.log('⏳ Rates are still default (₹169), waiting for fresh rates...');
+          console.log('⏳ Rates are still old (below ₹100), waiting for fresh rates...');
           setLoading(true); // Keep loading state
           return; // Don't update rates yet
         }
@@ -208,7 +208,7 @@ function HomePage() {
       if (response.data && Array.isArray(response.data) && response.data.length > 0) {
         // Check if rates are default/old - if so, keep loading state
         if (areRatesDefault(response.data)) {
-          console.log('⏳ Initial rates are default (₹169), waiting for fresh rates...');
+          console.log('⏳ Initial rates are old (below ₹100), waiting for fresh rates...');
           setLoading(true); // Keep loading state
           setRates([]); // Don't show default rates
           // Will be updated by polling

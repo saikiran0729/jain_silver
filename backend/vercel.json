@@ -6,6 +6,12 @@
       "memory": 1024
     }
   },
+  "crons": [
+    {
+      "path": "/api/rates/update",
+      "schedule": "* * * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",
