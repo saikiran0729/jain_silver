@@ -265,43 +265,16 @@ let lastUpdateAttempt = 0;
 let lastSuccessfulUpdate = 0;
 const MIN_UPDATE_INTERVAL = 1000; // Update at most once per second
 
-// Rate smoothing: Only update if change is significant (prevents rapid fluctuations)
-// Increased to ₹0.50/gram to prevent small market fluctuations from causing visual noise
-const RATE_CHANGE_THRESHOLD = 0.50;
+// Rate smoothing: Update on ANY price change to reflect live market rates immediately
+// Set to 0 to capture all price changes in real-time
+const RATE_CHANGE_THRESHOLD = 0;
 
-// Calculate smoothed rate using exponential moving average
+// Use exact rate from source (no smoothing) to reflect live market prices immediately
+// This ensures rates update in real-time as market prices change
 const calculateSmoothedRate = (newRate) => {
-  // Add new rate to history
-  rateHistory.push({
-    rate: newRate,
-    timestamp: Date.now()
-  });
-  
-  // Keep only recent rates (last 10)
-  if (rateHistory.length > MAX_HISTORY_SIZE) {
-    rateHistory.shift();
-  }
-  
-  // Remove rates older than 30 seconds
-  const thirtySecondsAgo = Date.now() - 30000;
-  rateHistory = rateHistory.filter(r => r.timestamp > thirtySecondsAgo);
-  
-  if (rateHistory.length === 0) {
-    return newRate;
-  }
-  
-  // Calculate weighted average (more recent = higher weight)
-  let totalWeight = 0;
-  let weightedSum = 0;
-  
-  rateHistory.forEach((item, index) => {
-    const weight = index + 1; // More recent rates have higher weight
-    weightedSum += item.rate * weight;
-    totalWeight += weight;
-  });
-  
-  const smoothedRate = weightedSum / totalWeight;
-  return Math.round(smoothedRate * 100) / 100;
+  // Return exact rate from source - no smoothing for live market updates
+  // This ensures price changes are reflected immediately
+  return Math.round(newRate * 100) / 100;
 };
 
 // Update rates from endpoints (non-blocking)
@@ -363,43 +336,48 @@ const updateRatesFromEndpoints = async () => {
       const smoothedRate = calculateSmoothedRate(liveRate.ratePerGram);
       const rateChange = Math.abs(smoothedRate - oldRate);
       
-      // Log raw vs smoothed rate
-      console.log(`📊 Raw: ₹${liveRate.ratePerGram.toFixed(2)}/g → Smoothed: ₹${smoothedRate.toFixed(2)}/g (change: ₹${rateChange.toFixed(2)})`);
+      // Log rate change
+      const changeIndicator = liveRate.ratePerGram > oldRate ? '↑' : (liveRate.ratePerGram < oldRate ? '↓' : '≈');
+      console.log(`📊 Live rate: ₹${liveRate.ratePerGram.toFixed(2)}/g (change: ₹${rateChange.toFixed(2)}) ${changeIndicator}`);
       
-      // Only update if change is significant OR if cache is stale (older than 10 seconds)
+      // ALWAYS update on any price change to reflect live market rates immediately
+      // Also update if cache is stale (older than 1 second for real-time updates)
       const cacheAge = Date.now() - cachedBaseRate.lastUpdated.getTime();
-      const isStale = cacheAge > 10000;
+      const isStale = cacheAge > 1000; // Update every second for live rates
       const isInitial = (oldRate === 169.0 || oldRate === 207.0) && cachedBaseRate.source === 'cache';
       
+      // Update on ANY price change (threshold is 0) OR if stale OR initial
+      // This ensures rates reflect market prices in real-time
       if (rateChange >= RATE_CHANGE_THRESHOLD || isStale || isInitial) {
         cachedBaseRate = {
-          ratePerGram: smoothedRate,
-          ratePerKg: Math.round(smoothedRate * 1000),
+          ratePerGram: liveRate.ratePerGram, // Use exact rate from source (no smoothing)
+          ratePerKg: liveRate.ratePerKg, // Use exact rate from source
           source: liveRate.source || 'live',
           lastUpdated: new Date(),
           usdInrRate: liveRate.usdInrRate || 89.25
         };
         
         // Log updates with change indicator
-        const changeIndicator = smoothedRate > oldRate ? '↑' : (smoothedRate < oldRate ? '↓' : '≈');
-        console.log(`✅ Rate updated: ₹${oldRate.toFixed(2)} → ₹${smoothedRate.toFixed(2)}/gram ${changeIndicator}`);
+        console.log(`✅ Rate updated: ₹${oldRate.toFixed(2)} → ₹${liveRate.ratePerGram.toFixed(2)}/gram ${changeIndicator}`);
         
         // Mark successful update
         lastSuccessfulUpdate = Date.now();
         
-        // Update MongoDB with smoothed rate
+        // Update MongoDB with exact rate from source (no smoothing)
         try {
-          const smoothedLiveRate = { 
-            ...liveRate, 
-            ratePerGram: smoothedRate, 
-            ratePerKg: Math.round(smoothedRate * 1000) 
-          };
-          await updateMongoDBRates(smoothedLiveRate);
+          await updateMongoDBRates(liveRate);
         } catch (mongoError) {
           console.error('❌ MongoDB update failed:', mongoError.message);
         }
       } else {
-        console.log(`⏭️ Stable rate: ₹${oldRate.toFixed(2)}/gram (change ${rateChange.toFixed(2)} < threshold ${RATE_CHANGE_THRESHOLD})`);
+        // Rate unchanged - still update MongoDB if stale to ensure consistency
+        if (isStale) {
+          try {
+            await updateMongoDBRates(liveRate);
+          } catch (mongoError) {
+            console.error('❌ MongoDB update failed:', mongoError.message);
+          }
+        }
         // Still mark as successful even if we didn't update (rate is stable)
         lastSuccessfulUpdate = Date.now();
       }
@@ -646,7 +624,7 @@ router.get('/', async (req, res) => {
           }, mongoRates[0]);
           
           const mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
-          const STALE_THRESHOLD = 1000; // 1 second - update every second for live rates
+          const STALE_THRESHOLD = 1000; // 1 second - update every second for live rates (real-time updates)
           const VERY_STALE_THRESHOLD = 3000; // 3 seconds - if very stale, wait for update before serving
           const OLD_RATE_THRESHOLD = 100; // If rate is below this, it's likely old cached data (updated for current rates ~207)
           

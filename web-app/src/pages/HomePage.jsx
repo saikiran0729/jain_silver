@@ -119,28 +119,36 @@ function HomePage() {
 
             const rateKey = newRate._id?.toString() || `${newRate.name}-${newRate.weight?.value}`;
 
-            // ALWAYS show rate changes - no threshold, show every update
+            // ALWAYS show rate changes - no threshold, show every price change immediately
+            // This ensures users see real-time price movements as market prices change
             if (prevRate) {
-              const rateChanged = Math.abs((prevRate.ratePerGram || 0) - (newRate.ratePerGram || 0)) > 0;
+              const oldPrice = prevRate.ratePerGram || 0;
+              const newPrice = newRate.ratePerGram || 0;
+              const rateChanged = Math.abs(oldPrice - newPrice) > 0.01; // Show change if > 1 paisa
 
               if (rateChanged) {
+                const isUp = newPrice > oldPrice;
+                const changeAmount = Math.abs(newPrice - oldPrice);
+                
                 setPreviousRates((prev) => ({
                   ...prev,
                   [rateKey]: {
-                    oldRate: prevRate.ratePerGram,
-                    newRate: newRate.ratePerGram,
-                    isUp: (newRate.ratePerGram || 0) > (prevRate.ratePerGram || 0),
+                    oldRate: oldPrice,
+                    newRate: newPrice,
+                    isUp: isUp,
+                    changeAmount: changeAmount,
                     timestamp: Date.now(),
                   },
                 }));
 
+                // Keep indicator visible for 2 seconds to show price movement
                 setTimeout(() => {
                   setPreviousRates((prev) => {
                     const newPrev = { ...prev };
                     delete newPrev[rateKey];
                     return newPrev;
                   });
-                }, 1500);
+                }, 2000);
               } else {
                 // Rate is stable - still update timestamp but don't show change indicator
                 // Remove any existing change indicator for stable rates
