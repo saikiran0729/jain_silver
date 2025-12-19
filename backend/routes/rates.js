@@ -514,10 +514,17 @@ router.get('/', async (req, res) => {
     // Check for skipUpdate query parameter (for admin dashboard to avoid waiting for slow external updates)
     const skipUpdate = req.query.skipUpdate === 'true' || req.query.skipUpdate === true;
     
-    // Check if user is admin
-    const isAdmin = isAdminUser(req);
+    // Check for explicit admin parameter (for admin dashboard)
+    const adminParam = req.query.admin === 'true' || req.query.admin === true;
+    
+    // Check if user is admin from token
+    const isAdminFromToken = isAdminUser(req);
+    
+    // Admin is true if: token says admin OR explicit admin parameter is set
+    const isAdmin = isAdminFromToken || adminParam;
+    
     if (isAdmin) {
-      console.log('👤 Admin user detected in /rates endpoint');
+      console.log('👤 Admin user detected in /rates endpoint', isAdminFromToken ? '(from token)' : '(from admin parameter)');
     }
     
     // Auth check (optional)

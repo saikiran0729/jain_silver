@@ -178,7 +178,8 @@ function HomePage() {
             };
           });
           
-          return updatedRates;
+          // Sort rates to put "Silver 1 kg" first
+          return sortRates(updatedRates);
         });
       } else {
         console.warn('No rates received from API');
@@ -221,10 +222,11 @@ function HomePage() {
           setRates([]); // Don't show default rates
           // Will be updated by polling
         } else {
-          setRates(response.data);
+          const sortedRates = sortRates(response.data);
+          setRates(sortedRates);
           setLastUpdateTime(new Date());
           setLoading(false);
-          console.log(`✅ Loaded ${response.data.length} silver rates`);
+          console.log(`✅ Loaded ${sortedRates.length} silver rates`);
         }
       } else {
         console.warn('⚠️ Unexpected response format:', response.data);
@@ -256,6 +258,26 @@ function HomePage() {
 
   const formatWeight = (weight) => {
     return `${weight.value} ${weight.unit}`;
+  };
+
+  // Sort rates to put "Silver 1 kg" first
+  const sortRates = (ratesArray) => {
+    if (!Array.isArray(ratesArray)) return ratesArray;
+    
+    return [...ratesArray].sort((a, b) => {
+      // Check if rate is "Silver 1 kg" (by name or weight)
+      const aIs1Kg = (a.name?.toLowerCase().includes('1 kg') || a.name?.toLowerCase().includes('1kg')) &&
+                     (a.weight?.value === 1 && a.weight?.unit === 'kg');
+      const bIs1Kg = (b.name?.toLowerCase().includes('1 kg') || b.name?.toLowerCase().includes('1kg')) &&
+                     (b.weight?.value === 1 && b.weight?.unit === 'kg');
+      
+      // Put 1 kg first
+      if (aIs1Kg && !bIs1Kg) return -1;
+      if (!aIs1Kg && bIs1Kg) return 1;
+      
+      // Otherwise maintain original order
+      return 0;
+    });
   };
 
   const getRateColor = (rateKey) => {
