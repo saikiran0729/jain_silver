@@ -196,12 +196,15 @@ const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false
   let filteredRates = rates;
   if (!isAdmin && !skipUpdate) {
     filteredRates = rates.filter(rate => rate.isVisible !== false); // Default to true if not set
+    console.log(`🔒 applyManualAdjustments: Filtered ${rates.length} → ${filteredRates.length} products (non-admin)`);
   } else {
     // For admin, log disabled products for debugging
     const disabledProducts = rates.filter(rate => rate.isVisible === false);
+    const enabledProducts = rates.filter(rate => rate.isVisible !== false);
+    console.log(`👁️ applyManualAdjustments: Admin view - ${rates.length} total products (${enabledProducts.length} enabled, ${disabledProducts.length} disabled)`);
     if (disabledProducts.length > 0) {
       console.log(`👁️ Admin view: Including ${disabledProducts.length} disabled products:`, 
-        disabledProducts.map(p => p.name || p.originalName).join(', '));
+        disabledProducts.map(p => p.name || p.originalName || 'unnamed').join(', '));
     }
   }
 
@@ -515,16 +518,35 @@ router.get('/', async (req, res) => {
     const skipUpdate = req.query.skipUpdate === 'true' || req.query.skipUpdate === true;
     
     // Check for explicit admin parameter (for admin dashboard)
+    // This allows admin dashboard to see all products including disabled ones
     const adminParam = req.query.admin === 'true' || req.query.admin === true;
     
     // Check if user is admin from token
     const isAdminFromToken = isAdminUser(req);
     
     // Admin is true if: token says admin OR explicit admin parameter is set
+    // CRITICAL: This determines whether disabled products (isVisible=false) are shown
     const isAdmin = isAdminFromToken || adminParam;
     
+    // Log admin detection for debugging
     if (isAdmin) {
       console.log('👤 Admin user detected in /rates endpoint', isAdminFromToken ? '(from token)' : '(from admin parameter)');
+      console.log('🔍 Admin detection details:', {
+        isAdminFromToken,
+        adminParam,
+        adminParamRaw: req.query.admin,
+        skipUpdate,
+        finalIsAdmin: isAdmin,
+        queryParams: req.query
+      });
+    } else {
+      console.log('👤 Regular user (non-admin) accessing /rates endpoint');
+      console.log('🔍 Non-admin details:', {
+        isAdminFromToken,
+        adminParam,
+        adminParamRaw: req.query.admin,
+        skipUpdate
+      });
     }
     
     // Auth check (optional)
@@ -703,8 +725,14 @@ router.get('/', async (req, res) => {
                 });
               }
               
+              // IMPORTANT: Only filter for non-admin users
+              // Admin users (including those with admin=true parameter) should see ALL products
               if (!isAdmin) {
                 mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
+                console.log(`🔒 Non-admin: Filtered to ${mergedRates.length} visible products`);
+              } else {
+                const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
+                console.log(`👁️ Admin view: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
               }
               finalRates = mergedRates.map(rate => ({
                 ...rate,
@@ -850,8 +878,13 @@ router.get('/', async (req, res) => {
                         });
                       }
                       
+                      // IMPORTANT: Only filter for non-admin users
                       if (!isAdmin) {
                         mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
+                        console.log(`🔒 Non-admin: Filtered to ${mergedRates.length} visible products`);
+                      } else {
+                        const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
+                        console.log(`👁️ Admin view: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
                       }
                       processedRates = mergedRates.map(rate => ({
                         ...rate,
@@ -896,8 +929,13 @@ router.get('/', async (req, res) => {
                         originalName: calcRate.name
                       };
                     });
+                    // IMPORTANT: Only filter for non-admin users
                     if (!isAdmin) {
                       mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
+                      console.log(`🔒 Non-admin: Filtered to ${mergedRates.length} visible products`);
+                    } else {
+                      const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
+                      console.log(`👁️ Admin view: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
                     }
                     processedRates = mergedRates.map(rate => ({
                       ...rate,
@@ -1162,9 +1200,14 @@ router.get('/', async (req, res) => {
               });
             }
             
-            // Filter by visibility for non-admin users
+            // IMPORTANT: Only filter for non-admin users
+            // Admin users (including those with admin=true parameter) should see ALL products
             if (!isAdmin) {
               mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
+              console.log(`🔒 Non-admin: Filtered to ${mergedRates.length} visible products`);
+            } else {
+              const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
+              console.log(`👁️ Admin view: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
             }
             
             // Apply displayName if set
