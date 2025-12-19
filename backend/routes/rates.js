@@ -570,12 +570,24 @@ router.get('/', async (req, res) => {
     }
     
     // Check if "Show As It Is" is enabled
+    // First check query parameter (from frontend), then fall back to Settings
     let showAsItIs = false;
-    try {
-      const showAsItIsSetting = await Settings.getSetting('showAsItIs');
-      showAsItIs = showAsItIsSetting.value;
-    } catch (settingsError) {
-      console.warn('Could not fetch showAsItIs setting, defaulting to false:', settingsError.message);
+    const showAsItIsFromQuery = req.query.showAsItIs === 'true' || req.query.showAsItIs === true;
+    
+    if (showAsItIsFromQuery) {
+      showAsItIs = true;
+    } else {
+      try {
+        const showAsItIsSetting = await Settings.getSetting('showAsItIs');
+        showAsItIs = showAsItIsSetting.value;
+      } catch (settingsError) {
+        console.warn('Could not fetch showAsItIs setting, defaulting to false:', settingsError.message);
+      }
+    }
+    
+    // Log showAsItIs state for debugging
+    if (isAdmin || skipUpdate) {
+      console.log(`👁️ "Show As It Is" state: ${showAsItIs} (from query: ${showAsItIsFromQuery}, final: ${showAsItIs})`);
     }
     
     // ALWAYS try to get rates from MongoDB first (primary source)
