@@ -235,12 +235,21 @@ const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false
     // Preserve originalName if it exists (from ensureAllProductsForAdmin), otherwise use name
     const originalName = rate.originalName || rate.name;
     
+    // CRITICAL: Preserve isVisible exactly as it is in MongoDB (false means disabled)
+    // Do NOT default to true if it's explicitly false
+    const isVisible = rate.isVisible !== undefined ? rate.isVisible : true;
+    
+    // Log disabled products for debugging
+    if (isAdmin && !isVisible) {
+      console.log(`🚫 applyManualAdjustments: Including disabled product: ${rate.name} (isVisible: ${isVisible})`);
+    }
+    
     return {
       ...rate,
       name: displayName, // Use displayName for the name field in response (what users see)
       originalName: originalName, // Keep original name for admin reference
       displayName: displayName, // Also include it as displayName
-      isVisible: rate.isVisible !== undefined ? rate.isVisible : true, // Default to true
+      isVisible: isVisible, // Preserve exact value from MongoDB
       ratePerGram: adjustedRatePerGram, // Current rate with adjustments (what customers see)
       rate: adjustedTotalRate,
       originalRatePerGram: Math.max(0, originalRatePerGram), // Original without adjustments
@@ -601,8 +610,9 @@ router.get('/', async (req, res) => {
         }
       }
       
-      if (mongoose.connection.readyState === 1) {
+        if (mongoose.connection.readyState === 1) {
         // Fetch ALL products from MongoDB (including disabled ones) - no filter on isVisible
+        // CRITICAL: Do NOT filter by isVisible here - admin needs to see all products
         let mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' })
           .sort({ name: 1 })
           .lean();
@@ -610,9 +620,17 @@ router.get('/', async (req, res) => {
         // Log for debugging - always log when skipUpdate is true (likely admin dashboard)
         if (skipUpdate || isAdmin) {
           const disabledCount = mongoRates.filter(r => r.isVisible === false).length;
-          console.log(`📊 ${skipUpdate ? 'skipUpdate' : 'Admin'} view: Found ${mongoRates.length} total products (${disabledCount} disabled)`);
+          const enabledCount = mongoRates.filter(r => r.isVisible !== false).length;
+          console.log(`📊 ${skipUpdate ? 'skipUpdate' : 'Admin'} view: Found ${mongoRates.length} total products (${enabledCount} enabled, ${disabledCount} disabled)`);
+          
+          // Log disabled products explicitly
+          if (disabledCount > 0) {
+            const disabledProducts = mongoRates.filter(r => r.isVisible === false);
+            console.log(`🚫 DISABLED PRODUCTS FOUND:`, disabledProducts.map(r => `${r.name} (isVisible: ${r.isVisible})`).join(', '));
+          }
+          
           const productNames = mongoRates.map(r => `${r.name}${r.displayName ? ` (display: ${r.displayName})` : ''}${r.isVisible === false ? ' [DISABLED]' : ''}`);
-          console.log(`📋 Products in MongoDB:`, productNames.join(', '));
+          console.log(`📋 All products in MongoDB:`, productNames.join(', '));
         }
         
         // Ensure all defined products exist for admins OR when skipUpdate is true (admin dashboard)
@@ -694,6 +712,8 @@ router.get('/', async (req, res) => {
               mongoRates.forEach(rate => {
                 mongoRatesMap.set(rate.name, rate);
               });
+              
+              // First, merge calculated rates with MongoDB visibility info
               let mergedRates = calculatedOriginalRates.map(calcRate => {
                 const mongoRate = mongoRatesMap.get(calcRate.name);
                 return {
@@ -704,25 +724,54 @@ router.get('/', async (req, res) => {
                 };
               });
               
-              // For admin users, also include any MongoDB products that aren't in calculated rates
-              // This ensures disabled products still appear for admin
-              if (isAdmin) {
+              // For admin users, ensure ALL MongoDB products are included (including disabled ones)
+              // This ensures disabled products still appear for admin even in "Show As It Is" mode
+              if (isAdmin || skipUpdate) {
                 const calculatedNames = new Set(calculatedOriginalRates.map(r => r.name));
+                const mergedNames = new Set(mergedRates.map(r => r.originalName || r.name));
+                
                 mongoRates.forEach(mongoRate => {
-                  if (!calculatedNames.has(mongoRate.name)) {
+                  // Include if not already in merged rates (by originalName or name)
+                  const mongoName = mongoRate.name;
+                  const isAlreadyIncluded = mergedNames.has(mongoName) || 
+                                            mergedRates.some(r => (r.originalName || r.name) === mongoName);
+                  
+                  if (!isAlreadyIncluded) {
                     // Product exists in MongoDB but not in calculated rates - include it for admin
                     let weightInGrams = mongoRate.weight.value;
                     if (mongoRate.weight.unit === 'kg') {
                       weightInGrams = mongoRate.weight.value * 1000;
                     }
+                    
+                    // Calculate original rate for this product based on base rate and purity
+                    let originalRatePerGram = baseRatePerGram;
+                    if (mongoRate.purity === '92.5%') {
+                      originalRatePerGram = baseRatePerGram * 0.96;
+                    } else if (mongoRate.purity === '99.99%') {
+                      originalRatePerGram = baseRatePerGram * 1.005;
+                    }
+                    // 99.9% uses base rate as-is
+                    
+                    const originalTotalRate = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
+                    
                     mergedRates.push({
                       ...mongoRate,
                       originalName: mongoRate.name,
                       name: mongoRate.displayName || mongoRate.name,
-                      isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true
+                      isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
+                      ratePerGram: originalRatePerGram,
+                      rate: originalTotalRate,
+                      // Preserve weight info
+                      weight: mongoRate.weight || { value: 1, unit: 'kg' }
                     });
+                    
+                    console.log(`✅ Added disabled product to "Show As It Is" view: ${mongoRate.name} (isVisible: ${mongoRate.isVisible})`);
                   }
                 });
+                
+                // Log final count for admin
+                const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
+                console.log(`👁️ "Show As It Is" + Admin: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
               }
               
               // IMPORTANT: Only filter for non-admin users
@@ -740,17 +789,24 @@ router.get('/', async (req, res) => {
               }));
             } else {
               // Log before applying adjustments
-              if (isAdmin) {
-                console.log(`📊 Before applyManualAdjustments: ${mongoRates.length} products`);
-                const productNames = mongoRates.map(r => r.name || r.originalName || 'unnamed');
+              if (isAdmin || skipUpdate) {
+                const disabledBefore = mongoRates.filter(r => r.isVisible === false).length;
+                console.log(`📊 Before applyManualAdjustments: ${mongoRates.length} products (${disabledBefore} disabled)`);
+                const productNames = mongoRates.map(r => `${r.name || r.originalName || 'unnamed'}${r.isVisible === false ? ' [DISABLED]' : ''}`);
                 console.log(`📋 Product names:`, productNames.join(', '));
               }
               finalRates = await applyManualAdjustments(mongoRates, isAdmin, skipUpdate);
               // Log after applying adjustments
-              if (isAdmin) {
-                console.log(`📊 After applyManualAdjustments: ${finalRates.length} products`);
-                const finalProductNames = finalRates.map(r => r.name || r.originalName || 'unnamed');
+              if (isAdmin || skipUpdate) {
+                const disabledAfter = finalRates.filter(r => r.isVisible === false).length;
+                console.log(`📊 After applyManualAdjustments: ${finalRates.length} products (${disabledAfter} disabled)`);
+                const finalProductNames = finalRates.map(r => `${r.name || r.originalName || 'unnamed'}${r.isVisible === false ? ' [DISABLED]' : ''}`);
                 console.log(`📋 Final product names:`, finalProductNames.join(', '));
+                
+                // CRITICAL: Verify disabled products are in the response
+                if (disabledAfter === 0 && disabledBefore > 0) {
+                  console.error(`❌ ERROR: Disabled products were filtered out! Had ${disabledBefore} disabled, now have ${disabledAfter}`);
+                }
               }
             }
             const ratesWithUSD = finalRates.map(rate => ({
@@ -861,19 +917,48 @@ router.get('/', async (req, res) => {
                         };
                       });
                       
-                      // For admin users, also include any MongoDB products that aren't in calculated rates
-                      // This ensures disabled products still appear for admin
+                      // For admin users, ensure ALL MongoDB products are included (including disabled ones)
+                      // This ensures disabled products still appear for admin even in "Show As It Is" mode
                       if (isAdmin) {
                         const calculatedNames = new Set(calculatedOriginalRates.map(r => r.name));
+                        const mergedNames = new Set(mergedRates.map(r => r.originalName || r.name));
+                        
                         retryRates.forEach(mongoRate => {
-                          if (!calculatedNames.has(mongoRate.name)) {
+                          // Include if not already in merged rates (by originalName or name)
+                          const mongoName = mongoRate.name;
+                          const isAlreadyIncluded = mergedNames.has(mongoName) || 
+                                                    mergedRates.some(r => (r.originalName || r.name) === mongoName);
+                          
+                          if (!isAlreadyIncluded) {
                             // Product exists in MongoDB but not in calculated rates - include it for admin
+                            let weightInGrams = mongoRate.weight.value;
+                            if (mongoRate.weight.unit === 'kg') {
+                              weightInGrams = mongoRate.weight.value * 1000;
+                            }
+                            
+                            // Calculate original rate for this product based on base rate and purity
+                            let originalRatePerGram = baseRatePerGram;
+                            if (mongoRate.purity === '92.5%') {
+                              originalRatePerGram = baseRatePerGram * 0.96;
+                            } else if (mongoRate.purity === '99.99%') {
+                              originalRatePerGram = baseRatePerGram * 1.005;
+                            }
+                            // 99.9% uses base rate as-is
+                            
+                            const originalTotalRate = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
+                            
                             mergedRates.push({
                               ...mongoRate,
                               originalName: mongoRate.name,
                               name: mongoRate.displayName || mongoRate.name,
-                              isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true
+                              isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
+                              ratePerGram: originalRatePerGram,
+                              rate: originalTotalRate,
+                              // Preserve weight info
+                              weight: mongoRate.weight || { value: 1, unit: 'kg' }
                             });
+                            
+                            console.log(`✅ Added disabled product to "Show As It Is" view (retry): ${mongoRate.name} (isVisible: ${mongoRate.isVisible})`);
                           }
                         });
                       }
@@ -1179,23 +1264,48 @@ router.get('/', async (req, res) => {
               };
             });
             
-            // For admin users, also include any MongoDB products that aren't in calculated rates
-            // This ensures disabled products still appear for admin
+            // For admin users, ensure ALL MongoDB products are included (including disabled ones)
+            // This ensures disabled products still appear for admin even in "Show As It Is" mode
             if (isAdmin) {
               const calculatedNames = new Set(calculatedOriginalRates.map(r => r.name));
+              const mergedNames = new Set(mergedRates.map(r => r.originalName || r.name));
+              
               mongoRates.forEach(mongoRate => {
-                if (!calculatedNames.has(mongoRate.name)) {
+                // Include if not already in merged rates (by originalName or name)
+                const mongoName = mongoRate.name;
+                const isAlreadyIncluded = mergedNames.has(mongoName) || 
+                                          mergedRates.some(r => (r.originalName || r.name) === mongoName);
+                
+                if (!isAlreadyIncluded) {
                   // Product exists in MongoDB but not in calculated rates - include it for admin
                   let weightInGrams = mongoRate.weight.value;
                   if (mongoRate.weight.unit === 'kg') {
                     weightInGrams = mongoRate.weight.value * 1000;
                   }
+                  
+                  // Calculate original rate for this product based on base rate and purity
+                  let originalRatePerGram = baseRatePerGram;
+                  if (mongoRate.purity === '92.5%') {
+                    originalRatePerGram = baseRatePerGram * 0.96;
+                  } else if (mongoRate.purity === '99.99%') {
+                    originalRatePerGram = baseRatePerGram * 1.005;
+                  }
+                  // 99.9% uses base rate as-is
+                  
+                  const originalTotalRate = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
+                  
                   mergedRates.push({
                     ...mongoRate,
                     originalName: mongoRate.name,
                     name: mongoRate.displayName || mongoRate.name,
-                    isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true
+                    isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
+                    ratePerGram: originalRatePerGram,
+                    rate: originalTotalRate,
+                    // Preserve weight info
+                    weight: mongoRate.weight || { value: 1, unit: 'kg' }
                   });
+                  
+                  console.log(`✅ Added disabled product to "Show As It Is" view: ${mongoRate.name} (isVisible: ${mongoRate.isVisible})`);
                 }
               });
             }
@@ -1207,7 +1317,7 @@ router.get('/', async (req, res) => {
               console.log(`🔒 Non-admin: Filtered to ${mergedRates.length} visible products`);
             } else {
               const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
-              console.log(`👁️ Admin view: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
+              console.log(`👁️ "Show As It Is" + Admin: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
             }
             
             // Apply displayName if set
@@ -1229,11 +1339,17 @@ router.get('/', async (req, res) => {
               usdInrRate: cachedBaseRate.usdInrRate || 89.25
             }));
             
-            // Log final response for admin
-            if (isAdmin && skipUpdate) {
-              console.log(`📤 skipUpdate response: Returning ${ratesWithUSD.length} rates to admin`);
-              const responseProductNames = ratesWithUSD.map(r => r.name || r.originalName || 'unnamed');
+                    // Log final response for admin
+            if (isAdmin || skipUpdate) {
+              const disabledInResponse = ratesWithUSD.filter(r => r.isVisible === false).length;
+              console.log(`📤 skipUpdate response: Returning ${ratesWithUSD.length} rates to admin (${disabledInResponse} disabled)`);
+              const responseProductNames = ratesWithUSD.map(r => `${r.name || r.originalName || 'unnamed'}${r.isVisible === false ? ' [DISABLED]' : ''}`);
               console.log(`📋 skipUpdate response product names:`, responseProductNames.join(', '));
+              
+              // CRITICAL: Verify disabled products are in response
+              if (disabledInResponse === 0) {
+                console.warn(`⚠️ WARNING: No disabled products in response! Check if they were filtered out.`);
+              }
             }
             
             // Set headers to prevent caching

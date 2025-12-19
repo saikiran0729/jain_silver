@@ -672,27 +672,36 @@ router.put('/product', auth, adminAuth, async (req, res) => {
     // Try to find by _id first if productName looks like an ObjectId
     let rate = null;
     if (productName.match(/^[0-9a-fA-F]{24}$/)) {
-      // It's an ObjectId
+      // It's an ObjectId - try with location first, then without
       rate = await SilverRate.findOne({ 
         _id: productName, 
         location: 'Andhra Pradesh' 
       });
+      if (!rate) {
+        rate = await SilverRate.findById(productName);
+      }
     }
     
-    // If not found by _id, try by name
+    // If not found by _id, try by name (with location, then without)
     if (!rate) {
       rate = await SilverRate.findOne({ 
         name: productName, 
         location: 'Andhra Pradesh' 
       });
+      if (!rate) {
+        rate = await SilverRate.findOne({ name: productName });
+      }
     }
     
-    // If still not found, try by displayName
+    // If still not found, try by displayName (with location, then without)
     if (!rate) {
       rate = await SilverRate.findOne({ 
         displayName: productName, 
         location: 'Andhra Pradesh' 
       });
+      if (!rate) {
+        rate = await SilverRate.findOne({ displayName: productName });
+      }
     }
 
     if (!rate) {
