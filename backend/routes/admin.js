@@ -668,14 +668,36 @@ router.put('/product', auth, adminAuth, async (req, res) => {
       return res.status(400).json({ message: 'Product name is required' });
     }
 
-    // Find the rate by name and location
-    const rate = await SilverRate.findOne({ 
-      name: productName, 
-      location: 'Andhra Pradesh' 
-    });
+    // Find the rate by name, displayName, or _id (for flexibility)
+    // Try to find by _id first if productName looks like an ObjectId
+    let rate = null;
+    if (productName.match(/^[0-9a-fA-F]{24}$/)) {
+      // It's an ObjectId
+      rate = await SilverRate.findOne({ 
+        _id: productName, 
+        location: 'Andhra Pradesh' 
+      });
+    }
+    
+    // If not found by _id, try by name
+    if (!rate) {
+      rate = await SilverRate.findOne({ 
+        name: productName, 
+        location: 'Andhra Pradesh' 
+      });
+    }
+    
+    // If still not found, try by displayName
+    if (!rate) {
+      rate = await SilverRate.findOne({ 
+        displayName: productName, 
+        location: 'Andhra Pradesh' 
+      });
+    }
 
     if (!rate) {
-      return res.status(404).json({ message: 'Product not found' });
+      console.error(`❌ Product not found: ${productName}`);
+      return res.status(404).json({ message: `Product not found: ${productName}` });
     }
 
     // Update fields if provided
@@ -684,6 +706,7 @@ router.put('/product', auth, adminAuth, async (req, res) => {
     }
     if (isVisible !== undefined) {
       rate.isVisible = Boolean(isVisible);
+      console.log(`🔄 Updating visibility for ${rate.name}: ${rate.isVisible} → ${isVisible}`);
     }
 
     await rate.save();
