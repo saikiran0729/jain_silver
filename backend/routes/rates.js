@@ -821,10 +821,20 @@ router.get('/', async (req, res) => {
                 const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
                 console.log(`👁️ Admin view: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
               }
-              finalRates = mergedRates.map(rate => ({
-                ...rate,
-                name: rate.displayName || rate.name
-              }));
+              // CRITICAL: Preserve isVisible when mapping - use spread to keep all fields
+              finalRates = mergedRates.map(rate => {
+                const result = {
+                  ...rate,
+                  name: rate.displayName || rate.name,
+                  // Explicitly preserve isVisible
+                  isVisible: rate.isVisible !== undefined ? rate.isVisible : true
+                };
+                // Log disabled products being included
+                if (isAdmin && result.isVisible === false) {
+                  console.log(`🚫 Final mapping: Including disabled product: ${result.name || result.originalName} (isVisible: ${result.isVisible})`);
+                }
+                return result;
+              });
             } else {
               // Log before applying adjustments
               if (isAdmin || skipUpdate) {
@@ -1379,22 +1389,36 @@ router.get('/', async (req, res) => {
             }
             
             // Apply displayName if set
-            finalRates = mergedRates.map(rate => ({
-              ...rate,
-              name: rate.displayName || rate.name
-            }));
+            // CRITICAL: Preserve isVisible when mapping
+            finalRates = mergedRates.map(rate => {
+              const result = {
+                ...rate,
+                name: rate.displayName || rate.name,
+                // Explicitly preserve isVisible
+                isVisible: rate.isVisible !== undefined ? rate.isVisible : true
+              };
+              // Log disabled products being included
+              if (isAdmin && result.isVisible === false) {
+                console.log(`🚫 Final mapping (non-skipUpdate): Including disabled product: ${result.name || result.originalName} (isVisible: ${result.isVisible})`);
+              }
+              return result;
+            });
             
             console.log(`✅ "Show As It Is" enabled - returning original rates (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
           } else {
             // Apply manual adjustments to rates from MongoDB
             // This ensures admin adjustments are reflected immediately
-            finalRates = await applyManualAdjustments(mongoRates, isAdmin);
+            // CRITICAL: Pass skipUpdate to ensure disabled products are included
+            finalRates = await applyManualAdjustments(mongoRates, isAdmin, skipUpdate);
           }
           
           // Add USD rate to all rates if available
+            // CRITICAL: Preserve isVisible field when mapping
             const ratesWithUSD = finalRates.map(rate => ({
               ...rate,
-              usdInrRate: cachedBaseRate.usdInrRate || 89.25
+              usdInrRate: cachedBaseRate.usdInrRate || 89.25,
+              // Explicitly preserve isVisible to ensure it's not lost
+              isVisible: rate.isVisible !== undefined ? rate.isVisible : true
             }));
             
                     // Log final response for admin
@@ -1416,6 +1440,18 @@ router.get('/', async (req, res) => {
               'Pragma': 'no-cache',
               'Expires': '0'
             });
+            
+            // Final verification before sending response
+            if (isAdmin || skipUpdate) {
+              const finalDisabledCount = ratesWithUSD.filter(r => r.isVisible === false).length;
+              console.log(`📤 FINAL RESPONSE: Sending ${ratesWithUSD.length} rates (${finalDisabledCount} disabled)`);
+              if (finalDisabledCount > 0) {
+                const disabledInFinal = ratesWithUSD.filter(r => r.isVisible === false);
+                console.log(`🚫 FINAL RESPONSE - Disabled products:`, disabledInFinal.map(r => `${r.name || r.originalName} (isVisible: ${r.isVisible})`).join(', '));
+              } else {
+                console.warn(`⚠️ FINAL RESPONSE WARNING: No disabled products in final response!`);
+              }
+            }
             
             return res.json(ratesWithUSD);
         } else {
