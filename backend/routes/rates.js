@@ -707,37 +707,48 @@ router.get('/', async (req, res) => {
                 console.warn('Could not fetch fresh base rate, using cached:', fetchError.message);
               }
               // For "Show As It Is", merge with MongoDB visibility info
+              // CRITICAL: For admin, start with ALL MongoDB products (including disabled), then merge calculated rates
               const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
-              const mongoRatesMap = new Map();
-              mongoRates.forEach(rate => {
-                mongoRatesMap.set(rate.name, rate);
+              const calculatedRatesMap = new Map();
+              calculatedOriginalRates.forEach(calcRate => {
+                calculatedRatesMap.set(calcRate.name, calcRate);
               });
               
-              // First, merge calculated rates with MongoDB visibility info
-              let mergedRates = calculatedOriginalRates.map(calcRate => {
-                const mongoRate = mongoRatesMap.get(calcRate.name);
-                return {
-                  ...calcRate,
-                  isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
-                  displayName: mongoRate?.displayName || null,
-                  originalName: calcRate.name
-                };
-              });
+              let mergedRates = [];
               
-              // For admin users, ensure ALL MongoDB products are included (including disabled ones)
-              // This ensures disabled products still appear for admin even in "Show As It Is" mode
+              // For admin: Start with ALL MongoDB products (including disabled ones)
+              // This ensures disabled products are always included
               if (isAdmin || skipUpdate) {
-                const calculatedNames = new Set(calculatedOriginalRates.map(r => r.name));
-                const mergedNames = new Set(mergedRates.map(r => r.originalName || r.name));
+                console.log(`👁️ "Show As It Is" + Admin: Starting with ${mongoRates.length} MongoDB products`);
                 
                 mongoRates.forEach(mongoRate => {
-                  // Include if not already in merged rates (by originalName or name)
-                  const mongoName = mongoRate.name;
-                  const isAlreadyIncluded = mergedNames.has(mongoName) || 
-                                            mergedRates.some(r => (r.originalName || r.name) === mongoName);
+                  const calculatedRate = calculatedRatesMap.get(mongoRate.name);
                   
-                  if (!isAlreadyIncluded) {
-                    // Product exists in MongoDB but not in calculated rates - include it for admin
+                  if (calculatedRate) {
+                    // Product exists in both - use calculated rate but preserve MongoDB visibility and displayName
+                    let weightInGrams = mongoRate.weight.value;
+                    if (mongoRate.weight.unit === 'kg') {
+                      weightInGrams = mongoRate.weight.value * 1000;
+                    }
+                    
+                    mergedRates.push({
+                      ...calculatedRate,
+                      isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
+                      displayName: mongoRate.displayName || null,
+                      originalName: mongoRate.name,
+                      // Preserve all MongoDB fields
+                      _id: mongoRate._id,
+                      weight: mongoRate.weight,
+                      purity: mongoRate.purity,
+                      type: mongoRate.type,
+                      location: mongoRate.location
+                    });
+                    
+                    if (mongoRate.isVisible === false) {
+                      console.log(`🚫 Including disabled product from MongoDB: ${mongoRate.name} (merged with calculated rate)`);
+                    }
+                  } else {
+                    // Product exists in MongoDB but not in calculated rates - calculate rate and include it
                     let weightInGrams = mongoRate.weight.value;
                     if (mongoRate.weight.unit === 'kg') {
                       weightInGrams = mongoRate.weight.value * 1000;
@@ -765,13 +776,28 @@ router.get('/', async (req, res) => {
                       weight: mongoRate.weight || { value: 1, unit: 'kg' }
                     });
                     
-                    console.log(`✅ Added disabled product to "Show As It Is" view: ${mongoRate.name} (isVisible: ${mongoRate.isVisible})`);
+                    if (mongoRate.isVisible === false) {
+                      console.log(`🚫 Including disabled product from MongoDB (not in calculated): ${mongoRate.name}`);
+                    } else {
+                      console.log(`✅ Added product from MongoDB (not in calculated): ${mongoRate.name}`);
+                    }
                   }
                 });
                 
                 // Log final count for admin
                 const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
                 console.log(`👁️ "Show As It Is" + Admin: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
+              } else {
+                // For non-admin: Start with calculated rates and merge MongoDB visibility
+                mergedRates = calculatedOriginalRates.map(calcRate => {
+                  const mongoRate = mongoRates.find(r => r.name === calcRate.name);
+                  return {
+                    ...calcRate,
+                    isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
+                    displayName: mongoRate?.displayName || null,
+                    originalName: calcRate.name
+                  };
+                });
               }
               
               // IMPORTANT: Only filter for non-admin users
@@ -1245,39 +1271,42 @@ router.get('/', async (req, res) => {
             }
             
             // Get original rates from base rate, but merge with MongoDB data for visibility info
+            // CRITICAL: For admin, start with ALL MongoDB products (including disabled), then merge calculated rates
             const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
-            
-            // Create a map of MongoDB rates by name for visibility lookup
-            const mongoRatesMap = new Map();
-            mongoRates.forEach(rate => {
-              mongoRatesMap.set(rate.name, rate);
+            const calculatedRatesMap = new Map();
+            calculatedOriginalRates.forEach(calcRate => {
+              calculatedRatesMap.set(calcRate.name, calcRate);
             });
             
-            // Merge calculated rates with MongoDB visibility info and filter
-            let mergedRates = calculatedOriginalRates.map(calcRate => {
-              const mongoRate = mongoRatesMap.get(calcRate.name);
-              return {
-                ...calcRate,
-                isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
-                displayName: mongoRate?.displayName || null,
-                originalName: calcRate.name
-              };
-            });
+            let mergedRates = [];
             
-            // For admin users, ensure ALL MongoDB products are included (including disabled ones)
-            // This ensures disabled products still appear for admin even in "Show As It Is" mode
+            // For admin: Start with ALL MongoDB products (including disabled ones)
             if (isAdmin) {
-              const calculatedNames = new Set(calculatedOriginalRates.map(r => r.name));
-              const mergedNames = new Set(mergedRates.map(r => r.originalName || r.name));
+              console.log(`👁️ "Show As It Is" + Admin (non-skipUpdate path): Starting with ${mongoRates.length} MongoDB products`);
               
               mongoRates.forEach(mongoRate => {
-                // Include if not already in merged rates (by originalName or name)
-                const mongoName = mongoRate.name;
-                const isAlreadyIncluded = mergedNames.has(mongoName) || 
-                                          mergedRates.some(r => (r.originalName || r.name) === mongoName);
+                const calculatedRate = calculatedRatesMap.get(mongoRate.name);
                 
-                if (!isAlreadyIncluded) {
-                  // Product exists in MongoDB but not in calculated rates - include it for admin
+                if (calculatedRate) {
+                  // Product exists in both - use calculated rate but preserve MongoDB visibility and displayName
+                  mergedRates.push({
+                    ...calculatedRate,
+                    isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
+                    displayName: mongoRate.displayName || null,
+                    originalName: mongoRate.name,
+                    // Preserve all MongoDB fields
+                    _id: mongoRate._id,
+                    weight: mongoRate.weight,
+                    purity: mongoRate.purity,
+                    type: mongoRate.type,
+                    location: mongoRate.location
+                  });
+                  
+                  if (mongoRate.isVisible === false) {
+                    console.log(`🚫 Including disabled product from MongoDB: ${mongoRate.name} (merged with calculated rate)`);
+                  }
+                } else {
+                  // Product exists in MongoDB but not in calculated rates - calculate rate and include it
                   let weightInGrams = mongoRate.weight.value;
                   if (mongoRate.weight.unit === 'kg') {
                     weightInGrams = mongoRate.weight.value * 1000;
@@ -1301,12 +1330,29 @@ router.get('/', async (req, res) => {
                     isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
                     ratePerGram: originalRatePerGram,
                     rate: originalTotalRate,
-                    // Preserve weight info
                     weight: mongoRate.weight || { value: 1, unit: 'kg' }
                   });
                   
-                  console.log(`✅ Added disabled product to "Show As It Is" view: ${mongoRate.name} (isVisible: ${mongoRate.isVisible})`);
+                  if (mongoRate.isVisible === false) {
+                    console.log(`🚫 Including disabled product from MongoDB (not in calculated): ${mongoRate.name}`);
+                  }
                 }
+              });
+            } else {
+              // For non-admin: Start with calculated rates and merge MongoDB visibility
+              const mongoRatesMap = new Map();
+              mongoRates.forEach(rate => {
+                mongoRatesMap.set(rate.name, rate);
+              });
+              
+              mergedRates = calculatedOriginalRates.map(calcRate => {
+                const mongoRate = mongoRatesMap.get(calcRate.name);
+                return {
+                  ...calcRate,
+                  isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
+                  displayName: mongoRate?.displayName || null,
+                  originalName: calcRate.name
+                };
               });
             }
             
