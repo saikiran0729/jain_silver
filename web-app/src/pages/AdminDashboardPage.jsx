@@ -35,9 +35,25 @@ function AdminDashboardPage() {
   const [baseRateFromSource, setBaseRateFromSource] = useState(null); // Current base rate from RB Gold
   const [globalShowAsItIs, setGlobalShowAsItIs] = useState(false); // Global "Show As It Is" setting
   
-  // Always fetch base rate to calculate exact Normal Price
+  // Poll base rate every second to update Normal Price live (same as "Show As It Is")
+  const baseRateIntervalRef = React.useRef(null);
+  
   useEffect(() => {
+    // Fetch immediately
     fetchBaseRate();
+    
+    // Set up interval to fetch base rate every second for live Normal Price updates
+    baseRateIntervalRef.current = setInterval(() => {
+      fetchBaseRate();
+    }, 1000); // Update every second
+    
+    // Cleanup on unmount
+    return () => {
+      if (baseRateIntervalRef.current) {
+        clearInterval(baseRateIntervalRef.current);
+        baseRateIntervalRef.current = null;
+      }
+    };
   }, []);
   const [editProductDialogOpen, setEditProductDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
@@ -82,19 +98,28 @@ function AdminDashboardPage() {
 
   const fetchBaseRate = async () => {
     try {
-      const response = await api.get('/rates/base-rate');
-      console.log('✅ Base rate fetched from source:', response.data);
+      // Fetch with cache-busting timestamp to ensure fresh data every second
+      const response = await api.get('/rates/base-rate', {
+        params: { _t: Date.now() } // Cache busting for live updates
+      });
       if (response.data && response.data.baseRatePerGram) {
         setBaseRateFromSource(response.data);
-        console.log(`✅ Using exact RB Gold base rate: ₹${response.data.baseRatePerGram}/gram`);
+        // Only log occasionally to avoid console spam (every 10 seconds)
+        const now = Date.now();
+        if (!fetchBaseRate.lastLogTime || now - fetchBaseRate.lastLogTime > 10000) {
+          console.log(`✅ Live base rate: ₹${response.data.baseRatePerGram.toFixed(2)}/gram (updating every second for Normal Price)`);
+          fetchBaseRate.lastLogTime = now;
+        }
       }
       return response.data;
     } catch (error) {
-      // Log error but continue - will use fallback calculation
-      console.error('❌ Error fetching base rate from RB Gold:', error.message);
-      console.error('   This means Normal Price may not show exact RB Gold prices');
-      if (error.response?.status === 404) {
-        console.error('   Base rate endpoint not available - ensure backend is deployed');
+      // Silently handle errors during polling - don't spam console
+      // Only log if base rate was never successfully fetched
+      if (!baseRateFromSource || !baseRateFromSource.baseRatePerGram) {
+        console.warn('⚠️ Error fetching base rate from RB Gold:', error.message);
+        if (error.response?.status === 404) {
+          console.warn('   Base rate endpoint not available - ensure backend is deployed');
+        }
       }
       return null;
     }
@@ -784,8 +809,8 @@ function AdminDashboardPage() {
                       // 99.9% uses base rate as-is
                       
                       // Use EXACT value from RB Gold (no rounding, no manual adjustments)
+                      // This calculation matches "Show As It Is" exactly - Normal Price = "Show As It Is" price
                       originalRatePerGram = baseRate;
-                      console.log(`💰 Normal Price for ${rate.name}: Using exact RB Gold base rate ₹${baseRateFromSource.baseRatePerGram}/gram → ${rate.purity} = ₹${originalRatePerGram}/gram`);
                     } else {
                       // Fallback only if baseRateFromSource is not available (should rarely happen)
                       // Calculate from current rate - adjustment (less accurate)
