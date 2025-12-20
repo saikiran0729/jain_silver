@@ -414,6 +414,7 @@ router.get('/user/:userId', auth, adminAuth, async (req, res) => {
 router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
   try {
     console.log('📝 Rate adjustment request:', JSON.stringify(req.body, null, 2));
+    console.log('📝 Received itemName:', req.body.itemName);
     
     const { value, adjustmentType, itemName } = req.body;
     
@@ -478,8 +479,12 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
     // If itemName is provided, adjust only that item; otherwise adjust all
     // itemName could be either the original name or displayName, so we need to find by both
     const itemsToAdjust = itemName ? [itemName] : rateDefinitions;
+    
+    console.log(`🔍 Adjusting rates for: ${itemName ? `"${itemName}"` : 'all items'}`);
+    console.log(`📊 Total rates in database: ${currentRates.length}`);
 
     for (const itemIdentifier of itemsToAdjust) {
+      console.log(`🔎 Looking up rate: "${itemIdentifier}"`);
       // Try to find rate by original name first (most reliable)
       let currentRate = currentRates.find(r => r.name === itemIdentifier);
       let rateName = null;
@@ -845,6 +850,70 @@ router.put('/product', auth, adminAuth, async (req, res) => {
   } catch (error) {
     console.error('Update product error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Reset all displayNames to null (restore original names)
+router.post('/reset-display-names', auth, adminAuth, async (req, res) => {
+  try {
+    console.log('🔄 Resetting all displayNames to null...');
+    
+    // Find all rates
+    const rates = await SilverRate.find({ location: 'Andhra Pradesh' });
+    console.log(`📊 Found ${rates.length} rates in database`);
+
+    // Show current displayNames before reset
+    const ratesWithDisplayName = rates.filter(r => r.displayName);
+    console.log(`📝 Rates with custom displayName: ${ratesWithDisplayName.length}`);
+    if (ratesWithDisplayName.length > 0) {
+      console.log('Current displayNames:');
+      ratesWithDisplayName.forEach(r => {
+        console.log(`   - "${r.name}" → displayName: "${r.displayName}"`);
+      });
+    }
+
+    // Reset all displayNames to null
+    const bulkOps = rates.map(rate => ({
+      updateOne: {
+        filter: { _id: rate._id },
+        update: {
+          $set: {
+            displayName: null,
+            lastUpdated: new Date()
+          }
+        }
+      }
+    }));
+
+    if (bulkOps.length > 0) {
+      const result = await SilverRate.bulkWrite(bulkOps);
+      console.log(`✅ Reset ${result.modifiedCount} displayNames to null`);
+      
+      // Verify the reset
+      const verifyRates = await SilverRate.find({ location: 'Andhra Pradesh' });
+      const stillWithDisplayName = verifyRates.filter(r => r.displayName);
+      
+      res.json({
+        message: `Successfully reset ${result.modifiedCount} displayNames to null`,
+        modifiedCount: result.modifiedCount,
+        matchedCount: result.matchedCount,
+        ratesWithDisplayNameBefore: ratesWithDisplayName.length,
+        ratesWithDisplayNameAfter: stillWithDisplayName.length,
+        verification: stillWithDisplayName.length === 0 ? 'passed' : 'warning',
+        note: 'All products will now show their original database names'
+      });
+    } else {
+      res.json({
+        message: 'No rates found to reset',
+        modifiedCount: 0
+      });
+    }
+  } catch (error) {
+    console.error('❌ Error resetting displayNames:', error);
+    res.status(500).json({ 
+      message: 'Failed to reset displayNames', 
+      error: error.message 
+    });
   }
 });
 
