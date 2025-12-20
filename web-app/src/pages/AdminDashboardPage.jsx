@@ -84,15 +84,17 @@ function AdminDashboardPage() {
     try {
       const response = await api.get('/rates/base-rate');
       console.log('✅ Base rate fetched from source:', response.data);
-      setBaseRateFromSource(response.data);
+      if (response.data && response.data.baseRatePerGram) {
+        setBaseRateFromSource(response.data);
+        console.log(`✅ Using exact RB Gold base rate: ₹${response.data.baseRatePerGram}/gram`);
+      }
       return response.data;
     } catch (error) {
-      // Silently handle 404 - endpoint may not be deployed yet
-      // We'll calculate original rates from current rates and adjustments
+      // Log error but continue - will use fallback calculation
+      console.error('❌ Error fetching base rate from RB Gold:', error.message);
+      console.error('   This means Normal Price may not show exact RB Gold prices');
       if (error.response?.status === 404) {
-        console.log('ℹ️ Base rate endpoint not available, will calculate from current rates');
-      } else {
-        console.warn('⚠️ Error fetching base rate:', error.message);
+        console.error('   Base rate endpoint not available - ensure backend is deployed');
       }
       return null;
     }
@@ -102,6 +104,11 @@ function AdminDashboardPage() {
     try {
       setLoadingRates(true);
       console.log('📡 Fetching rates from /rates endpoint...', skipUpdate ? '(skipping update)' : '');
+      
+      // CRITICAL: Always fetch base rate FIRST to ensure Normal Price shows exact RB Gold prices
+      // Fetch base rate before rates to ensure it's available when calculating Normal Price
+      await fetchBaseRate();
+      
       // Use skipUpdate parameter to avoid waiting for slow external rate updates
       // This prevents timeouts when admin adjusts rates and immediately fetches them
       const response = await api.get('/rates', {
@@ -111,8 +118,19 @@ function AdminDashboardPage() {
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
       setRates(response.data || []);
       
-      // Always fetch base rate to calculate exact Normal Price (RB Gold price)
-      await fetchBaseRate();
+      // CRITICAL: Ensure base rate is available for Normal Price calculation
+      // Re-fetch if not available to ensure Normal Price shows exact RB Gold prices
+      if (!baseRateFromSource || !baseRateFromSource.baseRatePerGram) {
+        console.warn('⚠️ Base rate not available after fetching rates, re-fetching...');
+        const baseRate = await fetchBaseRate();
+        if (baseRate && baseRate.baseRatePerGram) {
+          console.log(`✅ Base rate now available: ₹${baseRate.baseRatePerGram}/gram (exact RB Gold price)`);
+        } else {
+          console.error('❌ CRITICAL: Base rate still not available - Normal Price will not show exact RB Gold prices!');
+        }
+      } else {
+        console.log(`✅ Base rate available for Normal Price: ₹${baseRateFromSource.baseRatePerGram}/gram (exact RB Gold price)`);
+      }
     } catch (error) {
       console.error('❌ Error fetching rates:', error);
       console.error('Error message:', error.message);
@@ -747,17 +765,17 @@ function AdminDashboardPage() {
                     const currentRatePerGram = rate.ratePerGram || 0;
                     const currentTotalRate = rate.rate || 0;
                     
-                    // Calculate true original rate from RB Gold (before any manual adjustments)
-                    // ALWAYS use base rate from RB Gold source for Normal Price (exact RB Gold price)
+                    // Calculate Normal Price = EXACT RB Gold price (with purity adjustments only, NO manual adjustments)
+                    // ALWAYS use base rate from RB Gold source for Normal Price
                     let originalRatePerGram;
                     
-                    // Priority 1: ALWAYS use base rate from RB Gold source if available (most accurate)
-                    // This ensures Normal Price shows exact RB Gold price without any manual adjustments
+                    // CRITICAL: Always use base rate from RB Gold source if available
+                    // This ensures Normal Price shows EXACT RB Gold price without any manual adjustments
                     if (baseRateFromSource && baseRateFromSource.baseRatePerGram) {
-                      // Calculate original rate based on current base rate from RB Gold and purity
+                      // Get exact base rate from RB Gold
                       let baseRate = baseRateFromSource.baseRatePerGram;
                       
-                      // Apply purity adjustments (same as backend does)
+                      // Apply purity adjustments only (same as backend does)
                       if (rate.purity === '92.5%') {
                         baseRate = baseRate * 0.96;
                       } else if (rate.purity === '99.99%') {
@@ -765,67 +783,26 @@ function AdminDashboardPage() {
                       }
                       // 99.9% uses base rate as-is
                       
-                      // Use exact value from RB Gold (no rounding to preserve accuracy)
+                      // Use EXACT value from RB Gold (no rounding, no manual adjustments)
                       originalRatePerGram = baseRate;
-                    } else if (showOriginalRates) {
-                      // Fallback: Calculate original from current rate - adjustment
-                      // Formula: Original = Current - Adjustment
-                      // This reverses the adjustment to get the true original rate from RB Gold
-                      originalRatePerGram = currentRatePerGram - adjustment;
-                      
-                      // Validate calculated original rate
-                      // If current rate is 0 (clamped), original should be positive
-                      if (currentRatePerGram === 0 && adjustment < 0) {
-                        // Rate was clamped to 0, so original = |adjustment| or higher
-                        // Try stored originalRatePerGram first
-                        if (rate.originalRatePerGram && rate.originalRatePerGram > Math.abs(adjustment)) {
-                          originalRatePerGram = rate.originalRatePerGram;
-                        } else if (rate.originalRate && rate.originalRate > 0) {
-                          originalRatePerGram = rate.originalRate / weightInGrams;
-                        } else {
-                          // Estimate: if adjustment is -92.25, original was likely around 92-184
-                          // Use stored originalRatePerGram if reasonable, otherwise estimate
-                          if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
-                            originalRatePerGram = rate.originalRatePerGram;
-                          } else {
-                            // Conservative estimate: assume adjustment is 50% of original
-                            originalRatePerGram = Math.abs(adjustment) * 2;
-                          }
-                        }
-                      } else if (originalRatePerGram <= 0) {
-                        // Calculated original is invalid, try stored values
-                        if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
-                          originalRatePerGram = rate.originalRatePerGram;
-                        } else if (rate.originalRate && rate.originalRate > 0) {
-                          originalRatePerGram = rate.originalRate / weightInGrams;
-                        } else {
-                          // Last resort: estimate
-                          originalRatePerGram = Math.max(Math.abs(adjustment) * 2, 100);
-                          console.warn(`[${rate.name}] Could not determine original, estimating: ₹${originalRatePerGram}`);
-                        }
-                      }
-                      
-                      // Final validation: ensure original is reasonable
-                      if (originalRatePerGram <= 0) {
-                        originalRatePerGram = Math.max(Math.abs(adjustment), 50);
-                      }
+                      console.log(`💰 Normal Price for ${rate.name}: Using exact RB Gold base rate ₹${baseRateFromSource.baseRatePerGram}/gram → ${rate.purity} = ₹${originalRatePerGram}/gram`);
                     } else {
-                      // Fallback: Calculate from current rate and adjustment (only if baseRateFromSource not available)
-                      // This should rarely happen, but we need a fallback
+                      // Fallback only if baseRateFromSource is not available (should rarely happen)
+                      // Calculate from current rate - adjustment (less accurate)
                       originalRatePerGram = currentRatePerGram - adjustment;
                       
-                      // If calculated original is unreasonable, try stored values
                       if (originalRatePerGram <= 0) {
+                        // Try stored values as last resort
                         if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
                           originalRatePerGram = rate.originalRatePerGram;
                         } else if (rate.originalRate && rate.originalRate > 0) {
                           originalRatePerGram = rate.originalRate / weightInGrams;
                         } else {
-                          // Last resort: use current rate (will be wrong but better than 0)
                           originalRatePerGram = currentRatePerGram;
-                          console.warn(`[${rate.name}] Could not determine exact RB Gold price, using current rate: ₹${originalRatePerGram}`);
+                          console.warn(`⚠️ [${rate.name}] Base rate not available, using current rate as fallback: ₹${originalRatePerGram}`);
                         }
                       }
+                      console.warn(`⚠️ [${rate.name}] Base rate from RB Gold not available, using calculated fallback: ₹${originalRatePerGram}`);
                     }
                     
                     // Calculate total price (no rounding to preserve exact RB Gold price)
