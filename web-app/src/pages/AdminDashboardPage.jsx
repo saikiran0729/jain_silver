@@ -671,30 +671,6 @@ function AdminDashboardPage() {
               Increase Rates
             </Button>
             <Box sx={{ ml: 'auto', display: 'flex', gap: 1, alignItems: 'center' }}>
-              <Button
-                size="small"
-                variant="outlined"
-                color="warning"
-                onClick={async () => {
-                  if (window.confirm('Are you sure you want to reset all product displayNames to their original database names? This cannot be undone.')) {
-                    try {
-                      setLoadingAction(true);
-                      const response = await api.post('/admin/reset-display-names');
-                      alert(response.data.message || 'DisplayNames reset successfully');
-                      await fetchRates(true); // Refresh rates
-                    } catch (error) {
-                      alert(error.response?.data?.message || 'Failed to reset displayNames');
-                      console.error('Reset displayNames error:', error);
-                    } finally {
-                      setLoadingAction(false);
-                    }
-                  }
-                }}
-                disabled={loadingAction}
-                sx={{ mr: 1 }}
-              >
-                Reset Names
-              </Button>
               <Chip 
                 label={globalShowAsItIs ? 'Global: Show As It Is ON' : 'Global: Show As It Is OFF'}
                 color={globalShowAsItIs ? "success" : "default"}
