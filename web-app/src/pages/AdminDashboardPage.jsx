@@ -34,6 +34,11 @@ function AdminDashboardPage() {
   const [showOriginalRates, setShowOriginalRates] = useState(false); // Toggle to show original rates without adjustments
   const [baseRateFromSource, setBaseRateFromSource] = useState(null); // Current base rate from RB Gold
   const [globalShowAsItIs, setGlobalShowAsItIs] = useState(false); // Global "Show As It Is" setting
+  
+  // Always fetch base rate to calculate exact Normal Price
+  useEffect(() => {
+    fetchBaseRate();
+  }, []);
   const [editProductDialogOpen, setEditProductDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [editProductName, setEditProductName] = useState('');
@@ -42,6 +47,7 @@ function AdminDashboardPage() {
     fetchUsers();
     fetchRates(true); // Use skipUpdate=true by default for admin dashboard to avoid timeouts
     fetchShowAsItIsSetting();
+    fetchBaseRate(); // Always fetch base rate to calculate exact Normal Price
     if (mainTab === 1) fetchNews();
     if (mainTab === 2) fetchStoreInfo();
   }, [mainTab]);
@@ -105,10 +111,8 @@ function AdminDashboardPage() {
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
       setRates(response.data || []);
       
-      // If showing original rates, also fetch base rate from source
-      if (showOriginalRates) {
-        await fetchBaseRate();
-      }
+      // Always fetch base rate to calculate exact Normal Price (RB Gold price)
+      await fetchBaseRate();
     } catch (error) {
       console.error('❌ Error fetching rates:', error);
       console.error('Error message:', error.message);
@@ -767,11 +771,13 @@ function AdminDashboardPage() {
                     const currentRatePerGram = rate.ratePerGram || 0;
                     const currentTotalRate = rate.rate || 0;
                     
-                    // Calculate true original rate from RB Gold (before any adjustments)
+                    // Calculate true original rate from RB Gold (before any manual adjustments)
+                    // ALWAYS use base rate from RB Gold source for Normal Price (exact RB Gold price)
                     let originalRatePerGram;
                     
-                    // If showing "as it is" and we have base rate from source, use it
-                    if (showOriginalRates && baseRateFromSource && baseRateFromSource.baseRatePerGram) {
+                    // Priority 1: ALWAYS use base rate from RB Gold source if available (most accurate)
+                    // This ensures Normal Price shows exact RB Gold price without any manual adjustments
+                    if (baseRateFromSource && baseRateFromSource.baseRatePerGram) {
                       // Calculate original rate based on current base rate from RB Gold and purity
                       let baseRate = baseRateFromSource.baseRatePerGram;
                       
@@ -783,8 +789,8 @@ function AdminDashboardPage() {
                       }
                       // 99.9% uses base rate as-is
                       
-                      originalRatePerGram = Math.round(baseRate * 100) / 100;
-                      // Using live base rate from RB Gold source
+                      // Use exact value from RB Gold (no rounding to preserve accuracy)
+                      originalRatePerGram = baseRate;
                     } else if (showOriginalRates) {
                       // Fallback: Calculate original from current rate - adjustment
                       // Formula: Original = Current - Adjustment
@@ -828,43 +834,26 @@ function AdminDashboardPage() {
                         originalRatePerGram = Math.max(Math.abs(adjustment), 50);
                       }
                     } else {
-                      // Fallback: Calculate from current rate and adjustment
-                      // Priority 1: Use stored originalRatePerGram if it exists and seems reasonable
-                      if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
-                        // Check if stored original makes sense
-                        const calculatedFromStored = rate.originalRatePerGram - adjustment;
-                        // If calculated rate from stored original matches current rate (within tolerance), use stored
-                        if (Math.abs(calculatedFromStored - currentRatePerGram) < 1 || currentRatePerGram === 0) {
-                          originalRatePerGram = rate.originalRatePerGram;
-                        } else {
-                          // Stored original doesn't match, calculate from current
-                          originalRatePerGram = currentRatePerGram - adjustment;
-                        }
-                      } else {
-                        // Priority 2: Calculate from current rate and adjustment
-                        originalRatePerGram = currentRatePerGram - adjustment;
-                        
-                        // If calculated original is unreasonable (too low), try stored originalRate
-                        if (originalRatePerGram <= 0 && rate.originalRate && rate.originalRate > 0) {
-                          // Calculate from total original rate
-                          originalRatePerGram = rate.originalRate / weightInGrams;
-                        }
-                      }
+                      // Fallback: Calculate from current rate and adjustment (only if baseRateFromSource not available)
+                      // This should rarely happen, but we need a fallback
+                      originalRatePerGram = currentRatePerGram - adjustment;
                       
-                      // Final validation: ensure original rate is positive and reasonable
-                      if (originalRatePerGram <= 0 || originalRatePerGram < Math.abs(adjustment)) {
-                        // If still invalid, use stored originalRatePerGram as last resort
-                        if (rate.originalRatePerGram && rate.originalRatePerGram > Math.abs(adjustment)) {
+                      // If calculated original is unreasonable, try stored values
+                      if (originalRatePerGram <= 0) {
+                        if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
                           originalRatePerGram = rate.originalRatePerGram;
+                        } else if (rate.originalRate && rate.originalRate > 0) {
+                          originalRatePerGram = rate.originalRate / weightInGrams;
                         } else {
-                          // Estimate: if adjustment is large negative, original was likely 2x the adjustment
-                          originalRatePerGram = Math.max(Math.abs(adjustment) * 2, 100); // At least ₹100/gram
-                          console.warn(`[${rate.name}] Could not determine original, estimating: ₹${originalRatePerGram} (adjustment: ₹${adjustment})`);
+                          // Last resort: use current rate (will be wrong but better than 0)
+                          originalRatePerGram = currentRatePerGram;
+                          console.warn(`[${rate.name}] Could not determine exact RB Gold price, using current rate: ₹${originalRatePerGram}`);
                         }
                       }
                     }
                     
-                    const originalTotalPrice = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
+                    // Calculate total price (no rounding to preserve exact RB Gold price)
+                    const originalTotalPrice = originalRatePerGram * weightInGrams;
                     
                     // Adjusted price (current rate, may be 0 if adjustment makes it negative)
                     const adjustedPrice = currentTotalRate;
