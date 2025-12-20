@@ -50,9 +50,11 @@ const getOriginalRates = async (baseRatePerGram) => {
     
     let weightInGrams = rateDef.weight.value;
     if (rateDef.weight.unit === 'kg') {
-      weightInGrams = rateDef.weight.value * 1000;
+      weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
     }
     
+    // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
+    // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
     const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
     const id = Buffer.from(rateDef.name).toString('base64').substring(0, 24);
     
@@ -454,9 +456,11 @@ const updateMongoDBRates = async (liveRate) => {
 
         let weightInGrams = rateDef.weight.value;
         if (rateDef.weight.unit === 'kg') {
-          weightInGrams = rateDef.weight.value * 1000;
+          weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
         }
 
+        // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
+        // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
         const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
 
         await SilverRate.findOneAndUpdate(
@@ -1553,9 +1557,11 @@ router.get('/', async (req, res) => {
         
         let weightInGrams = rateDef.weight.value;
         if (rateDef.weight.unit === 'kg') {
-          weightInGrams = rateDef.weight.value * 1000;
+          weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
         }
         
+        // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
+        // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
         const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
         const id = Buffer.from(rateDef.name).toString('base64').substring(0, 24);
         
@@ -1818,9 +1824,11 @@ const updateRatesHandler = async (req, res = null) => {
 
       let weightInGrams = rateDef.weight.value;
       if (rateDef.weight.unit === 'kg') {
-        weightInGrams = rateDef.weight.value * 1000;
+        weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
       }
 
+      // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
+      // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
       const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
 
       return {
