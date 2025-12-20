@@ -471,15 +471,31 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
     const bulkOps = [];
 
     // If itemName is provided, adjust only that item; otherwise adjust all
+    // itemName could be either the original name or displayName, so we need to find by both
     const itemsToAdjust = itemName ? [itemName] : rateDefinitions;
 
-    for (const rateName of itemsToAdjust) {
-      if (!rateDefinitions.includes(rateName)) {
-        continue; // Skip invalid item names
+    for (const itemIdentifier of itemsToAdjust) {
+      // Try to find rate by original name first
+      let currentRate = currentRates.find(r => r.name === itemIdentifier);
+      
+      // If not found by name, try to find by displayName
+      if (!currentRate) {
+        currentRate = currentRates.find(r => r.displayName === itemIdentifier);
       }
       
-      // Get current rate from MongoDB
-      const currentRate = currentRates.find(r => r.name === rateName);
+      // If still not found and itemIdentifier is in rateDefinitions, use it as the name
+      const rateName = currentRate ? currentRate.name : (rateDefinitions.includes(itemIdentifier) ? itemIdentifier : null);
+      
+      if (!rateName || !rateDefinitions.includes(rateName)) {
+        console.warn(`Rate ${itemIdentifier} not found in database, skipping adjustment`);
+        continue;
+      }
+      
+      // Get current rate from MongoDB (use the found rate or find by name)
+      if (!currentRate) {
+        currentRate = currentRates.find(r => r.name === rateName);
+      }
+      
       if (!currentRate) {
         console.warn(`Rate ${rateName} not found in database, skipping adjustment`);
         continue;
@@ -514,7 +530,7 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       // New rate should be original rate + total adjustment (cumulative)
       const newRatePerGram = Math.max(0, originalRatePerGram + newAdjustment);
 
-      // Update MongoDB with new adjustment
+      // Update MongoDB with new adjustment (use the original name, not displayName)
       bulkOps.push({
         updateOne: {
           filter: { name: rateName, location: 'Andhra Pradesh' },
@@ -529,7 +545,7 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
 
       modified++;
       adjustments.push({
-        itemName: rateName,
+        itemName: rateName, // Use original name for consistency
         amount: adjustmentAmount,
         originalRatePerGram: originalRatePerGram,
         originalAdjustment: currentAdjustment,
@@ -721,6 +737,19 @@ router.put('/product', auth, adminAuth, async (req, res) => {
     await rate.save();
 
     console.log(`✅ Admin updated product ${rate.name}: displayName=${rate.displayName || 'default'}, isVisible=${rate.isVisible}`);
+
+    // Trigger rate update to ensure prices are recalculated with latest adjustments
+    try {
+      const updateRatesHandler = require('./rates').updateRatesHandler || null;
+      if (updateRatesHandler) {
+        updateRatesHandler(req, null).catch(err => {
+          console.error('⚠️ Failed to trigger rate update after product update:', err.message);
+        });
+        console.log('🔄 Triggered rate update to recalculate rates after product name change');
+      }
+    } catch (updateErr) {
+      console.warn('⚠️ Could not trigger rate update:', updateErr.message);
+    }
 
     res.json({
       message: 'Product updated successfully',

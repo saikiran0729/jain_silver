@@ -251,9 +251,9 @@ function HomePage() {
   };
 
   const formatPrice = (price) => {
-    // Format exactly like mobile app - Indian number system with 2 decimals
-    // This matches mobile app format: ₹1,69,840.00 for large numbers
-    return `₹${price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    // Format without commas - show exact price
+    // Use 2 decimal places but no comma separators
+    return `₹${price.toFixed(2)}`;
   };
 
   const formatWeight = (weight) => {

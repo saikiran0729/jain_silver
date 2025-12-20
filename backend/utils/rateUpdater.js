@@ -119,7 +119,7 @@ const updateRates = async (io) => {
         
         // Apply manual per-gram adjustment set by admin (can be negative)
         const manualAdj = (typeof rate.manualAdjustment === 'number') ? rate.manualAdjustment : 0;
-        rate.ratePerGram = Math.round((ratePerGram + manualAdj) * 100) / 100;
+        rate.ratePerGram = ratePerGram + manualAdj; // No rounding - keep exact value
         
         // Calculate total rate based on weight
         let weightInGrams = rate.weight.value;
@@ -129,7 +129,7 @@ const updateRates = async (io) => {
           weightInGrams = rate.weight.value * 28.35; // 1 oz = 28.35 grams
         }
         
-        rate.rate = Math.round(rate.ratePerGram * weightInGrams * 100) / 100;
+        rate.rate = rate.ratePerGram * weightInGrams; // No rounding - keep exact value
         rate.lastUpdated = new Date();
         
         // Save to MongoDB with error handling

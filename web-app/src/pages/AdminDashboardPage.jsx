@@ -839,7 +839,7 @@ function AdminDashboardPage() {
                           </TableCell>
                           <TableCell align="right">
                             <Typography variant="body2" sx={{ fontWeight: 600, color: colors.textPrimary }}>
-                              ₹{originalTotalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              ₹{originalTotalPrice.toFixed(2)}
                             </Typography>
                           </TableCell>
                           <TableCell align="right">
@@ -882,7 +882,7 @@ function AdminDashboardPage() {
                         </TableCell>
                         <TableCell align="right">
                           <Typography variant="body2" sx={{ color: colors.textSecondary }}>
-                            ₹{originalTotalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            ₹{originalTotalPrice.toFixed(2)}
                           </Typography>
                           <Typography variant="caption" sx={{ color: colors.textSecondary, display: 'block' }}>
                             ₹{originalRatePerGram.toFixed(2)}/gram
@@ -896,7 +896,7 @@ function AdminDashboardPage() {
                               color: adjustedPrice === 0 ? colors.error : (hasAdjustment ? (adjustment > 0 ? colors.success : colors.error) : colors.textPrimary)
                             }}
                           >
-                            ₹{adjustedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            ₹{adjustedPrice.toFixed(2)}
                           </Typography>
                           <Typography variant="caption" sx={{ color: adjustedPrice === 0 ? colors.error : colors.textSecondary, display: 'block' }}>
                             ₹{adjustedRatePerGram.toFixed(2)}/gram

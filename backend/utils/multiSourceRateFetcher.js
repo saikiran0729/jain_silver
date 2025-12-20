@@ -141,15 +141,14 @@ const fetchFromRBGoldspot = async () => {
     console.log(`📊 Total rates found: ${Object.keys(allRates).length}`);
 
     if (ratePerGram && ratePerGram > 0 && !isNaN(ratePerGram)) {
-      // Use exact ratePerKg from source (no rounding to preserve accuracy)
-      // Only round ratePerGram for display (2 decimal places)
-      const roundedRatePerGram = Math.round(ratePerGram * 100) / 100;
-      // Use original ratePerKg directly - don't round it to preserve exact source value
-      const exactRatePerKg = ratePerKg; // Keep original value from source
+      // Use EXACT values from source - NO rounding to preserve accuracy
+      // Keep ratePerKg exactly as received from RB Gold
+      const exactRatePerKg = ratePerKg; // Keep original value from source (no rounding)
+      const exactRatePerGram = ratePerGram; // Keep exact per gram value (no rounding)
       
       const result = {
-        ratePerKg: exactRatePerKg, // Use exact value from source
-        ratePerGram: roundedRatePerGram, // Rounded for display
+        ratePerKg: exactRatePerKg, // Use exact value from source (no rounding)
+        ratePerGram: exactRatePerGram, // Use exact value (no rounding)
         source: 'bcast.rbgoldspot.com',
         timestamp: new Date(),
         rawData: silver999Data,
@@ -158,8 +157,8 @@ const fetchFromRBGoldspot = async () => {
         silverMini999Rate: silverMini999Rate || null,
         allRates: allRates // Include all rates for reference
       };
-      console.log(`✅ Successfully extracted rate from RB Goldspot: ₹${result.ratePerGram.toFixed(2)}/gram (₹${result.ratePerKg}/kg) [Raw Ask: ${silver999Data?.ask || 'N/A'}, Raw High: ${silver999Data?.high || 'N/A'}, Raw Bid: ${silver999Data?.bid || 'N/A'}]`);
-      console.log(`📊 Rate breakdown: Source=${silver999Data?.ask || silver999Data?.high || 'N/A'}, PerKg=${exactRatePerKg}, PerGram=${roundedRatePerGram}`);
+      console.log(`✅ Successfully extracted EXACT rate from RB Goldspot: ₹${result.ratePerGram.toFixed(2)}/gram (₹${result.ratePerKg}/kg) [Raw Ask: ${silver999Data?.ask || 'N/A'}, Raw High: ${silver999Data?.high || 'N/A'}, Raw Bid: ${silver999Data?.bid || 'N/A'}]`);
+      console.log(`📊 Rate breakdown: Source=${silver999Data?.ask || silver999Data?.high || 'N/A'}, PerKg=${exactRatePerKg} (exact), PerGram=${exactRatePerGram} (exact)`);
       return result;
     }
     
@@ -379,14 +378,13 @@ const fetchFromVercel = async () => {
     }
 
     if (ratePerGram && ratePerGram > 0 && !isNaN(ratePerGram)) {
-      // Use exact ratePerKg from source (no rounding to preserve accuracy)
-      // Only round ratePerGram for display (2 decimal places)
-      const roundedRatePerGram = Math.round(ratePerGram * 100) / 100;
-      const exactRatePerKg = ratePerKg; // Keep original value from source
+      // Use EXACT values from source - NO rounding to preserve accuracy
+      const exactRatePerKg = ratePerKg; // Keep original value from source (no rounding)
+      const exactRatePerGram = ratePerGram; // Keep exact per gram value (no rounding)
       
       const result = {
-        ratePerKg: exactRatePerKg, // Use exact value from source
-        ratePerGram: roundedRatePerGram, // Rounded for display
+        ratePerKg: exactRatePerKg, // Use exact value from source (no rounding)
+        ratePerGram: exactRatePerGram, // Use exact value (no rounding)
         source: 'jainsilverpp1.vercel.app',
         timestamp: new Date(),
         rawData: rateData,
@@ -395,8 +393,8 @@ const fetchFromVercel = async () => {
         silverMini999Rate: silverMini999Rate || null,
         allRates: allRates // Include all rates for reference
       };
-      console.log(`✅ Successfully extracted rate from Vercel: ₹${result.ratePerGram.toFixed(2)}/gram (₹${result.ratePerKg}/kg)`);
-      console.log(`📊 Rate breakdown: PerKg=${exactRatePerKg}, PerGram=${roundedRatePerGram}`);
+      console.log(`✅ Successfully extracted EXACT rate from Vercel: ₹${result.ratePerGram.toFixed(2)}/gram (₹${result.ratePerKg}/kg)`);
+      console.log(`📊 Rate breakdown: PerKg=${exactRatePerKg} (exact), PerGram=${exactRatePerGram} (exact)`);
       return result;
     }
     
