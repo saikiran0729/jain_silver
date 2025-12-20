@@ -831,6 +831,8 @@ function AdminDashboardPage() {
                     }
                     
                     // Calculate total price (no rounding to preserve exact RB Gold price)
+                    // For Silver Bar 1kg (99.99%), this should match RB Gold price exactly: ₹208,500
+                    // Calculation: baseRate (99.9%) × 1.005 (99.99% adjustment) × 1000g = total price
                     const originalTotalPrice = originalRatePerGram * weightInGrams;
                     
                     // Adjusted price (current rate, may be 0 if adjustment makes it negative)
