@@ -475,31 +475,47 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
     const itemsToAdjust = itemName ? [itemName] : rateDefinitions;
 
     for (const itemIdentifier of itemsToAdjust) {
-      // Try to find rate by original name first
+      // Try to find rate by original name first (most reliable)
       let currentRate = currentRates.find(r => r.name === itemIdentifier);
+      let rateName = null;
       
-      // If not found by name, try to find by displayName
-      if (!currentRate) {
+      if (currentRate) {
+        // Found by name - use it
+        rateName = currentRate.name;
+      } else {
+        // Try to find by displayName
         currentRate = currentRates.find(r => r.displayName === itemIdentifier);
+        if (currentRate) {
+          // Found by displayName - use the original name for the update
+          rateName = currentRate.name;
+        } else {
+          // Try to find by _id if itemIdentifier looks like an ObjectId
+          if (itemIdentifier.match(/^[0-9a-fA-F]{24}$/)) {
+            currentRate = currentRates.find(r => r._id.toString() === itemIdentifier);
+            if (currentRate) {
+              rateName = currentRate.name;
+            }
+          }
+        }
       }
       
       // If still not found and itemIdentifier is in rateDefinitions, use it as the name
-      const rateName = currentRate ? currentRate.name : (rateDefinitions.includes(itemIdentifier) ? itemIdentifier : null);
-      
-      if (!rateName || !rateDefinitions.includes(rateName)) {
-        console.warn(`Rate ${itemIdentifier} not found in database, skipping adjustment`);
-        continue;
-      }
-      
-      // Get current rate from MongoDB (use the found rate or find by name)
-      if (!currentRate) {
+      if (!rateName && rateDefinitions.includes(itemIdentifier)) {
+        rateName = itemIdentifier;
         currentRate = currentRates.find(r => r.name === rateName);
       }
       
-      if (!currentRate) {
-        console.warn(`Rate ${rateName} not found in database, skipping adjustment`);
+      if (!rateName || !rateDefinitions.includes(rateName)) {
+        console.warn(`❌ Rate "${itemIdentifier}" not found in database. Available rates: ${currentRates.map(r => `"${r.name}"${r.displayName ? ` (display: "${r.displayName}")` : ''}`).join(', ')}`);
         continue;
       }
+      
+      if (!currentRate) {
+        console.warn(`❌ Rate "${rateName}" not found in database after lookup, skipping adjustment`);
+        continue;
+      }
+      
+      console.log(`✅ Found rate for adjustment: "${itemIdentifier}" → "${rateName}" (displayName: "${currentRate.displayName || 'none'}")`);
       
       // IMPORTANT: ratePerGram in MongoDB already includes adjustments
       // So: originalRatePerGram = currentRatePerGram - currentAdjustment

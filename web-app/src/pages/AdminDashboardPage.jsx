@@ -1070,11 +1070,16 @@ function AdminDashboardPage() {
               label="Select Item"
             >
               <MenuItem value="all">All Items</MenuItem>
-              {rates.map((rate) => (
-                <MenuItem key={rate._id || rate.name} value={rate.name}>
-                  {rate.name}
-                </MenuItem>
-              ))}
+              {rates.map((rate) => {
+                // Use originalName for backend lookup, but show displayName or name to user
+                const originalName = rate.originalName || rate.name;
+                const displayName = rate.displayName || rate.name;
+                return (
+                  <MenuItem key={rate._id || originalName} value={originalName}>
+                    {displayName}
+                  </MenuItem>
+                );
+              })}
             </Select>
           </FormControl>
           <FormControl fullWidth margin="normal">

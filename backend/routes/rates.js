@@ -1806,9 +1806,15 @@ const updateRatesHandler = async (req, res = null) => {
       }
 
       // Get manual adjustment from MongoDB (not in-memory)
+      // IMPORTANT: manualAdjustment persists in MongoDB and is applied to live rates every second
       const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
       ratePerGram = ratePerGram + manualAdjustment;
       ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
+      
+      // Log adjustment application for first rate (to verify adjustments are being applied)
+      if (rateDef.name === rateDefinitions[0]?.name && manualAdjustment !== 0) {
+        console.log(`💰 updateRatesHandler: Applied adjustment ₹${manualAdjustment.toFixed(2)}/gram to ${rateDef.name}`);
+      }
 
       let weightInGrams = rateDef.weight.value;
       if (rateDef.weight.unit === 'kg') {

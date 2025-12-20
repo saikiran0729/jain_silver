@@ -118,8 +118,15 @@ const updateRates = async (io) => {
         // 99.9% uses base rate as-is
         
         // Apply manual per-gram adjustment set by admin (can be negative)
+        // IMPORTANT: manualAdjustment is stored in MongoDB and persists across updates
         const manualAdj = (typeof rate.manualAdjustment === 'number') ? rate.manualAdjustment : 0;
+        // Calculate: base rate (from live source) + manual adjustment = final rate
         rate.ratePerGram = ratePerGram + manualAdj; // No rounding - keep exact value
+        
+        // Log adjustment application for debugging (only for first rate to avoid spam)
+        if (rate.name === rates[0]?.name && manualAdj !== 0) {
+          console.log(`💰 Applied adjustment: Base ₹${ratePerGram.toFixed(2)}/gram + Adjustment ₹${manualAdj.toFixed(2)}/gram = Final ₹${rate.ratePerGram.toFixed(2)}/gram`);
+        }
         
         // Calculate total rate based on weight
         let weightInGrams = rate.weight.value;
