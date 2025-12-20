@@ -448,6 +448,11 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
     let currentRates = [];
     try {
       currentRates = await SilverRate.find({ location: 'Andhra Pradesh' });
+      console.log(`📊 Fetched ${currentRates.length} rates from MongoDB for adjustment`);
+      // Log all rates for debugging
+      currentRates.forEach(r => {
+        console.log(`   - Name: "${r.name}", DisplayName: "${r.displayName || 'none'}", Adjustment: ₹${r.manualAdjustment || 0}/gram`);
+      });
     } catch (err) {
       console.warn('Could not fetch current rates for percentage calculation:', err.message);
       return res.status(500).json({ message: 'Failed to fetch current rates from database' });
@@ -499,15 +504,76 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
         }
       }
       
+      // If still not found, try case-insensitive search by name
+      if (!rateName) {
+        currentRate = currentRates.find(r => 
+          r.name.toLowerCase() === itemIdentifier.toLowerCase()
+        );
+        if (currentRate) {
+          rateName = currentRate.name;
+        }
+      }
+      
+      // If still not found, try case-insensitive search by displayName
+      if (!rateName) {
+        currentRate = currentRates.find(r => 
+          r.displayName && r.displayName.toLowerCase() === itemIdentifier.toLowerCase()
+        );
+        if (currentRate) {
+          rateName = currentRate.name;
+          console.log(`✅ Found rate by displayName (case-insensitive): "${itemIdentifier}" → "${rateName}"`);
+        }
+      }
+      
+      // If still not found, try partial match on displayName (handles typos)
+      if (!rateName) {
+        currentRate = currentRates.find(r => 
+          r.displayName && r.displayName.toLowerCase().includes(itemIdentifier.toLowerCase())
+        );
+        if (currentRate) {
+          rateName = currentRate.name;
+          console.log(`✅ Found rate by displayName (partial match): "${itemIdentifier}" → "${rateName}"`);
+        }
+      }
+      
+      // If still not found, try direct MongoDB query as last resort
+      if (!rateName) {
+        try {
+          const dbRate = await SilverRate.findOne({
+            $or: [
+              { name: itemIdentifier, location: 'Andhra Pradesh' },
+              { displayName: itemIdentifier, location: 'Andhra Pradesh' },
+              { name: { $regex: new RegExp(`^${itemIdentifier}$`, 'i') }, location: 'Andhra Pradesh' },
+              { displayName: { $regex: new RegExp(`^${itemIdentifier}$`, 'i') }, location: 'Andhra Pradesh' }
+            ]
+          });
+          if (dbRate) {
+            currentRate = dbRate;
+            rateName = dbRate.name;
+            console.log(`✅ Found rate via direct MongoDB query: "${itemIdentifier}" → "${rateName}"`);
+          }
+        } catch (dbError) {
+          console.warn(`⚠️ Direct MongoDB query failed:`, dbError.message);
+        }
+      }
+      
       // If still not found and itemIdentifier is in rateDefinitions, use it as the name
       if (!rateName && rateDefinitions.includes(itemIdentifier)) {
         rateName = itemIdentifier;
         currentRate = currentRates.find(r => r.name === rateName);
       }
       
-      if (!rateName || !rateDefinitions.includes(rateName)) {
-        console.warn(`❌ Rate "${itemIdentifier}" not found in database. Available rates: ${currentRates.map(r => `"${r.name}"${r.displayName ? ` (display: "${r.displayName}")` : ''}`).join(', ')}`);
+      // CRITICAL FIX: If we found a rate by displayName, don't require it to be in rateDefinitions
+      // This allows custom displayNames like "old silver" to work
+      if (!rateName || (!rateDefinitions.includes(rateName) && !currentRate)) {
+        console.error(`❌ Rate "${itemIdentifier}" not found in database.`);
+        console.error(`   Available rates: ${currentRates.map(r => `"${r.name}"${r.displayName ? ` (display: "${r.displayName}")` : ''}`).join(', ')}`);
         continue;
+      }
+      
+      // If we found a rate but it's not in rateDefinitions, that's OK - we found it by displayName
+      if (currentRate && !rateDefinitions.includes(rateName)) {
+        console.log(`⚠️ Rate "${rateName}" found by displayName "${itemIdentifier}" but not in standard rateDefinitions - proceeding anyway`);
       }
       
       if (!currentRate) {

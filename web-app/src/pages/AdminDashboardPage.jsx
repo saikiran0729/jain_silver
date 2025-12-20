@@ -1072,8 +1072,16 @@ function AdminDashboardPage() {
               <MenuItem value="all">All Items</MenuItem>
               {rates.map((rate) => {
                 // Use originalName for backend lookup, but show displayName or name to user
+                // CRITICAL: Always use the database name (originalName) for the value
+                // This ensures backend can find the rate even if displayName is changed
                 const originalName = rate.originalName || rate.name;
                 const displayName = rate.displayName || rate.name;
+                
+                // Debug log to verify we're sending the right value
+                if (displayName !== originalName) {
+                  console.log(`🔍 Rate dropdown: "${displayName}" → sending originalName: "${originalName}"`);
+                }
+                
                 return (
                   <MenuItem key={rate._id || originalName} value={originalName}>
                     {displayName}
