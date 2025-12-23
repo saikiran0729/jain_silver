@@ -797,19 +797,17 @@ function AdminDashboardPage() {
                     // CRITICAL: Always use base rate from RB Gold source if available
                     // This ensures Normal Price shows EXACT RB Gold price without any manual adjustments
                     if (baseRateFromSource && baseRateFromSource.baseRatePerGram) {
-                      // Get exact base rate from RB Gold
-                      let baseRate = baseRateFromSource.baseRatePerGram;
-                      
-                      // Apply purity adjustments only (same as backend does)
-                      if (rate.purity === '92.5%') {
-                        baseRate = baseRate * 0.96;
-                      } else if (rate.purity === '99.99%') {
-                        baseRate = baseRate * 1.005;
-                      }
-                      // 99.9% uses base rate as-is
-                      
+                      // Get exact base rate from RB Gold.
+                      // IMPORTANT: Do NOT re‑apply purity adjustments here – the backend/ source
+                      // price already includes any purity factors. Re‑applying them causes
+                      // mismatched per‑gram prices between 1g and 1kg products (e.g. 216 vs 217).
+                      // We want:
+                      //   totalPrice = baseRatePerGram × weightInGrams
+                      // so that 1g at ₹216 → 1kg = 1000 × 216 = ₹216000 exactly.
+                      const baseRate = baseRateFromSource.baseRatePerGram;
+
                       // Use EXACT value from RB Gold (no rounding, no manual adjustments)
-                      // This calculation matches "Show As It Is" exactly - Normal Price = "Show As It Is" price
+                      // Normal Price will now be strictly proportional to weight.
                       originalRatePerGram = baseRate;
                     } else {
                       // Fallback only if baseRateFromSource is not available (should rarely happen)
