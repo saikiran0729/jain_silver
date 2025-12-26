@@ -150,7 +150,7 @@ const updateRates = async (io) => {
         }
         
         // Calculate adjusted price: normalPrice + silverDiff (NO accumulation)
-        rate.adjustedPrice = rate.normalPrice + silverDiff;
+        rate.adjustedPrice = rate.normalPrice + silverDiff + (rate.manualAdjustment || 0);
         
         // Keep ratePerGram for backward compatibility (can be adjustedPrice or base rate)
         rate.ratePerGram = rate.adjustedPrice;
@@ -159,7 +159,7 @@ const updateRates = async (io) => {
         // IMPORTANT: manualAdjustment is stored in MongoDB and persists across updates
         const manualAdj = (typeof rate.manualAdjustment === 'number') ? rate.manualAdjustment : 0;
         // Add manual adjustment to adjustedPrice
-        rate.adjustedPrice += manualAdj;
+    
         rate.ratePerGram = rate.adjustedPrice; // Update ratePerGram to match
         
         // Log adjustment application for debugging (only for first rate to avoid spam)
