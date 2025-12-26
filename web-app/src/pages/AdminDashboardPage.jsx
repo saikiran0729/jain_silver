@@ -773,8 +773,6 @@ function AdminDashboardPage() {
                 </TableHead>
                 <TableBody>
                   {rates.map((rate) => {
-                    const hasAdjustment = rate.manualAdjustment && rate.manualAdjustment !== 0;
-                    const adjustment = rate.manualAdjustment || 0;
                     
                     // Calculate weight in grams
                     let weightInGrams = rate.weight?.value || 1;
@@ -839,6 +837,16 @@ function AdminDashboardPage() {
                     // Adjusted price (current rate, may be 0 if adjustment makes it negative)
                     const adjustedPrice = currentTotalRate;
                     const adjustedRatePerGram = currentRatePerGram;
+
+                    // Compute adjustment as the difference between adjusted rate and calculated original rate.
+                    // This covers cases where `rate.manualAdjustment` is 0 but rates differ due to timing
+                    // or source/base-rate/purity calculation differences. Prefer a small epsilon to avoid
+                    // showing insignificant floating-point differences.
+                    const computedAdjustment = adjustedRatePerGram - originalRatePerGram;
+                    const EPS = 0.0001;
+                    // Prefer the computed adjustment when it's significant, otherwise fall back to stored value
+                    const displayedAdjustment = Math.abs(computedAdjustment) > EPS ? computedAdjustment : (rate.manualAdjustment || 0);
+                    const hasAdjustment = Math.abs(displayedAdjustment) > EPS;
                     
                     // When showing "as it is", display original rates without adjustments
                     if (showOriginalRates) {
