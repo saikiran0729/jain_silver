@@ -422,6 +422,40 @@ function AdminDashboardPage() {
           console.warn(`⚠️ Could not find rate for selectedItem: "${selectedItem}"`);
         }
       }
+
+      // Client-side guard: prevent applying the same absolute increase again
+      // Compute current displayed adjustment for the selected rate and block if already applied
+      if (selectedItem !== 'all' && adjustValueType === 'amount') {
+        const selRate = rates.find(r => (r.originalName || r.name) === itemNameToSend || r.name === itemNameToSend || r.displayName === selectedItem);
+        if (selRate) {
+          // Compute originalRatePerGram similar to render logic
+          let weightInGrams = selRate.weight?.value || 1;
+          if (selRate.weight?.unit === 'kg') weightInGrams = weightInGrams * 1000;
+          let originalRatePerGramLocal;
+          if (baseRateFromSource && baseRateFromSource.baseRatePerGram) {
+            originalRatePerGramLocal = baseRateFromSource.baseRatePerGram;
+          } else if (selRate.originalRatePerGram && selRate.originalRatePerGram > 0) {
+            originalRatePerGramLocal = selRate.originalRatePerGram;
+          } else {
+            // fallback: current ratePerGram - manualAdjustment
+            originalRatePerGramLocal = (selRate.ratePerGram || 0) - (selRate.manualAdjustment || 0);
+          }
+          const currentDisplayedAdjustmentLocal = (selRate.ratePerGram || 0) - originalRatePerGramLocal;
+          const EPS = 0.0001;
+          // If increase requested and current adjustment already >= requested, block
+          if (adjustType === 'increase' && currentDisplayedAdjustmentLocal >= (Math.abs(finalValue) - EPS)) {
+            alert('This product is already adjusted by the requested amount (or higher). No change applied.');
+            setLoadingAction(false);
+            return;
+          }
+          // If decrease requested and current adjustment already <= -requested, block
+          if (adjustType === 'decrease' && currentDisplayedAdjustmentLocal <= (-Math.abs(finalValue) + EPS)) {
+            alert('This product is already decreased by the requested amount (or lower). No change applied.');
+            setLoadingAction(false);
+            return;
+          }
+        }
+      }
       
       const payload = {
         value: finalValue,
