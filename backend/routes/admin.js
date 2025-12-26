@@ -630,10 +630,8 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
               adjustmentAmount = (originalRatePerGram * amount) / 100;
               actualPercentageChange = amount;
             } else {
-              // For absolute amount adjustments, treat the provided amount as the
-              // desired manual adjustment relative to the original price (overwrite).
-              // Admin-provided absolute amounts are taken as the target manualAdjustment
-              // (not additive). E.g., sending 4 sets manualAdjustment = 4 regardless of previous value.
+              // For absolute amount adjustments, add the provided amount to the current adjustment
+              // to make adjustments cumulative. E.g., sending 3 adds 3 to the current adjustment.
               adjustmentAmount = amount;
               actualPercentageChange = originalRatePerGram > 0
                 ? ((amount / originalRatePerGram) * 100)
@@ -641,8 +639,8 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
             }
       }
 
-      // Overwrite existing manualAdjustment so repeated adjustments use original price
-      const newAdjustment = adjustmentAmount;
+      // Add to existing manualAdjustment for cumulative adjustments
+      const newAdjustment = currentAdjustment + adjustmentAmount;
       // New rate should be original rate + the new manual adjustment
       const newRatePerGram = Math.max(0, originalRatePerGram + newAdjustment);
 
