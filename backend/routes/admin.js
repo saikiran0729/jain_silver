@@ -598,23 +598,27 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       let adjustmentAmount = 0;
       let actualPercentageChange = 0;
       
-      if (isPercentage) {
-        // Calculate amount based on percentage of original rate (normal price)
-        // This ensures percentage is calculated on the base rate, not the adjusted rate
+            if (isPercentage) {
+        // Calculate amount based on percentage of the ORIGINAL (actual) rate
+        // so adjustments are always relative to the base price and not compounded
         adjustmentAmount = (originalRatePerGram * amount) / 100;
         actualPercentageChange = amount;
-      } else {
-        // Use amount directly (additive to existing adjustment)
+        // Overwrite previous manualAdjustment so new adjustment is always from original
+        // (i.e. manualAdjustment = percentage_of_original)
+            } else {
+        // For absolute amount adjustments, treat the provided amount as the
+        // desired manual adjustment relative to the original price (overwrite).
         adjustmentAmount = amount;
-        // Calculate percentage change based on original rate
-        actualPercentageChange = originalRatePerGram > 0 
+        // Calculate percentage change relative to original rate for reporting
+        actualPercentageChange = originalRatePerGram > 0
           ? ((amount / originalRatePerGram) * 100)
           : 0;
+            }
       }
-      
-      // Calculate new adjustment (additive: new = current + adjustment)
-      const newAdjustment = currentAdjustment + adjustmentAmount;
-      // New rate should be original rate + total adjustment (cumulative)
+
+      // Overwrite existing manualAdjustment so repeated adjustments use original price
+      const newAdjustment = adjustmentAmount;
+      // New rate should be original rate + the new manual adjustment
       const newRatePerGram = Math.max(0, originalRatePerGram + newAdjustment);
 
       // Update MongoDB with new adjustment (use the original name, not displayName)
