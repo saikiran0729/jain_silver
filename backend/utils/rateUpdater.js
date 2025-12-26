@@ -1,4 +1,5 @@
 const SilverRate = require('../models/SilverRate');
+const SilverPriceTracker = require('../models/SilverPriceTracker');
 const Settings = require('../models/Settings');
 const { fetchSilverRatesFromMultipleSources } = require('./multiSourceRateFetcher');
 
@@ -91,30 +92,31 @@ const updateRates = async (io) => {
     const baseRatePerGram = liveRate.ratePerGram;
     const baseRatePerKg = liveRate.ratePerKg; // Use exact value from source
     
-    // Get or set baseSilverPrice
+    // Get or set baseSilverPrice using SilverPriceTracker collection
     let baseSilverPrice = null;
     try {
-      const setting = await Settings.getSetting('baseSilverPrice');
-      baseSilverPrice = setting.value;
+      baseSilverPrice = await SilverPriceTracker.getOrCreateBasePrice('Andhra Pradesh');
     } catch (err) {
-      console.warn('Could not fetch baseSilverPrice setting:', err.message);
+      console.warn('Could not fetch baseSilverPrice from tracker:', err.message);
     }
-    if (baseSilverPrice === null || baseSilverPrice === false) {
-      // Set baseSilverPrice to current baseRatePerGram
-      baseSilverPrice = baseRatePerGram;
+    
+    if (baseSilverPrice === null) {
+      // Set baseSilverPrice to current baseRatePerGram (stored once only)
       try {
-        await Settings.setSetting('baseSilverPrice', baseSilverPrice);
+        await SilverPriceTracker.setBasePriceIfNotExists(baseRatePerGram, 'Andhra Pradesh');
+        baseSilverPrice = baseRatePerGram;
         console.log(`🔧 Set baseSilverPrice to ₹${baseSilverPrice.toFixed(2)}/gram`);
       } catch (err) {
         console.error('Could not set baseSilverPrice:', err.message);
+        return; // Cannot proceed without base price
       }
     }
     
-    const silverIncrease = baseRatePerGram - baseSilverPrice;
+    const silverDiff = baseRatePerGram - baseSilverPrice;
     
     // Log every successful fetch (with timestamp for accuracy)
     const fetchTime = Date.now() - startTime;
-    console.log(`✅ [${new Date().toISOString()}] Fetched EXACT live rate: ₹${baseRatePerGram.toFixed(2)}/gram (₹${baseRatePerKg}/kg, source: ${liveRate.source}, fetch time: ${fetchTime}ms, increase: ₹${silverIncrease.toFixed(2)})`);
+    console.log(`✅ [${new Date().toISOString()}] Fetched EXACT live rate: ₹${baseRatePerGram.toFixed(2)}/gram (₹${baseRatePerKg}/kg, source: ${liveRate.source}, fetch time: ${fetchTime}ms, diff: ₹${silverDiff.toFixed(2)})`);
     console.log(`📊 Raw source data: Ask=${liveRate.rawData?.ask || 'N/A'}, High=${liveRate.rawData?.high || 'N/A'}, RatePerKg=${baseRatePerKg}`);
     
     // Update all rates based on the live rate from endpoint
@@ -139,24 +141,30 @@ const updateRates = async (io) => {
         }
         // 99.9% uses base rate as-is
         
-        // Set normalPrice if not set
+        // Set normalPrice if not set (immutable base price)
         if (rate.normalPrice === null || rate.normalPrice === undefined) {
-          rate.normalPrice = ratePerGram;
+          // For products with normalPrice = 236, set it once
+          // For other products, use the current base rate as normalPrice
+          rate.normalPrice = rate.name.includes('236') ? 236 : ratePerGram;
           console.log(`🔧 Set normalPrice for ${rate.name} to ₹${rate.normalPrice.toFixed(2)}/gram`);
         }
         
-        // Calculate adjusted price: normalPrice + silverIncrease
-        rate.ratePerGram = rate.normalPrice + silverIncrease;
+        // Calculate adjusted price: normalPrice + silverDiff (NO accumulation)
+        rate.adjustedPrice = rate.normalPrice + silverDiff;
+        
+        // Keep ratePerGram for backward compatibility (can be adjustedPrice or base rate)
+        rate.ratePerGram = rate.adjustedPrice;
         
         // Apply manual per-gram adjustment set by admin (can be negative)
         // IMPORTANT: manualAdjustment is stored in MongoDB and persists across updates
         const manualAdj = (typeof rate.manualAdjustment === 'number') ? rate.manualAdjustment : 0;
-        // Add manual adjustment
-        rate.ratePerGram += manualAdj;
+        // Add manual adjustment to adjustedPrice
+        rate.adjustedPrice += manualAdj;
+        rate.ratePerGram = rate.adjustedPrice; // Update ratePerGram to match
         
         // Log adjustment application for debugging (only for first rate to avoid spam)
         if (rate.name === rates[0]?.name) {
-          console.log(`💰 Applied adjustment: Normal ₹${rate.normalPrice.toFixed(2)}/gram + Increase ₹${silverIncrease.toFixed(2)} + Manual ₹${manualAdj.toFixed(2)}/gram = Final ₹${rate.ratePerGram.toFixed(2)}/gram`);
+          console.log(`💰 Applied adjustment: Normal ₹${rate.normalPrice.toFixed(2)}/gram + Diff ₹${silverDiff.toFixed(2)} + Manual ₹${manualAdj.toFixed(2)}/gram = Adjusted ₹${rate.adjustedPrice.toFixed(2)}/gram`);
         }
         
         // Calculate total rate based on weight
@@ -178,7 +186,7 @@ const updateRates = async (io) => {
           await rate.save();
           // Log successful save (only for first rate to avoid spam)
           if (rate.name === rates[0]?.name) {
-            console.log(`💾 Saved to MongoDB: ${rate.name} = ₹${rate.ratePerGram}/gram`);
+            console.log(`💾 Saved to MongoDB: ${rate.name} = ₹${rate.adjustedPrice}/gram (normal: ₹${rate.normalPrice}, diff: ₹${silverDiff.toFixed(2)})`);
           }
         } catch (saveError) {
           console.error(`❌ Failed to save ${rate.name} to MongoDB:`, saveError.message);
@@ -192,6 +200,8 @@ const updateRates = async (io) => {
             name: rate.name,
             rate: rate.rate,
             ratePerGram: rate.ratePerGram,
+            adjustedPrice: rate.adjustedPrice,
+            normalPrice: rate.normalPrice,
             weight: rate.weight,
             purity: rate.purity,
             type: rate.type,
@@ -222,7 +232,7 @@ const updateRates = async (io) => {
       const verifyRate = await SilverRate.findOne({ location: 'Andhra Pradesh' }).sort({ lastUpdated: -1 });
       if (verifyRate) {
         const verifyAge = Date.now() - new Date(verifyRate.lastUpdated).getTime();
-        console.log(`✅ MongoDB verified: Latest rate "${verifyRate.name}" updated ${Math.round(verifyAge/1000)}s ago (₹${verifyRate.ratePerGram}/gram)`);
+        console.log(`✅ MongoDB verified: Latest rate "${verifyRate.name}" updated ${Math.round(verifyAge/1000)}s ago (adjusted: ₹${verifyRate.adjustedPrice}/gram, normal: ₹${verifyRate.normalPrice})`);
       }
     } catch (verifyError) {
       console.warn('⚠️ Could not verify MongoDB update:', verifyError.message);

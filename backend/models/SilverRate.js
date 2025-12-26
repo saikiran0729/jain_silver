@@ -47,6 +47,11 @@ const silverRateSchema = new mongoose.Schema({
     type: Number,
     default: null
   },
+  // Adjusted price (recalculated from normalPrice + silver price difference)
+  adjustedPrice: {
+    type: Number,
+    default: null
+  },
   location: {
     type: String,
     default: 'Andhra Pradesh',
