@@ -45,14 +45,17 @@ const getOriginalRates = async (baseRatePerGram) => {
       ratePerGram = baseRatePerGram * 1.005;
     }
     
-    ratePerGram = Math.round(ratePerGram * 100) / 100;
+    // No rounding - keep exact value from RB Gold
+    // ratePerGram stays as is
     
     let weightInGrams = rateDef.weight.value;
     if (rateDef.weight.unit === 'kg') {
-      weightInGrams = rateDef.weight.value * 1000;
+      weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
     }
     
-    const totalRate = Math.round(ratePerGram * weightInGrams * 100) / 100;
+    // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
+    // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
+    const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
     const id = Buffer.from(rateDef.name).toString('base64').substring(0, 24);
     
     return {
@@ -146,14 +149,15 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null, skipU
         } else if (def.purity === '99.99%') {
           ratePerGram = baseRatePerGram * 1.005;
         }
-        ratePerGram = Math.round(ratePerGram * 100) / 100;
+        // No rounding - keep exact value
+        // ratePerGram stays as is
       }
       
       let weightInGrams = def.weight.value;
       if (def.weight.unit === 'kg') {
         weightInGrams = def.weight.value * 1000;
       }
-      const totalRate = Math.round(ratePerGram * weightInGrams * 100) / 100;
+      const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
       
       const newProduct = {
         _id: Buffer.from(def.name).toString('base64').substring(0, 24),
@@ -223,12 +227,12 @@ const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false
     if (rate.weight.unit === 'kg') {
       weightInGrams = rate.weight.value * 1000;
     }
-    const originalTotalRate = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
+    const originalTotalRate = originalRatePerGram * weightInGrams; // No rounding - keep exact value
     
     // Current rate (already has adjustments) is what customers see
     // Always recalculate from ratePerGram to ensure accuracy (don't rely on stored rate which might be stale)
     const adjustedRatePerGram = currentRatePerGram;
-    const adjustedTotalRate = Math.round(adjustedRatePerGram * weightInGrams * 100) / 100;
+    const adjustedTotalRate = adjustedRatePerGram * weightInGrams; // No rounding - keep exact value
     
     // Use displayName if set, otherwise use name
     const displayName = rate.displayName || rate.name;
@@ -448,14 +452,16 @@ const updateMongoDBRates = async (liveRate) => {
 
         const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
         ratePerGram = ratePerGram + manualAdjustment;
-        ratePerGram = Math.max(0, Math.round(ratePerGram * 100) / 100);
+        ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
 
         let weightInGrams = rateDef.weight.value;
         if (rateDef.weight.unit === 'kg') {
-          weightInGrams = rateDef.weight.value * 1000;
+          weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
         }
 
-        const totalRate = Math.round(ratePerGram * weightInGrams * 100) / 100;
+        // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
+        // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
+        const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
 
         await SilverRate.findOneAndUpdate(
           { name: rateDef.name, location: 'Andhra Pradesh' },
@@ -775,7 +781,7 @@ router.get('/', async (req, res) => {
                     }
                     // 99.9% uses base rate as-is
                     
-                    const originalTotalRate = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
+                    const originalTotalRate = originalRatePerGram * weightInGrams; // No rounding - keep exact value
                     
                     mergedRates.push({
                       ...mongoRate,
@@ -1547,14 +1553,16 @@ router.get('/', async (req, res) => {
         
         const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
         ratePerGram = ratePerGram + manualAdjustment;
-        ratePerGram = Math.max(0, Math.round(ratePerGram * 100) / 100);
+        ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
         
         let weightInGrams = rateDef.weight.value;
         if (rateDef.weight.unit === 'kg') {
-          weightInGrams = rateDef.weight.value * 1000;
+          weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
         }
         
-        const totalRate = Math.round(ratePerGram * weightInGrams * 100) / 100;
+        // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
+        // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
+        const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
         const id = Buffer.from(rateDef.name).toString('base64').substring(0, 24);
         
         // Store original rate before adjustment
@@ -1563,7 +1571,7 @@ router.get('/', async (req, res) => {
         if (rateDef.weight.unit === 'kg') {
           originalWeightInGrams = rateDef.weight.value * 1000;
         }
-        const originalTotalRate = Math.round(originalRatePerGram * originalWeightInGrams * 100) / 100;
+        const originalTotalRate = originalRatePerGram * originalWeightInGrams; // No rounding - keep exact value
         
         return {
           _id: id,
@@ -1804,16 +1812,24 @@ const updateRatesHandler = async (req, res = null) => {
       }
 
       // Get manual adjustment from MongoDB (not in-memory)
+      // IMPORTANT: manualAdjustment persists in MongoDB and is applied to live rates every second
       const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
       ratePerGram = ratePerGram + manualAdjustment;
-      ratePerGram = Math.max(0, Math.round(ratePerGram * 100) / 100);
+      ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
+      
+      // Log adjustment application for first rate (to verify adjustments are being applied)
+      if (rateDef.name === rateDefinitions[0]?.name && manualAdjustment !== 0) {
+        console.log(`💰 updateRatesHandler: Applied adjustment ₹${manualAdjustment.toFixed(2)}/gram to ${rateDef.name}`);
+      }
 
       let weightInGrams = rateDef.weight.value;
       if (rateDef.weight.unit === 'kg') {
-        weightInGrams = rateDef.weight.value * 1000;
+        weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
       }
 
-      const totalRate = Math.round(ratePerGram * weightInGrams * 100) / 100;
+      // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
+      // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
+      const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
 
       return {
         updateOne: {
@@ -1902,14 +1918,14 @@ const updateRatesHandler = async (req, res = null) => {
           
           const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
           ratePerGram = ratePerGram + manualAdjustment;
-          ratePerGram = Math.max(0, Math.round(ratePerGram * 100) / 100);
+          ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
 
           let weightInGrams = rateDef.weight.value;
           if (rateDef.weight.unit === 'kg') {
             weightInGrams = rateDef.weight.value * 1000;
           }
 
-          const totalRate = Math.round(ratePerGram * weightInGrams * 100) / 100;
+          const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
 
           const updateResult = await SilverRate.findOneAndUpdate(
             { name: rateDef.name, location: 'Andhra Pradesh' },

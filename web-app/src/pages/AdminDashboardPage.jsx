@@ -34,6 +34,27 @@ function AdminDashboardPage() {
   const [showOriginalRates, setShowOriginalRates] = useState(false); // Toggle to show original rates without adjustments
   const [baseRateFromSource, setBaseRateFromSource] = useState(null); // Current base rate from RB Gold
   const [globalShowAsItIs, setGlobalShowAsItIs] = useState(false); // Global "Show As It Is" setting
+  
+  // Poll base rate every second to update Normal Price live (same as "Show As It Is")
+  const baseRateIntervalRef = React.useRef(null);
+  
+  useEffect(() => {
+    // Fetch immediately
+    fetchBaseRate();
+    
+    // Set up interval to fetch base rate every second for live Normal Price updates
+    baseRateIntervalRef.current = setInterval(() => {
+      fetchBaseRate();
+    }, 1000); // Update every second
+    
+    // Cleanup on unmount
+    return () => {
+      if (baseRateIntervalRef.current) {
+        clearInterval(baseRateIntervalRef.current);
+        baseRateIntervalRef.current = null;
+      }
+    };
+  }, []);
   const [editProductDialogOpen, setEditProductDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [editProductName, setEditProductName] = useState('');
@@ -42,6 +63,7 @@ function AdminDashboardPage() {
     fetchUsers();
     fetchRates(true); // Use skipUpdate=true by default for admin dashboard to avoid timeouts
     fetchShowAsItIsSetting();
+    fetchBaseRate(); // Always fetch base rate to calculate exact Normal Price
     if (mainTab === 1) fetchNews();
     if (mainTab === 2) fetchStoreInfo();
   }, [mainTab]);
@@ -76,17 +98,28 @@ function AdminDashboardPage() {
 
   const fetchBaseRate = async () => {
     try {
-      const response = await api.get('/rates/base-rate');
-      console.log('✅ Base rate fetched from source:', response.data);
-      setBaseRateFromSource(response.data);
+      // Fetch with cache-busting timestamp to ensure fresh data every second
+      const response = await api.get('/rates/base-rate', {
+        params: { _t: Date.now() } // Cache busting for live updates
+      });
+      if (response.data && response.data.baseRatePerGram) {
+        setBaseRateFromSource(response.data);
+        // Only log occasionally to avoid console spam (every 10 seconds)
+        const now = Date.now();
+        if (!fetchBaseRate.lastLogTime || now - fetchBaseRate.lastLogTime > 10000) {
+          console.log(`✅ Live base rate: ₹${response.data.baseRatePerGram.toFixed(2)}/gram (updating every second for Normal Price)`);
+          fetchBaseRate.lastLogTime = now;
+        }
+      }
       return response.data;
     } catch (error) {
-      // Silently handle 404 - endpoint may not be deployed yet
-      // We'll calculate original rates from current rates and adjustments
-      if (error.response?.status === 404) {
-        console.log('ℹ️ Base rate endpoint not available, will calculate from current rates');
-      } else {
-        console.warn('⚠️ Error fetching base rate:', error.message);
+      // Silently handle errors during polling - don't spam console
+      // Only log if base rate was never successfully fetched
+      if (!baseRateFromSource || !baseRateFromSource.baseRatePerGram) {
+        console.warn('⚠️ Error fetching base rate from RB Gold:', error.message);
+        if (error.response?.status === 404) {
+          console.warn('   Base rate endpoint not available - ensure backend is deployed');
+        }
       }
       return null;
     }
@@ -96,6 +129,11 @@ function AdminDashboardPage() {
     try {
       setLoadingRates(true);
       console.log('📡 Fetching rates from /rates endpoint...', skipUpdate ? '(skipping update)' : '');
+      
+      // CRITICAL: Always fetch base rate FIRST to ensure Normal Price shows exact RB Gold prices
+      // Fetch base rate before rates to ensure it's available when calculating Normal Price
+      await fetchBaseRate();
+      
       // Use skipUpdate parameter to avoid waiting for slow external rate updates
       // This prevents timeouts when admin adjusts rates and immediately fetches them
       const response = await api.get('/rates', {
@@ -105,9 +143,18 @@ function AdminDashboardPage() {
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
       setRates(response.data || []);
       
-      // If showing original rates, also fetch base rate from source
-      if (showOriginalRates) {
-        await fetchBaseRate();
+      // CRITICAL: Ensure base rate is available for Normal Price calculation
+      // Re-fetch if not available to ensure Normal Price shows exact RB Gold prices
+      if (!baseRateFromSource || !baseRateFromSource.baseRatePerGram) {
+        console.warn('⚠️ Base rate not available after fetching rates, re-fetching...');
+        const baseRate = await fetchBaseRate();
+        if (baseRate && baseRate.baseRatePerGram) {
+          console.log(`✅ Base rate now available: ₹${baseRate.baseRatePerGram}/gram (exact RB Gold price)`);
+        } else {
+          console.error('❌ CRITICAL: Base rate still not available - Normal Price will not show exact RB Gold prices!');
+        }
+      } else {
+        console.log(`✅ Base rate available for Normal Price: ₹${baseRateFromSource.baseRatePerGram}/gram (exact RB Gold price)`);
       }
     } catch (error) {
       console.error('❌ Error fetching rates:', error);
@@ -356,12 +403,33 @@ function AdminDashboardPage() {
     try {
       setLoadingAction(true);
       const finalValue = adjustType === 'decrease' ? -Math.abs(value) : value;
+      
+      // CRITICAL: Ensure we're sending the originalName, not displayName
+      let itemNameToSend = selectedItem;
+      if (selectedItem !== 'all') {
+        // Find the rate to get its originalName
+        const selectedRate = rates.find(r => {
+          const originalName = r.originalName || r.name;
+          const displayName = r.displayName || r.name;
+          return originalName === selectedItem || displayName === selectedItem;
+        });
+        
+        if (selectedRate) {
+          itemNameToSend = selectedRate.originalName || selectedRate.name;
+          console.log(`🔍 Adjust rates: Selected "${selectedItem}" → Sending originalName: "${itemNameToSend}"`);
+          console.log(`   Rate details: name="${selectedRate.name}", originalName="${selectedRate.originalName}", displayName="${selectedRate.displayName}"`);
+        } else {
+          console.warn(`⚠️ Could not find rate for selectedItem: "${selectedItem}"`);
+        }
+      }
+      
       const payload = {
         value: finalValue,
         adjustmentType: adjustValueType // 'amount' or 'percentage'
       };
-      if (selectedItem !== 'all') {
-        payload.itemName = selectedItem;
+      if (itemNameToSend !== 'all') {
+        payload.itemName = itemNameToSend;
+        console.log(`📤 Sending adjust-rates request with itemName: "${itemNameToSend}"`);
       }
       const response = await api.post('/admin/adjust-rates', payload, {
         timeout: 60000 // 60 seconds timeout - backend may trigger rate update
@@ -722,104 +790,51 @@ function AdminDashboardPage() {
                     const currentRatePerGram = rate.ratePerGram || 0;
                     const currentTotalRate = rate.rate || 0;
                     
-                    // Calculate true original rate from RB Gold (before any adjustments)
+                    // Calculate Normal Price = EXACT RB Gold price (with purity adjustments only, NO manual adjustments)
+                    // ALWAYS use base rate from RB Gold source for Normal Price
                     let originalRatePerGram;
                     
-                    // If showing "as it is" and we have base rate from source, use it
-                    if (showOriginalRates && baseRateFromSource && baseRateFromSource.baseRatePerGram) {
-                      // Calculate original rate based on current base rate from RB Gold and purity
-                      let baseRate = baseRateFromSource.baseRatePerGram;
-                      
-                      // Apply purity adjustments (same as backend does)
-                      if (rate.purity === '92.5%') {
-                        baseRate = baseRate * 0.96;
-                      } else if (rate.purity === '99.99%') {
-                        baseRate = baseRate * 1.005;
-                      }
-                      // 99.9% uses base rate as-is
-                      
-                      originalRatePerGram = Math.round(baseRate * 100) / 100;
-                      // Using live base rate from RB Gold source
-                    } else if (showOriginalRates) {
-                      // Fallback: Calculate original from current rate - adjustment
-                      // Formula: Original = Current - Adjustment
-                      // This reverses the adjustment to get the true original rate from RB Gold
+                    // CRITICAL: Always use base rate from RB Gold source if available
+                    // This ensures Normal Price shows EXACT RB Gold price without any manual adjustments
+                    if (baseRateFromSource && baseRateFromSource.baseRatePerGram) {
+                      // Get exact base rate from RB Gold.
+                      // IMPORTANT: Do NOT re‑apply purity adjustments here – the backend/ source
+                      // price already includes any purity factors. Re‑applying them causes
+                      // mismatched per‑gram prices between 1g and 1kg products (e.g. 216 vs 217).
+                      // We want:
+                      //   totalPrice = baseRatePerGram × weightInGrams
+                      // so that 1g at ₹216 → 1kg = 1000 × 216 = ₹216000 exactly.
+                      const baseRate = baseRateFromSource.baseRatePerGram;
+
+                      // Use EXACT value from RB Gold (no rounding, no manual adjustments)
+                      // Normal Price will now be strictly proportional to weight.
+                      originalRatePerGram = baseRate;
+                    } else {
+                      // Fallback only if baseRateFromSource is not available (should rarely happen)
+                      // Calculate from current rate - adjustment (less accurate)
                       originalRatePerGram = currentRatePerGram - adjustment;
                       
-                      // Validate calculated original rate
-                      // If current rate is 0 (clamped), original should be positive
-                      if (currentRatePerGram === 0 && adjustment < 0) {
-                        // Rate was clamped to 0, so original = |adjustment| or higher
-                        // Try stored originalRatePerGram first
-                        if (rate.originalRatePerGram && rate.originalRatePerGram > Math.abs(adjustment)) {
-                          originalRatePerGram = rate.originalRatePerGram;
-                        } else if (rate.originalRate && rate.originalRate > 0) {
-                          originalRatePerGram = rate.originalRate / weightInGrams;
-                        } else {
-                          // Estimate: if adjustment is -92.25, original was likely around 92-184
-                          // Use stored originalRatePerGram if reasonable, otherwise estimate
-                          if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
-                            originalRatePerGram = rate.originalRatePerGram;
-                          } else {
-                            // Conservative estimate: assume adjustment is 50% of original
-                            originalRatePerGram = Math.abs(adjustment) * 2;
-                          }
-                        }
-                      } else if (originalRatePerGram <= 0) {
-                        // Calculated original is invalid, try stored values
+                      if (originalRatePerGram <= 0) {
+                        // Try stored values as last resort
                         if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
                           originalRatePerGram = rate.originalRatePerGram;
                         } else if (rate.originalRate && rate.originalRate > 0) {
                           originalRatePerGram = rate.originalRate / weightInGrams;
                         } else {
-                          // Last resort: estimate
-                          originalRatePerGram = Math.max(Math.abs(adjustment) * 2, 100);
-                          console.warn(`[${rate.name}] Could not determine original, estimating: ₹${originalRatePerGram}`);
+                          originalRatePerGram = currentRatePerGram;
+                          console.warn(`⚠️ [${rate.name}] Base rate not available, using current rate as fallback: ₹${originalRatePerGram}`);
                         }
                       }
-                      
-                      // Final validation: ensure original is reasonable
-                      if (originalRatePerGram <= 0) {
-                        originalRatePerGram = Math.max(Math.abs(adjustment), 50);
-                      }
-                    } else {
-                      // Fallback: Calculate from current rate and adjustment
-                      // Priority 1: Use stored originalRatePerGram if it exists and seems reasonable
-                      if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
-                        // Check if stored original makes sense
-                        const calculatedFromStored = rate.originalRatePerGram - adjustment;
-                        // If calculated rate from stored original matches current rate (within tolerance), use stored
-                        if (Math.abs(calculatedFromStored - currentRatePerGram) < 1 || currentRatePerGram === 0) {
-                          originalRatePerGram = rate.originalRatePerGram;
-                        } else {
-                          // Stored original doesn't match, calculate from current
-                          originalRatePerGram = currentRatePerGram - adjustment;
-                        }
-                      } else {
-                        // Priority 2: Calculate from current rate and adjustment
-                        originalRatePerGram = currentRatePerGram - adjustment;
-                        
-                        // If calculated original is unreasonable (too low), try stored originalRate
-                        if (originalRatePerGram <= 0 && rate.originalRate && rate.originalRate > 0) {
-                          // Calculate from total original rate
-                          originalRatePerGram = rate.originalRate / weightInGrams;
-                        }
-                      }
-                      
-                      // Final validation: ensure original rate is positive and reasonable
-                      if (originalRatePerGram <= 0 || originalRatePerGram < Math.abs(adjustment)) {
-                        // If still invalid, use stored originalRatePerGram as last resort
-                        if (rate.originalRatePerGram && rate.originalRatePerGram > Math.abs(adjustment)) {
-                          originalRatePerGram = rate.originalRatePerGram;
-                        } else {
-                          // Estimate: if adjustment is large negative, original was likely 2x the adjustment
-                          originalRatePerGram = Math.max(Math.abs(adjustment) * 2, 100); // At least ₹100/gram
-                          console.warn(`[${rate.name}] Could not determine original, estimating: ₹${originalRatePerGram} (adjustment: ₹${adjustment})`);
-                        }
-                      }
+                      console.warn(`⚠️ [${rate.name}] Base rate from RB Gold not available, using calculated fallback: ₹${originalRatePerGram}`);
                     }
                     
-                    const originalTotalPrice = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
+                    // Calculate total price (no rounding to preserve exact RB Gold price)
+                    // CRITICAL: For Silver Bar 1kg (99.99%), calculation must be: ₹208.5/gram × 1000g = ₹208,500
+                    // Formula: originalRatePerGram × weightInGrams = totalPrice
+                    // Example: If baseRate = ₹207.46/gram (99.9%), then:
+                    //   99.99% rate = ₹207.46 × 1.005 = ₹208.5/gram
+                    //   Silver Bar 1kg = ₹208.5 × 1000 = ₹208,500 ✓
+                    const originalTotalPrice = originalRatePerGram * weightInGrams;
                     
                     // Adjusted price (current rate, may be 0 if adjustment makes it negative)
                     const adjustedPrice = currentTotalRate;
@@ -839,7 +854,7 @@ function AdminDashboardPage() {
                           </TableCell>
                           <TableCell align="right">
                             <Typography variant="body2" sx={{ fontWeight: 600, color: colors.textPrimary }}>
-                              ₹{originalTotalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              ₹{originalTotalPrice.toFixed(2)}
                             </Typography>
                           </TableCell>
                           <TableCell align="right">
@@ -882,7 +897,7 @@ function AdminDashboardPage() {
                         </TableCell>
                         <TableCell align="right">
                           <Typography variant="body2" sx={{ color: colors.textSecondary }}>
-                            ₹{originalTotalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            ₹{originalTotalPrice.toFixed(2)}
                           </Typography>
                           <Typography variant="caption" sx={{ color: colors.textSecondary, display: 'block' }}>
                             ₹{originalRatePerGram.toFixed(2)}/gram
@@ -896,7 +911,7 @@ function AdminDashboardPage() {
                               color: adjustedPrice === 0 ? colors.error : (hasAdjustment ? (adjustment > 0 ? colors.success : colors.error) : colors.textPrimary)
                             }}
                           >
-                            ₹{adjustedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            ₹{adjustedPrice.toFixed(2)}
                           </Typography>
                           <Typography variant="caption" sx={{ color: adjustedPrice === 0 ? colors.error : colors.textSecondary, display: 'block' }}>
                             ₹{adjustedRatePerGram.toFixed(2)}/gram
@@ -1070,11 +1085,24 @@ function AdminDashboardPage() {
               label="Select Item"
             >
               <MenuItem value="all">All Items</MenuItem>
-              {rates.map((rate) => (
-                <MenuItem key={rate._id || rate.name} value={rate.name}>
-                  {rate.name}
-                </MenuItem>
-              ))}
+              {rates.map((rate) => {
+                // Use originalName for backend lookup, but show displayName or name to user
+                // CRITICAL: Always use the database name (originalName) for the value
+                // This ensures backend can find the rate even if displayName is changed
+                const originalName = rate.originalName || rate.name;
+                const displayName = rate.displayName || rate.name;
+                
+                // Debug log to verify we're sending the right value
+                if (displayName !== originalName) {
+                  console.log(`🔍 Rate dropdown: "${displayName}" → sending originalName: "${originalName}"`);
+                }
+                
+                return (
+                  <MenuItem key={rate._id || originalName} value={originalName}>
+                    {displayName}
+                  </MenuItem>
+                );
+              })}
             </Select>
           </FormControl>
           <FormControl fullWidth margin="normal">
