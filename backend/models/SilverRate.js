@@ -42,6 +42,11 @@ const silverRateSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Normal price (base price for automatic adjustments)
+  normalPrice: {
+    type: Number,
+    default: null
+  },
   location: {
     type: String,
     default: 'Andhra Pradesh',

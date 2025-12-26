@@ -5,12 +5,11 @@ const settingsSchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true,
-    enum: ['showAsItIs']
+    enum: ['showAsItIs', 'baseSilverPrice']
   },
   value: {
-    type: Boolean,
-    required: true,
-    default: false
+    type: mongoose.Schema.Types.Mixed, // Allow both Boolean and Number
+    required: true
   },
   lastUpdated: {
     type: Date,

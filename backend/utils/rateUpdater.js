@@ -1,4 +1,5 @@
 const SilverRate = require('../models/SilverRate');
+const Settings = require('../models/Settings');
 const { fetchSilverRatesFromMultipleSources } = require('./multiSourceRateFetcher');
 
 const UPDATE_INTERVAL = 1000; // Update rates every second (1000ms = 1 second)
@@ -90,9 +91,30 @@ const updateRates = async (io) => {
     const baseRatePerGram = liveRate.ratePerGram;
     const baseRatePerKg = liveRate.ratePerKg; // Use exact value from source
     
+    // Get or set baseSilverPrice
+    let baseSilverPrice = null;
+    try {
+      const setting = await Settings.getSetting('baseSilverPrice');
+      baseSilverPrice = setting.value;
+    } catch (err) {
+      console.warn('Could not fetch baseSilverPrice setting:', err.message);
+    }
+    if (baseSilverPrice === null || baseSilverPrice === false) {
+      // Set baseSilverPrice to current baseRatePerGram
+      baseSilverPrice = baseRatePerGram;
+      try {
+        await Settings.setSetting('baseSilverPrice', baseSilverPrice);
+        console.log(`🔧 Set baseSilverPrice to ₹${baseSilverPrice.toFixed(2)}/gram`);
+      } catch (err) {
+        console.error('Could not set baseSilverPrice:', err.message);
+      }
+    }
+    
+    const silverIncrease = baseRatePerGram - baseSilverPrice;
+    
     // Log every successful fetch (with timestamp for accuracy)
     const fetchTime = Date.now() - startTime;
-    console.log(`✅ [${new Date().toISOString()}] Fetched EXACT live rate: ₹${baseRatePerGram.toFixed(2)}/gram (₹${baseRatePerKg}/kg, source: ${liveRate.source}, fetch time: ${fetchTime}ms)`);
+    console.log(`✅ [${new Date().toISOString()}] Fetched EXACT live rate: ₹${baseRatePerGram.toFixed(2)}/gram (₹${baseRatePerKg}/kg, source: ${liveRate.source}, fetch time: ${fetchTime}ms, increase: ₹${silverIncrease.toFixed(2)})`);
     console.log(`📊 Raw source data: Ask=${liveRate.rawData?.ask || 'N/A'}, High=${liveRate.rawData?.high || 'N/A'}, RatePerKg=${baseRatePerKg}`);
     
     // Update all rates based on the live rate from endpoint
@@ -117,15 +139,24 @@ const updateRates = async (io) => {
         }
         // 99.9% uses base rate as-is
         
+        // Set normalPrice if not set
+        if (rate.normalPrice === null || rate.normalPrice === undefined) {
+          rate.normalPrice = ratePerGram;
+          console.log(`🔧 Set normalPrice for ${rate.name} to ₹${rate.normalPrice.toFixed(2)}/gram`);
+        }
+        
+        // Calculate adjusted price: normalPrice + silverIncrease
+        rate.ratePerGram = rate.normalPrice + silverIncrease;
+        
         // Apply manual per-gram adjustment set by admin (can be negative)
         // IMPORTANT: manualAdjustment is stored in MongoDB and persists across updates
         const manualAdj = (typeof rate.manualAdjustment === 'number') ? rate.manualAdjustment : 0;
-        // Calculate: base rate (from live source) + manual adjustment = final rate
-        rate.ratePerGram = ratePerGram + manualAdj; // No rounding - keep exact value
+        // Add manual adjustment
+        rate.ratePerGram += manualAdj;
         
         // Log adjustment application for debugging (only for first rate to avoid spam)
-        if (rate.name === rates[0]?.name && manualAdj !== 0) {
-          console.log(`💰 Applied adjustment: Base ₹${ratePerGram.toFixed(2)}/gram + Adjustment ₹${manualAdj.toFixed(2)}/gram = Final ₹${rate.ratePerGram.toFixed(2)}/gram`);
+        if (rate.name === rates[0]?.name) {
+          console.log(`💰 Applied adjustment: Normal ₹${rate.normalPrice.toFixed(2)}/gram + Increase ₹${silverIncrease.toFixed(2)} + Manual ₹${manualAdj.toFixed(2)}/gram = Final ₹${rate.ratePerGram.toFixed(2)}/gram`);
         }
         
         // Calculate total rate based on weight
