@@ -107,7 +107,7 @@ function AdminDashboardPage() {
         // Only log occasionally to avoid console spam (every 10 seconds)
         const now = Date.now();
         if (!fetchBaseRate.lastLogTime || now - fetchBaseRate.lastLogTime > 10000) {
-          console.log(`✅ Live base rate: ₹${response.data.baseRatePerGram.toFixed(2)}/gram (updating every second for Normal Price)`);
+          console.log(`✅ Live base rate: ₹${Number(response.data.baseRatePerGram || 0).toFixed(2)}/gram (updating every second for Normal Price)`);
           fetchBaseRate.lastLogTime = now;
         }
       }
@@ -862,12 +862,12 @@ function AdminDashboardPage() {
                           </TableCell>
                           <TableCell align="right">
                             <Typography variant="body2" sx={{ fontWeight: 600, color: colors.textPrimary }}>
-                              ₹{originalTotalPrice.toFixed(2)}
+                              ₹{Number(originalTotalPrice || 0).toFixed(2)}
                             </Typography>
                           </TableCell>
                           <TableCell align="right">
                             <Typography variant="body2" sx={{ fontWeight: 600, color: colors.textPrimary }}>
-                              ₹{originalRatePerGram.toFixed(2)}/gram
+                              ₹{Number(originalRatePerGram || 0).toFixed(2)}/gram
                             </Typography>
                           </TableCell>
                           <TableCell align="center">
@@ -905,10 +905,10 @@ function AdminDashboardPage() {
                         </TableCell>
                         <TableCell align="right">
                           <Typography variant="body2" sx={{ color: colors.textSecondary }}>
-                            ₹{originalTotalPrice.toFixed(2)}
+                            ₹{Number(originalTotalPrice || 0).toFixed(2)}
                           </Typography>
                           <Typography variant="caption" sx={{ color: colors.textSecondary, display: 'block' }}>
-                            ₹{originalRatePerGram.toFixed(2)}/gram
+                            ₹{Number(originalRatePerGram || 0).toFixed(2)}/gram
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
@@ -919,16 +919,16 @@ function AdminDashboardPage() {
                               color: adjustedPrice === 0 ? colors.error : (hasAdjustment ? (displayedAdjustment > 0 ? colors.success : colors.error) : colors.textPrimary)
                             }}
                           >
-                            ₹{adjustedPrice.toFixed(2)}
+                            ₹{Number(adjustedPrice || 0).toFixed(2)}
                           </Typography>
                           <Typography variant="caption" sx={{ color: adjustedPrice === 0 ? colors.error : colors.textSecondary, display: 'block' }}>
-                            ₹{adjustedRatePerGram.toFixed(2)}/gram
+                            ₹{Number(adjustedRatePerGram || 0).toFixed(2)}/gram
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
                           {hasAdjustment ? (
                             <Chip
-                              label={`${displayedAdjustment > 0 ? '+' : ''}₹${Math.abs(displayedAdjustment).toFixed(2)}/gram`}
+                              label={`${displayedAdjustment > 0 ? '+' : ''}₹${Number(Math.abs(displayedAdjustment) || 0).toFixed(2)}/gram`}
                               size="small"
                               sx={{
                                 backgroundColor: displayedAdjustment > 0 ? colors.success : colors.error,

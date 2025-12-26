@@ -253,7 +253,7 @@ function HomePage() {
   const formatPrice = (price) => {
     // Format without commas - show exact price
     // Use 2 decimal places but no comma separators
-    return `₹${price.toFixed(2)}`;
+    return `₹${Number(price || 0).toFixed(2)}`;
   };
 
   const formatWeight = (weight) => {
@@ -473,7 +473,7 @@ function HomePage() {
                               display: 'block',
                             }}
                           >
-                            ₹{rate.ratePerGram?.toFixed(2)}/gram
+                            ₹{Number(rate.ratePerGram || 0).toFixed(2)}/gram
                           </Typography>
                         </TableCell>
                       </TableRow>
