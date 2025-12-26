@@ -916,7 +916,7 @@ function AdminDashboardPage() {
                             variant="body2" 
                             sx={{ 
                               fontWeight: hasAdjustment ? 600 : 400,
-                              color: adjustedPrice === 0 ? colors.error : (hasAdjustment ? (adjustment > 0 ? colors.success : colors.error) : colors.textPrimary)
+                              color: adjustedPrice === 0 ? colors.error : (hasAdjustment ? (displayedAdjustment > 0 ? colors.success : colors.error) : colors.textPrimary)
                             }}
                           >
                             ₹{adjustedPrice.toFixed(2)}
@@ -928,10 +928,10 @@ function AdminDashboardPage() {
                         <TableCell align="right">
                           {hasAdjustment ? (
                             <Chip
-                              label={`${adjustment > 0 ? '+' : ''}₹${adjustment.toFixed(2)}/gram`}
+                              label={`${displayedAdjustment > 0 ? '+' : ''}₹${Math.abs(displayedAdjustment).toFixed(2)}/gram`}
                               size="small"
                               sx={{
-                                backgroundColor: adjustment > 0 ? colors.success : colors.error,
+                                backgroundColor: displayedAdjustment > 0 ? colors.success : colors.error,
                                 color: 'white',
                                 fontWeight: 600
                               }}
