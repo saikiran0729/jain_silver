@@ -496,16 +496,16 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       let actualPercentageChange = 0;
       
       if (isPercentage) {
-        // Calculate amount based on percentage of current effective rate
-        // This ensures percentage is calculated on the rate the user sees
-        adjustmentAmount = (currentEffectiveRate * amount) / 100;
+        // Calculate amount based on percentage of original rate (normal price)
+        // This ensures percentage is calculated on the base rate, not the adjusted rate
+        adjustmentAmount = (originalRatePerGram * amount) / 100;
         actualPercentageChange = amount;
       } else {
         // Use amount directly (additive to existing adjustment)
         adjustmentAmount = amount;
-        // Calculate percentage change based on current effective rate
-        actualPercentageChange = currentEffectiveRate > 0 
-          ? ((amount / currentEffectiveRate) * 100)
+        // Calculate percentage change based on original rate
+        actualPercentageChange = originalRatePerGram > 0 
+          ? ((amount / originalRatePerGram) * 100)
           : 0;
       }
       
