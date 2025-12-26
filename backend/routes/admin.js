@@ -644,13 +644,21 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       // New rate should be original rate + the new manual adjustment
       const newRatePerGram = Math.max(0, originalRatePerGram + newAdjustment);
 
-      // Update MongoDB with new adjustment (use the original name, not displayName)
+      // Calculate weight in grams for total rate
+      let weightInGrams = currentRate.weight?.value || 1;
+      if (currentRate.weight?.unit === 'kg') {
+        weightInGrams = weightInGrams * 1000;
+      }
+
+      // Update MongoDB with new adjustment and recalculated rates (use the original name, not displayName)
       bulkOps.push({
         updateOne: {
           filter: { name: rateName, location: 'Andhra Pradesh' },
           update: {
             $set: {
               manualAdjustment: newAdjustment,
+              ratePerGram: newRatePerGram,
+              rate: Math.max(0, newRatePerGram * weightInGrams),
               lastUpdated: new Date()
             }
           }
