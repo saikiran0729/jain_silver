@@ -588,31 +588,56 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       
       console.log(`✅ Found rate for adjustment: "${itemIdentifier}" → "${rateName}" (displayName: "${currentRate.displayName || 'none'}")`);
       
-      // IMPORTANT: ratePerGram in MongoDB already includes adjustments
-      // So: originalRatePerGram = currentRatePerGram - currentAdjustment
+      // Try to derive the ORIGINAL/base rate from live source so adjustments are always
+      // applied relative to the true base price. If fetching live base rate fails,
+      // fall back to computing originalRatePerGram = currentEffectiveRate - currentAdjustment.
       const currentEffectiveRate = currentRate.ratePerGram || 0; // This is what customers see
       const currentAdjustment = currentRate.manualAdjustment || 0;
-      // Calculate original rate by removing current adjustment
-      const originalRatePerGram = currentEffectiveRate - currentAdjustment;
+
+      let originalRatePerGram;
+      try {
+        // Use multi-source fetcher to get exact live base rate
+        const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
+        const live = await Promise.race([
+          fetchSilverRatesFromMultipleSources(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Rate fetch timeout')), 3000))
+        ]);
+        if (live && live.ratePerGram && live.ratePerGram > 0) {
+          // Adjust base for purity
+          if (currentRate.purity === '92.5%') {
+            originalRatePerGram = live.ratePerGram * 0.96;
+          } else if (currentRate.purity === '99.99%') {
+            originalRatePerGram = live.ratePerGram * 1.005;
+          } else {
+            originalRatePerGram = live.ratePerGram;
+          }
+        } else {
+          // fallback
+          originalRatePerGram = currentEffectiveRate - currentAdjustment;
+        }
+      } catch (err) {
+        // If live fetch fails, fall back to previous approach
+        console.warn(`⚠️ Could not fetch live base rate for adjustment lookup: ${err.message}`);
+        originalRatePerGram = currentEffectiveRate - currentAdjustment;
+      }
       
       let adjustmentAmount = 0;
       let actualPercentageChange = 0;
       
             if (isPercentage) {
-        // Calculate amount based on percentage of the ORIGINAL (actual) rate
-        // so adjustments are always relative to the base price and not compounded
-        adjustmentAmount = (originalRatePerGram * amount) / 100;
-        actualPercentageChange = amount;
-        // Overwrite previous manualAdjustment so new adjustment is always from original
-        // (i.e. manualAdjustment = percentage_of_original)
+              // Calculate amount based on percentage of the ORIGINAL (actual) rate
+              // so adjustments are always relative to the base price and not compounded
+              adjustmentAmount = (originalRatePerGram * amount) / 100;
+              actualPercentageChange = amount;
             } else {
-        // For absolute amount adjustments, treat the provided amount as the
-        // desired manual adjustment relative to the original price (overwrite).
-        adjustmentAmount = amount;
-        // Calculate percentage change relative to original rate for reporting
-        actualPercentageChange = originalRatePerGram > 0
-          ? ((amount / originalRatePerGram) * 100)
-          : 0;
+              // For absolute amount adjustments, treat the provided amount as the
+              // desired manual adjustment relative to the original price (overwrite).
+              // Admin-provided absolute amounts are taken as the target manualAdjustment
+              // (not additive). E.g., sending 4 sets manualAdjustment = 4 regardless of previous value.
+              adjustmentAmount = amount;
+              actualPercentageChange = originalRatePerGram > 0
+                ? ((amount / originalRatePerGram) * 100)
+                : 0;
             }
       }
 
