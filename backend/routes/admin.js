@@ -639,10 +639,11 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
           : 0;
       }
 
-      // Replace existing manualAdjustment with new adjustment (always relative to original price)
+      // CRITICAL: Replace existing manualAdjustment with new adjustment (always relative to original price)
       // This ensures each adjustment is independent and based on the base price, not cumulative
       // IMPORTANT: Do NOT add to currentAdjustment - replace it completely
-      const newAdjustment = adjustmentAmount; // Replace, not add (was: currentAdjustment + adjustmentAmount)
+      // The adjustmentAmount is the absolute value to store, NOT added to currentAdjustment
+      const newAdjustment = adjustmentAmount; // REPLACE previous adjustment, DO NOT add (was: currentAdjustment + adjustmentAmount)
       
       // CRITICAL: Log replacement logic to verify it's working
       console.log(`\n🔧🔧🔧 ADJUSTMENT REPLACEMENT LOGIC 🔧🔧🔧`);
@@ -650,8 +651,9 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       console.log(`Input amount: ${amount} (${adjustmentType})`);
       console.log(`Original base price: ₹${originalRatePerGram.toFixed(2)}/gram`);
       console.log(`Previous adjustment in DB: ₹${currentAdjustment.toFixed(2)}/gram`);
-      console.log(`NEW adjustment to store: ₹${newAdjustment.toFixed(2)}/gram (REPLACING previous, NOT adding)`);
-      console.log(`Calculated new price: ₹${(originalRatePerGram + newAdjustment).toFixed(2)}/gram`);
+      console.log(`NEW adjustment to store: ₹${newAdjustment.toFixed(2)}/gram (REPLACING previous ₹${currentAdjustment.toFixed(2)}, NOT adding)`);
+      console.log(`VERIFICATION: ${currentAdjustment.toFixed(2)} + ${adjustmentAmount.toFixed(2)} would be ${(currentAdjustment + adjustmentAmount).toFixed(2)}, but we are storing ${newAdjustment.toFixed(2)}`);
+      console.log(`Calculated new price: ₹${(originalRatePerGram + newAdjustment).toFixed(2)}/gram (Base ${originalRatePerGram.toFixed(2)} + Adjustment ${newAdjustment.toFixed(2)})`);
       console.log(`🔧🔧🔧 END ADJUSTMENT LOGIC 🔧🔧🔧\n`);
       
       // New rate should be original rate + the new manual adjustment
