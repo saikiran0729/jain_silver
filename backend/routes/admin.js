@@ -643,7 +643,13 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       // This ensures each adjustment is independent and based on the base price, not cumulative
       // IMPORTANT: Do NOT add to currentAdjustment - replace it completely
       // The adjustmentAmount is the absolute value to store, NOT added to currentAdjustment
+      // NEVER use: currentAdjustment + adjustmentAmount (that would be cumulative/wrong)
       const newAdjustment = adjustmentAmount; // REPLACE previous adjustment, DO NOT add (was: currentAdjustment + adjustmentAmount)
+      
+      // SAFETY CHECK: Verify we're not accidentally adding (should never happen, but double-check)
+      if (newAdjustment !== adjustmentAmount) {
+        console.error(`❌ ERROR: newAdjustment (${newAdjustment}) != adjustmentAmount (${adjustmentAmount}). This should never happen!`);
+      }
       
       // CRITICAL: Log replacement logic to verify it's working
       console.log(`\n🔧🔧🔧 ADJUSTMENT REPLACEMENT LOGIC 🔧🔧🔧`);

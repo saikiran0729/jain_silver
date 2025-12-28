@@ -184,10 +184,11 @@ All endpoints return consistent error responses:
 - Calculates percentage based on current effective rate (original rate + existing adjustments)
 - Example: `value: 5` with `adjustmentType: "percentage"` increases rates by 5% of current effective rate
 
-### Cumulative Adjustments
-- All adjustments are cumulative (additive)
-- New adjustment = Current adjustment + New adjustment amount
-- Final rate = Original rate + Total adjustment
+### Adjustment Behavior (REPLACEMENT, NOT CUMULATIVE)
+- Each adjustment REPLACES the previous adjustment (not cumulative)
+- New adjustment = Input amount (replaces previous adjustment in database)
+- Final rate = Original base rate + New adjustment (not Original + Old + New)
+- Example: Base ₹232, first adjustment +₹12 → ₹244, second adjustment +₹1 → ₹233 (NOT ₹245)
 
 ## Data Models
 
@@ -205,7 +206,7 @@ All endpoints return consistent error responses:
 - `rate`: Total rate for the product
 - `weight`: `{ value, unit }`
 - `purity`: Percentage string
-- `manualAdjustment`: Cumulative adjustment amount
+- `manualAdjustment`: Current adjustment amount (replaces previous, not cumulative)
 - `lastUpdated`: Timestamp
 
 ### News
