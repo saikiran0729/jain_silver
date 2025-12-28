@@ -624,23 +624,24 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       let adjustmentAmount = 0;
       let actualPercentageChange = 0;
       
-            if (isPercentage) {
-              // Calculate amount based on percentage of the ORIGINAL (actual) rate
-              // so adjustments are always relative to the base price and not compounded
-              adjustmentAmount = (originalRatePerGram * amount) / 100;
-              actualPercentageChange = amount;
-            } else {
-              // For absolute amount adjustments, add the provided amount to the current adjustment
-              // to make adjustments cumulative. E.g., sending 3 adds 3 to the current adjustment.
-              adjustmentAmount = amount;
-              actualPercentageChange = originalRatePerGram > 0
-                ? ((amount / originalRatePerGram) * 100)
-                : 0;
-            }
+      if (isPercentage) {
+        // Calculate amount based on percentage of the ORIGINAL (actual) rate
+        // so adjustments are always relative to the base price and not compounded
+        adjustmentAmount = (originalRatePerGram * amount) / 100;
+        actualPercentageChange = amount;
+      } else {
+        // For absolute amount adjustments, the provided amount replaces the current adjustment
+        // Each adjustment is always relative to the original/base price, not cumulative
+        // E.g., if base is ₹245, first adjustment +₹5 shows ₹250, then +₹1 shows ₹246 (not ₹251)
+        adjustmentAmount = amount;
+        actualPercentageChange = originalRatePerGram > 0
+          ? ((amount / originalRatePerGram) * 100)
+          : 0;
       }
 
-      // Add to existing manualAdjustment for cumulative adjustments
-      const newAdjustment = currentAdjustment + adjustmentAmount;
+      // Replace existing manualAdjustment with new adjustment (always relative to original price)
+      // This ensures each adjustment is independent and based on the base price, not cumulative
+      const newAdjustment = adjustmentAmount;
       // New rate should be original rate + the new manual adjustment
       const newRatePerGram = Math.max(0, originalRatePerGram + newAdjustment);
 
