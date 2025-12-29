@@ -142,18 +142,22 @@ function AdminDashboardPage() {
 
   const fetchRates = async (skipUpdate = false) => {
     try {
-      setLoadingRates(true);
-      console.log('📡 Fetching rates from /rates endpoint...', skipUpdate ? '(skipping update)' : '');
+      // Only show loading spinner on initial load, not during polling to avoid UI flickering
+      if (!rates || rates.length === 0) {
+        setLoadingRates(true);
+      }
+      console.log('📡 Fetching rates from /rates endpoint...', skipUpdate ? '(skipping update)' : '(allowing update)');
       
       // CRITICAL: Always fetch base rate FIRST to ensure Normal Price shows exact RB Gold prices
       // Fetch base rate before rates to ensure it's available when calculating Normal Price
       await fetchBaseRate();
       
-      // Use skipUpdate parameter to avoid waiting for slow external rate updates
-      // This prevents timeouts when admin adjusts rates and immediately fetches them
+      // When polling every second, use skipUpdate=false to allow backend to update rates
+      // This ensures adjustedPrice = normalPrice + silverDiff + manualAdjustment updates every second
+      // Use shorter timeout during polling to avoid blocking
       const response = await api.get('/rates', {
         params: { skipUpdate: skipUpdate ? 'true' : undefined },
-        timeout: 60000 // 60 seconds timeout for admin dashboard (increased from 30s)
+        timeout: skipUpdate ? 60000 : 5000 // 5 seconds during polling, 60s for manual refresh
       });
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
       // Update rates only if data changed to prevent unnecessary re-renders and UI flickering
