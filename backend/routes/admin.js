@@ -588,82 +588,76 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       
       console.log(`✅ Found rate for adjustment: "${itemIdentifier}" → "${rateName}" (displayName: "${currentRate.displayName || 'none'}")`);
       
-      // Try to derive the ORIGINAL/base rate from live source so adjustments are always
-      // applied relative to the true base price. If fetching live base rate fails,
-      // fall back to computing originalRatePerGram = currentEffectiveRate - currentAdjustment.
-      const currentEffectiveRate = currentRate.ratePerGram || 0; // This is what customers see
+      // CRITICAL: Use normalPrice directly (immutable base price)
+      // The manual adjustment is applied relative to normalPrice, not the current adjusted price
+      // This ensures: adjustedPrice = normalPrice + silverDiff + manualAdjustment
+      let normalPrice = currentRate.normalPrice;
       const currentAdjustment = currentRate.manualAdjustment || 0;
-
-      let originalRatePerGram;
-      try {
-        // Use multi-source fetcher to get exact live base rate
-        const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
-        const live = await Promise.race([
-          fetchSilverRatesFromMultipleSources(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Rate fetch timeout')), 3000))
-        ]);
-        if (live && live.ratePerGram && live.ratePerGram > 0) {
-          // Adjust base for purity
-          if (currentRate.purity === '92.5%') {
-            originalRatePerGram = live.ratePerGram * 0.96;
-          } else if (currentRate.purity === '99.99%') {
-            originalRatePerGram = live.ratePerGram * 1.005;
+      
+      // If normalPrice is not set, we need to calculate it from current rate
+      // But ideally, normalPrice should already be set by the rate updater
+      if (normalPrice === null || normalPrice === undefined || normalPrice <= 0) {
+        console.warn(`⚠️ normalPrice not set for ${rateName}, attempting to calculate from current rate...`);
+        // Try to get it from live source
+        try {
+          const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
+          const live = await Promise.race([
+            fetchSilverRatesFromMultipleSources(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Rate fetch timeout')), 3000))
+          ]);
+          if (live && live.ratePerGram && live.ratePerGram > 0) {
+            // Adjust base for purity
+            if (currentRate.purity === '92.5%') {
+              normalPrice = live.ratePerGram * 0.96;
+            } else if (currentRate.purity === '99.99%') {
+              normalPrice = live.ratePerGram * 1.005;
+            } else {
+              normalPrice = live.ratePerGram;
+            }
+            console.log(`✅ Calculated normalPrice for ${rateName}: ₹${normalPrice.toFixed(2)}/gram`);
           } else {
-            originalRatePerGram = live.ratePerGram;
+            // Last resort: use current ratePerGram - currentAdjustment (approximation)
+            normalPrice = (currentRate.ratePerGram || 0) - currentAdjustment;
+            console.warn(`⚠️ Using fallback normalPrice for ${rateName}: ₹${normalPrice.toFixed(2)}/gram`);
           }
-        } else {
-          // fallback
-          originalRatePerGram = currentEffectiveRate - currentAdjustment;
+        } catch (err) {
+          // Last resort fallback
+          normalPrice = (currentRate.ratePerGram || 0) - currentAdjustment;
+          console.warn(`⚠️ Could not fetch live rate, using fallback normalPrice for ${rateName}: ₹${normalPrice.toFixed(2)}/gram`);
         }
-      } catch (err) {
-        // If live fetch fails, fall back to previous approach
-        console.warn(`⚠️ Could not fetch live base rate for adjustment lookup: ${err.message}`);
-        originalRatePerGram = currentEffectiveRate - currentAdjustment;
       }
       
       let adjustmentAmount = 0;
       let actualPercentageChange = 0;
       
       if (isPercentage) {
-        // Calculate amount based on percentage of the ORIGINAL (actual) rate
-        // so adjustments are always relative to the base price and not compounded
-        adjustmentAmount = (originalRatePerGram * amount) / 100;
+        // Calculate amount based on percentage of normalPrice
+        adjustmentAmount = (normalPrice * amount) / 100;
         actualPercentageChange = amount;
       } else {
-        // For absolute amount adjustments, the provided amount replaces the current adjustment
-        // Each adjustment is always relative to the original/base price, not cumulative
-        // E.g., if base is ₹245, first adjustment +₹5 shows ₹250, then +₹1 shows ₹246 (not ₹251)
+        // For absolute amount adjustments, the provided amount IS the new adjustment (replaces previous)
+        // E.g., user enters +1 means manualAdjustment = +1 (replacing any previous adjustment)
         adjustmentAmount = amount;
-        actualPercentageChange = originalRatePerGram > 0
-          ? ((amount / originalRatePerGram) * 100)
+        actualPercentageChange = normalPrice > 0
+          ? ((amount / normalPrice) * 100)
           : 0;
       }
 
-      // CRITICAL: Replace existing manualAdjustment with new adjustment (always relative to original price)
-      // This ensures each adjustment is independent and based on the base price, not cumulative
-      // IMPORTANT: Do NOT add to currentAdjustment - replace it completely
-      // The adjustmentAmount is the absolute value to store, NOT added to currentAdjustment
-      // NEVER use: currentAdjustment + adjustmentAmount (that would be cumulative/wrong)
-      const newAdjustment = adjustmentAmount; // REPLACE previous adjustment, DO NOT add (was: currentAdjustment + adjustmentAmount)
-      
-      // SAFETY CHECK: Verify we're not accidentally adding (should never happen, but double-check)
-      if (newAdjustment !== adjustmentAmount) {
-        console.error(`❌ ERROR: newAdjustment (${newAdjustment}) != adjustmentAmount (${adjustmentAmount}). This should never happen!`);
-      }
+      // CRITICAL: The adjustmentAmount REPLACES the previous manualAdjustment
+      // This is the absolute value to store in the database
+      // When rate updater runs: adjustedPrice = normalPrice + silverDiff + adjustmentAmount
+      const newAdjustment = adjustmentAmount;
       
       // CRITICAL: Log replacement logic to verify it's working
       console.log(`\n🔧🔧🔧 ADJUSTMENT REPLACEMENT LOGIC 🔧🔧🔧`);
       console.log(`Product: ${rateName}`);
       console.log(`Input amount: ${amount} (${adjustmentType})`);
-      console.log(`Original base price: ₹${originalRatePerGram.toFixed(2)}/gram`);
+      console.log(`Normal price (base): ₹${normalPrice.toFixed(2)}/gram`);
       console.log(`Previous adjustment in DB: ₹${currentAdjustment.toFixed(2)}/gram`);
       console.log(`NEW adjustment to store: ₹${newAdjustment.toFixed(2)}/gram (REPLACING previous ₹${currentAdjustment.toFixed(2)}, NOT adding)`);
-      console.log(`VERIFICATION: ${currentAdjustment.toFixed(2)} + ${adjustmentAmount.toFixed(2)} would be ${(currentAdjustment + adjustmentAmount).toFixed(2)}, but we are storing ${newAdjustment.toFixed(2)}`);
-      console.log(`Calculated new price: ₹${(originalRatePerGram + newAdjustment).toFixed(2)}/gram (Base ${originalRatePerGram.toFixed(2)} + Adjustment ${newAdjustment.toFixed(2)})`);
+      console.log(`VERIFICATION: Previous (${currentAdjustment.toFixed(2)}) is being REPLACED by new (${newAdjustment.toFixed(2)}), NOT added`);
+      console.log(`Rate updater will calculate: adjustedPrice = normalPrice (${normalPrice.toFixed(2)}) + silverDiff + newAdjustment (${newAdjustment.toFixed(2)})`);
       console.log(`🔧🔧🔧 END ADJUSTMENT LOGIC 🔧🔧🔧\n`);
-      
-      // New rate should be original rate + the new manual adjustment
-      const newRatePerGram = Math.max(0, originalRatePerGram + newAdjustment);
 
       // Calculate weight in grams for total rate
       let weightInGrams = currentRate.weight?.value || 1;
@@ -692,10 +686,9 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       adjustments.push({
         itemName: rateName, // Use original name for consistency
         amount: adjustmentAmount,
-        originalRatePerGram: originalRatePerGram,
+        normalPrice: normalPrice,
         originalAdjustment: currentAdjustment,
         newAdjustment: newAdjustment,
-        newRatePerGram: newRatePerGram,
         percentageChange: parseFloat(actualPercentageChange.toFixed(2))
       });
     }
