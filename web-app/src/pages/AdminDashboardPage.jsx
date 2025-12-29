@@ -37,14 +37,22 @@ function AdminDashboardPage() {
   
   // Poll base rate every second to update Normal Price live (same as "Show As It Is")
   const baseRateIntervalRef = React.useRef(null);
+  // Poll rates every second to update Adjusted Price in real-time
+  const ratesIntervalRef = React.useRef(null);
   
   useEffect(() => {
     // Fetch immediately
     fetchBaseRate();
+    fetchRates(true); // Fetch rates immediately (skip update to avoid timeout)
     
     // Set up interval to fetch base rate every second for live Normal Price updates
     baseRateIntervalRef.current = setInterval(() => {
       fetchBaseRate();
+    }, 1000); // Update every second
+    
+    // Set up interval to fetch rates every second for live Adjusted Price updates
+    ratesIntervalRef.current = setInterval(() => {
+      fetchRates(true); // Use skipUpdate=true to avoid timeouts during polling
     }, 1000); // Update every second
     
     // Cleanup on unmount
@@ -52,6 +60,10 @@ function AdminDashboardPage() {
       if (baseRateIntervalRef.current) {
         clearInterval(baseRateIntervalRef.current);
         baseRateIntervalRef.current = null;
+      }
+      if (ratesIntervalRef.current) {
+        clearInterval(ratesIntervalRef.current);
+        ratesIntervalRef.current = null;
       }
     };
   }, []);
