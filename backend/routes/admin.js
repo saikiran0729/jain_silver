@@ -670,59 +670,36 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       let adjustedPrice = normalPrice + newAdjustment;
       let ratePerGram = adjustedPrice;
       
-      // Try to get current market rate to calculate silverDiff
-      try {
-        const SilverPriceTracker = require('../models/SilverPriceTracker');
-        const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
-        
-        // Get base silver price
-        let baseSilverPrice = await SilverPriceTracker.getOrCreateBasePrice('Andhra Pradesh');
-        if (!baseSilverPrice) {
-          // If not set, fetch current rate and set it as base
-          const live = await Promise.race([
-            fetchSilverRatesFromMultipleSources(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Rate fetch timeout')), 3000))
-          ]);
-          if (live && live.ratePerGram && live.ratePerGram > 0) {
-            await SilverPriceTracker.setBasePriceIfNotExists(live.ratePerGram, 'Andhra Pradesh');
-            baseSilverPrice = live.ratePerGram;
-          }
+      // Calculate silverDiff if we have market rate data (fetched once before loop)
+      if (currentMarketRatePerGram && baseSilverPrice) {
+        // Calculate current rate per gram for this product (with purity adjustment)
+        let currentMarketRateForPurity = currentMarketRatePerGram;
+        if (currentRate.purity === '92.5%') {
+          currentMarketRateForPurity = currentMarketRatePerGram * 0.96;
+        } else if (currentRate.purity === '99.99%') {
+          currentMarketRateForPurity = currentMarketRatePerGram * 1.005;
         }
         
-        // Get current market rate
-        const live = await Promise.race([
-          fetchSilverRatesFromMultipleSources(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Rate fetch timeout')), 2000))
-        ]);
-        
-        if (live && live.ratePerGram && live.ratePerGram > 0 && baseSilverPrice) {
-          // Calculate current rate per gram for this product (with purity adjustment)
-          let currentMarketRatePerGram = live.ratePerGram;
-          if (currentRate.purity === '92.5%') {
-            currentMarketRatePerGram = live.ratePerGram * 0.96;
-          } else if (currentRate.purity === '99.99%') {
-            currentMarketRatePerGram = live.ratePerGram * 1.005;
-          }
-          
-          // Calculate silverDiff = currentMarketRate - baseSilverPrice (adjusted for purity)
-          let baseMarketRateForPurity = baseSilverPrice;
-          if (currentRate.purity === '92.5%') {
-            baseMarketRateForPurity = baseSilverPrice * 0.96;
-          } else if (currentRate.purity === '99.99%') {
-            baseMarketRateForPurity = baseSilverPrice * 1.005;
-          }
-          
-          const silverDiff = currentMarketRatePerGram - baseMarketRateForPurity;
-          
-          // Calculate adjustedPrice = normalPrice + silverDiff + newAdjustment
-          adjustedPrice = normalPrice + silverDiff + newAdjustment;
-          ratePerGram = Math.max(0, adjustedPrice);
-          
-          console.log(`💰 Immediate recalculation for ${rateName}: Normal ₹${normalPrice.toFixed(2)} + Market Diff ₹${silverDiff.toFixed(2)} + Adjustment ₹${newAdjustment.toFixed(2)} = Adjusted ₹${adjustedPrice.toFixed(2)}`);
+        // Calculate base market rate for this purity
+        let baseMarketRateForPurity = baseSilverPrice;
+        if (currentRate.purity === '92.5%') {
+          baseMarketRateForPurity = baseSilverPrice * 0.96;
+        } else if (currentRate.purity === '99.99%') {
+          baseMarketRateForPurity = baseSilverPrice * 1.005;
         }
-      } catch (err) {
-        // If market rate fetch fails, just use normalPrice + adjustment (no market diff)
-        console.warn(`⚠️ Could not fetch current market rate for immediate recalculation: ${err.message}`);
+        
+        // Calculate silverDiff = currentMarketRate - baseMarketRate (adjusted for purity)
+        silverDiff = currentMarketRateForPurity - baseMarketRateForPurity;
+        
+        // Calculate adjustedPrice = normalPrice + silverDiff + newAdjustment
+        adjustedPrice = normalPrice + silverDiff + newAdjustment;
+        ratePerGram = Math.max(0, adjustedPrice);
+        
+        if (rateName === rateNames[0]) { // Log only for first rate to avoid spam
+          console.log(`💰 Immediate recalculation: Normal ₹${normalPrice.toFixed(2)} + Market Diff ₹${silverDiff.toFixed(2)} + Adjustment ₹${newAdjustment.toFixed(2)} = Adjusted ₹${adjustedPrice.toFixed(2)}`);
+        }
+      } else {
+        // If market rate data not available, just use normalPrice + adjustment (no market diff)
         adjustedPrice = normalPrice + newAdjustment;
         ratePerGram = Math.max(0, adjustedPrice);
       }
