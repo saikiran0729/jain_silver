@@ -1109,12 +1109,15 @@ router.get('/', async (req, res) => {
           
           // If rates are stale (older than 1 second), trigger update.
           // Since mobile app polls every second, this ensures rates update every second.
-          // Skip this if skipUpdate is true (for admin dashboard).
-          // On Vercel, trigger non-blocking update. On other platforms, wait for update.
-          if (!skipUpdate && mongoAge > STALE_THRESHOLD) {
+          // On Vercel, always trigger non-blocking update (even with skipUpdate) to keep rates fresh
+          // This ensures adjustedPrice = normalPrice + silverDiff + manualAdjustment updates every second
+          if (mongoAge > STALE_THRESHOLD) {
             if (process.env.VERCEL) {
-              // On Vercel, trigger non-blocking update (fire and forget)
-              console.log(`🔄 Rates are stale (${Math.round(mongoAge/1000)}s old), triggering non-blocking update on Vercel...`);
+              // On Vercel, trigger non-blocking update (fire and forget) even if skipUpdate=true
+              // This ensures rates update every second for real-time adjusted prices
+              if (!skipUpdate) {
+                console.log(`🔄 Rates are stale (${Math.round(mongoAge/1000)}s old), triggering non-blocking update on Vercel...`);
+              }
               updateRatesHandler(req, null).catch(err => {
                 console.error('❌ Background rate update failed:', err.message);
               });

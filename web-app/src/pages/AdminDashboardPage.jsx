@@ -37,14 +37,25 @@ function AdminDashboardPage() {
   
   // Poll base rate every second to update Normal Price live (same as "Show As It Is")
   const baseRateIntervalRef = React.useRef(null);
+  // Poll rates every second to update Adjusted Price according to market changes + manual adjustments
+  const ratesIntervalRef = React.useRef(null);
   
   useEffect(() => {
     // Fetch immediately
     fetchBaseRate();
+    fetchRates(false); // Don't skip update - let backend trigger updates for fresh adjusted prices
     
     // Set up interval to fetch base rate every second for live Normal Price updates
     baseRateIntervalRef.current = setInterval(() => {
       fetchBaseRate();
+    }, 1000); // Update every second
+    
+    // Set up interval to fetch rates every second for live Adjusted Price updates
+    // This ensures adjusted prices update every second: normalPrice + silverDiff + manualAdjustment
+    ratesIntervalRef.current = setInterval(() => {
+      // Use skipUpdate=false to allow backend to trigger rate updates for fresh adjusted prices
+      // But use a short timeout to avoid blocking the UI
+      fetchRates(false);
     }, 1000); // Update every second
     
     // Cleanup on unmount
@@ -52,6 +63,10 @@ function AdminDashboardPage() {
       if (baseRateIntervalRef.current) {
         clearInterval(baseRateIntervalRef.current);
         baseRateIntervalRef.current = null;
+      }
+      if (ratesIntervalRef.current) {
+        clearInterval(ratesIntervalRef.current);
+        ratesIntervalRef.current = null;
       }
     };
   }, []);
@@ -141,12 +156,22 @@ function AdminDashboardPage() {
         timeout: 60000 // 60 seconds timeout for admin dashboard (increased from 30s)
       });
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
-      setRates(response.data || []);
+      // Update rates only if data changed to prevent unnecessary re-renders and UI flickering
+      setRates(prevRates => {
+        const newRates = response.data || [];
+        // Only update if rates actually changed (compare first rate's adjustedPrice)
+        if (prevRates.length === 0 || 
+            !prevRates[0] || 
+            prevRates[0].adjustedPrice !== newRates[0]?.adjustedPrice ||
+            prevRates[0].ratePerGram !== newRates[0]?.ratePerGram) {
+          return newRates;
+        }
+        return prevRates; // No change, keep previous rates to avoid re-render
+      });
       
       // CRITICAL: Ensure base rate is available for Normal Price calculation
       // Re-fetch if not available to ensure Normal Price shows exact RB Gold prices
-      if (!baseRateFromSource || !baseRateFromSource.baseRatePerGram) {
-        console.warn('⚠️ Base rate not available after fetching rates, re-fetching...');
+      if (!baseRateFromSource || !baseRateFromSource.baseRatePerGram) {console.warn('⚠️ Base rate not available after fetching rates, re-fetching...');
         const baseRate = await fetchBaseRate();
         if (baseRate && baseRate.baseRatePerGram) {
           console.log(`✅ Base rate now available: ₹${baseRate.baseRatePerGram}/gram (exact RB Gold price)`);
