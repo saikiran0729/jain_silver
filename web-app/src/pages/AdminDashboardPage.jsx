@@ -244,7 +244,10 @@ function AdminDashboardPage() {
         setRates([]);
       }
     } finally {
-      setLoadingRates(false);
+      // Only hide loading spinner if not polling (to prevent flickering during automatic updates)
+      if (!isPolling) {
+        setLoadingRates(false);
+      }
     }
   };
 
