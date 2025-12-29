@@ -159,7 +159,7 @@ function AdminDashboardPage() {
       // Use longer timeout for skipUpdate=false (manual refresh that triggers full update)
       const response = await api.get('/rates', {
         params: { skipUpdate: skipUpdate ? 'true' : undefined },
-        timeout: skipUpdate ? 10000 : 60000 // 10 seconds for polling (fast), 60s for manual refresh (full update)
+        timeout: skipUpdate ? 15000 : 60000 // 15 seconds for polling (allows time for MongoDB read), 60s for manual refresh (full update)
       });
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
       // Update rates only if data actually changed to prevent unnecessary re-renders and UI flickering
@@ -201,16 +201,27 @@ function AdminDashboardPage() {
         console.log(`✅ Base rate available for Normal Price: ₹${baseRateFromSource.baseRatePerGram}/gram (exact RB Gold price)`);
       }
     } catch (error) {
-      console.error('❌ Error fetching rates:', error);
-      console.error('Error message:', error.message);
-      console.error('Error code:', error.code);
-      console.error('Error response status:', error.response?.status);
-      console.error('Error response statusText:', error.response?.statusText);
-      console.error('Error response data:', JSON.stringify(error.response?.data, null, 2));
-      console.error('Error config URL:', error.config?.url);
-      console.error('Error config baseURL:', error.config?.baseURL);
-      
       const errorMsg = error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to fetch rates';
+      
+      // During polling, only log warnings (not errors) to prevent console spam
+      if (isPolling) {
+        if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+          console.warn('⏱️ Request timeout during polling - will retry on next poll');
+        } else {
+          console.warn(`⚠️ Error during polling: ${errorMsg} - will retry on next poll`);
+        }
+        // Don't log full error details during polling to prevent console spam
+      } else {
+        // Only log full error details for manual refreshes
+        console.error('❌ Error fetching rates:', error);
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+        console.error('Error response status:', error.response?.status);
+        console.error('Error response statusText:', error.response?.statusText);
+        console.error('Error response data:', JSON.stringify(error.response?.data, null, 2));
+        console.error('Error config URL:', error.config?.url);
+        console.error('Error config baseURL:', error.config?.baseURL);
+      }
       
       // Handle different error types - only show alerts for manual refreshes, not during polling
       if (!isPolling) {
@@ -230,14 +241,8 @@ function AdminDashboardPage() {
           console.warn(`⚠️ Failed to fetch rates: ${errorMsg}`);
           alert(`Failed to fetch rates: ${errorMsg}`);
         }
-      } else {
-        // During polling, just log warnings without alerts
-        if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-          console.warn('⏱️ Request timeout during polling - will retry on next poll');
-        } else {
-          console.warn(`⚠️ Error during polling: ${errorMsg} - will retry on next poll`);
-        }
       }
+      // During polling, errors are already logged above as warnings (no alerts)
       
       // Don't clear rates on polling errors - keep showing last known rates
       if (!isPolling) {
