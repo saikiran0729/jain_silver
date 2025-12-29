@@ -671,15 +671,17 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
         weightInGrams = weightInGrams * 1000;
       }
 
-      // Update MongoDB with new adjustment and recalculated rates (use the original name, not displayName)
+      // Update MongoDB with new adjustment
+      // NOTE: Do NOT set ratePerGram or adjustedPrice here - let the rate updater handle it
+      // The rate updater will calculate: adjustedPrice = normalPrice + silverDiff + newAdjustment
+      // This ensures prices update correctly every second
       bulkOps.push({
         updateOne: {
           filter: { name: rateName, location: 'Andhra Pradesh' },
           update: {
             $set: {
               manualAdjustment: newAdjustment,
-              ratePerGram: newRatePerGram,
-              rate: Math.max(0, newRatePerGram * weightInGrams),
+              // Don't set ratePerGram here - rate updater will recalculate it
               lastUpdated: new Date()
             }
           }
