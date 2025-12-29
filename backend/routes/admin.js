@@ -665,43 +665,17 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
         weightInGrams = weightInGrams * 1000;
       }
 
-      // CRITICAL: Recalculate adjustedPrice immediately using current market rate
+      // CRITICAL: Calculate adjustedPrice immediately
       // Formula: adjustedPrice = normalPrice + silverDiff + newAdjustment
-      let adjustedPrice = normalPrice + newAdjustment;
-      let ratePerGram = adjustedPrice;
+      // Note: silverDiff will be calculated by rate updater every second
+      // For immediate update, we'll use a simplified calculation that the rate updater will correct
+      // The rate updater runs every second and will recalculate correctly with: normalPrice + silverDiff + manualAdjustment
+      let adjustedPrice = normalPrice + newAdjustment; // Simplified for immediate update
+      let ratePerGram = Math.max(0, adjustedPrice);
       
-      // Calculate silverDiff if we have market rate data (fetched once before loop)
-      if (currentMarketRatePerGram && baseSilverPrice) {
-        // Calculate current rate per gram for this product (with purity adjustment)
-        let currentMarketRateForPurity = currentMarketRatePerGram;
-        if (currentRate.purity === '92.5%') {
-          currentMarketRateForPurity = currentMarketRatePerGram * 0.96;
-        } else if (currentRate.purity === '99.99%') {
-          currentMarketRateForPurity = currentMarketRatePerGram * 1.005;
-        }
-        
-        // Calculate base market rate for this purity
-        let baseMarketRateForPurity = baseSilverPrice;
-        if (currentRate.purity === '92.5%') {
-          baseMarketRateForPurity = baseSilverPrice * 0.96;
-        } else if (currentRate.purity === '99.99%') {
-          baseMarketRateForPurity = baseSilverPrice * 1.005;
-        }
-        
-        // Calculate silverDiff = currentMarketRate - baseMarketRate (adjusted for purity)
-        silverDiff = currentMarketRateForPurity - baseMarketRateForPurity;
-        
-        // Calculate adjustedPrice = normalPrice + silverDiff + newAdjustment
-        adjustedPrice = normalPrice + silverDiff + newAdjustment;
-        ratePerGram = Math.max(0, adjustedPrice);
-        
-        if (rateName === rateNames[0]) { // Log only for first rate to avoid spam
-          console.log(`💰 Immediate recalculation: Normal ₹${normalPrice.toFixed(2)} + Market Diff ₹${silverDiff.toFixed(2)} + Adjustment ₹${newAdjustment.toFixed(2)} = Adjusted ₹${adjustedPrice.toFixed(2)}`);
-        }
-      } else {
-        // If market rate data not available, just use normalPrice + adjustment (no market diff)
-        adjustedPrice = normalPrice + newAdjustment;
-        ratePerGram = Math.max(0, adjustedPrice);
+      // Log the immediate update (rate updater will recalculate with silverDiff every second)
+      if (modified === 0) { // Log only for first rate to avoid spam
+        console.log(`💰 Immediate update: Normal ₹${normalPrice.toFixed(2)} + Adjustment ₹${newAdjustment.toFixed(2)} = Adjusted ₹${adjustedPrice.toFixed(2)} (rate updater will add silverDiff every second)`);
       }
 
       // Update MongoDB with new adjustment AND immediately recalculated adjustedPrice
