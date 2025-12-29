@@ -43,7 +43,7 @@ function AdminDashboardPage() {
   useEffect(() => {
     // Fetch immediately
     fetchBaseRate();
-    fetchRates(false); // Don't skip update - let backend trigger updates for fresh adjusted prices
+    fetchRates(true); // Use skipUpdate=true for fast initial load (backend will update in background)
     
     // Set up interval to fetch base rate every second for live Normal Price updates
     baseRateIntervalRef.current = setInterval(() => {
@@ -51,11 +51,11 @@ function AdminDashboardPage() {
     }, 1000); // Update every second
     
     // Set up interval to fetch rates every second for live Adjusted Price updates
-    // This ensures adjusted prices update every second: normalPrice + silverDiff + manualAdjustment
+    // Use skipUpdate=true for fast polling (backend triggers updates in background on Vercel)
+    // This ensures adjusted prices update every second: normalPrice + manualAdjustment
     ratesIntervalRef.current = setInterval(() => {
-      // Use skipUpdate=false to allow backend to trigger rate updates for fresh adjusted prices
-      // But use a short timeout to avoid blocking the UI
-      fetchRates(false);
+      // Use skipUpdate=true for fast polling - backend will trigger updates in background
+      fetchRates(true);
     }, 1000); // Update every second
     
     // Cleanup on unmount
@@ -140,7 +140,7 @@ function AdminDashboardPage() {
     }
   };
 
-  const fetchRates = async (skipUpdate = false) => {
+  const fetchRates = async (skipUpdate = true) => {
     try {
       // Only show loading spinner on initial load, not during polling to avoid UI flickering
       if (!rates || rates.length === 0) {
@@ -152,12 +152,12 @@ function AdminDashboardPage() {
       // Fetch base rate before rates to ensure it's available when calculating Normal Price
       await fetchBaseRate();
       
-      // When polling every second, use skipUpdate=false to allow backend to update rates
-      // This ensures adjustedPrice = normalPrice + silverDiff + manualAdjustment updates every second
-      // Use shorter timeout during polling to avoid blocking
+      // Use skipUpdate=true for fast polling (just read from MongoDB)
+      // Backend will trigger updates in background on Vercel even when skipUpdate=true
+      // Use longer timeout for skipUpdate=false (manual refresh that triggers full update)
       const response = await api.get('/rates', {
         params: { skipUpdate: skipUpdate ? 'true' : undefined },
-        timeout: skipUpdate ? 60000 : 5000 // 5 seconds during polling, 60s for manual refresh
+        timeout: skipUpdate ? 10000 : 60000 // 10 seconds for polling (fast), 60s for manual refresh (full update)
       });
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
       // Update rates only if data changed to prevent unnecessary re-renders and UI flickering
@@ -770,7 +770,7 @@ function AdminDashboardPage() {
         <CardContent>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
             <Typography variant="h6" sx={{ fontWeight: 700 }}>Current Silver Rates</Typography>
-            <Button size="small" onClick={() => fetchRates(true)} disabled={loadingRates}>
+            <Button size="small" onClick={() => fetchRates(false)} disabled={loadingRates}>
               Refresh
             </Button>
           </Box>
