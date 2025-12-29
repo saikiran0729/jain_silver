@@ -1110,7 +1110,7 @@ router.get('/', async (req, res) => {
           // If rates are stale (older than 1 second), trigger update.
           // Since mobile app polls every second, this ensures rates update every second.
           // On Vercel, always trigger non-blocking update (even with skipUpdate) to keep rates fresh
-          // This ensures adjustedPrice = normalPrice + silverDiff + manualAdjustment updates every second
+          // This ensures adjustedPrice = normalPrice (current market rate) + manualAdjustment updates every second
           if (mongoAge > STALE_THRESHOLD) {
             if (process.env.VERCEL) {
               // On Vercel, trigger non-blocking update (fire and forget) even if skipUpdate=true
@@ -1798,12 +1798,8 @@ const updateRatesHandler = async (req, res = null) => {
       }
     }
     
-    // Calculate difference from base silver price (for adjusting normalPrice)
-    // Adjusted price = normalPrice + silverDiff + manualAdjustment
-    const silverDiff = baseRatePerGram - baseSilverPrice;
-    
     // ALWAYS log MongoDB update (critical for debugging)
-    console.log(`💾 Updating MongoDB with LIVE base rate: ₹${baseRatePerGram.toFixed(2)}/gram (₹${baseRatePerKg}/kg, diff from base: ₹${silverDiff.toFixed(2)})`);
+    console.log(`💾 Updating MongoDB with LIVE base rate: ₹${baseRatePerGram.toFixed(2)}/gram (₹${baseRatePerKg}/kg)`);
     const rateDefinitions = [
       { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
       { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
@@ -1871,7 +1867,7 @@ const updateRatesHandler = async (req, res = null) => {
       
       // Log adjustment application for first rate (to verify adjustments are being applied)
       if (rateDef.name === rateDefinitions[0]?.name) {
-        console.log(`💰 updateRatesHandler: Normal ₹${normalPrice.toFixed(2)}/gram + Market Diff ₹${silverDiff.toFixed(2)} + Manual ₹${manualAdjustment.toFixed(2)}/gram = Adjusted ₹${adjustedPrice.toFixed(2)}/gram`);
+        console.log(`💰 updateRatesHandler: Normal ₹${normalPrice.toFixed(2)}/gram (current market rate) + Manual ₹${manualAdjustment.toFixed(2)}/gram = Adjusted ₹${adjustedPrice.toFixed(2)}/gram`);
       }
 
       let weightInGrams = rateDef.weight.value;
