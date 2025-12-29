@@ -94,17 +94,24 @@ const updateRates = async (io) => {
     
     // Get or set baseSilverPrice using SilverPriceTracker collection
     let baseSilverPrice = null;
+    let previousMarketRate = null;
+    let tracker = null;
     try {
-      baseSilverPrice = await SilverPriceTracker.getOrCreateBasePrice('Andhra Pradesh');
+      tracker = await SilverPriceTracker.getTracker('Andhra Pradesh');
+      if (tracker) {
+        baseSilverPrice = tracker.baseSilverPrice;
+        previousMarketRate = tracker.previousMarketRate || baseSilverPrice;
+      }
     } catch (err) {
-      console.warn('Could not fetch baseSilverPrice from tracker:', err.message);
+      console.warn('Could not fetch tracker:', err.message);
     }
     
     if (baseSilverPrice === null) {
       // Set baseSilverPrice to current baseRatePerGram (stored once only)
       try {
-        await SilverPriceTracker.setBasePriceIfNotExists(baseRatePerGram, 'Andhra Pradesh');
+        tracker = await SilverPriceTracker.setBasePriceIfNotExists(baseRatePerGram, 'Andhra Pradesh');
         baseSilverPrice = baseRatePerGram;
+        previousMarketRate = baseRatePerGram; // First time, previous = current
         console.log(`🔧 Set baseSilverPrice to ₹${baseSilverPrice.toFixed(2)}/gram`);
       } catch (err) {
         console.error('Could not set baseSilverPrice:', err.message);
@@ -112,11 +119,23 @@ const updateRates = async (io) => {
       }
     }
     
-    const silverDiff = baseRatePerGram - baseSilverPrice;
+    // Calculate the change in market rate since last update (for continuous tracking)
+    // If previousMarketRate is null, use baseSilverPrice as fallback
+    const marketRateChange = baseRatePerGram - (previousMarketRate || baseSilverPrice);
+    
+    // Update previous market rate for next iteration
+    try {
+      await SilverPriceTracker.updatePreviousMarketRate(baseRatePerGram, 'Andhra Pradesh');
+    } catch (err) {
+      console.warn('Could not update previous market rate:', err.message);
+    }
+    
+    // Use marketRateChange for continuous price tracking
+    const silverDiff = marketRateChange;
     
     // Log every successful fetch (with timestamp for accuracy)
     const fetchTime = Date.now() - startTime;
-    console.log(`✅ [${new Date().toISOString()}] Fetched EXACT live rate: ₹${baseRatePerGram.toFixed(2)}/gram (₹${baseRatePerKg}/kg, source: ${liveRate.source}, fetch time: ${fetchTime}ms, diff: ₹${silverDiff.toFixed(2)})`);
+    console.log(`✅ [${new Date().toISOString()}] Fetched EXACT live rate: ₹${baseRatePerGram.toFixed(2)}/gram (₹${baseRatePerKg}/kg, source: ${liveRate.source}, fetch time: ${fetchTime}ms, change: ₹${silverDiff.toFixed(2)}, previous: ₹${(previousMarketRate || baseSilverPrice).toFixed(2)})`);
     console.log(`📊 Raw source data: Ask=${liveRate.rawData?.ask || 'N/A'}, High=${liveRate.rawData?.high || 'N/A'}, RatePerKg=${baseRatePerKg}`);
     
     // Update all rates based on the live rate from endpoint
@@ -149,22 +168,32 @@ const updateRates = async (io) => {
           console.log(`🔧 Set normalPrice for ${rate.name} to ₹${rate.normalPrice.toFixed(2)}/gram`);
         }
         
-        // Calculate adjusted price: normalPrice + silverDiff (NO accumulation)
-        rate.adjustedPrice = rate.normalPrice + silverDiff + (rate.manualAdjustment || 0);
-        
-        // Keep ratePerGram for backward compatibility (can be adjustedPrice or base rate)
-        rate.ratePerGram = rate.adjustedPrice;
-        
-        // Apply manual per-gram adjustment set by admin (can be negative)
-        // IMPORTANT: manualAdjustment is stored in MongoDB and persists across updates
+        // Get manual adjustment (can be negative)
         const manualAdj = (typeof rate.manualAdjustment === 'number') ? rate.manualAdjustment : 0;
-        // Add manual adjustment to adjustedPrice
-    
-        rate.ratePerGram = rate.adjustedPrice; // Update ratePerGram to match
+        
+        // CRITICAL: Use LAST adjustedPrice as base for continuous updates
+        // If adjustedPrice exists, use it as the base (accumulates changes)
+        // If not, initialize it from normalPrice + current silverDiff + manualAdjustment
+        const oldAdjustedPrice = rate.adjustedPrice; // Store old value for logging
+        
+        // Determine base price for calculation (last adjustedPrice or normalPrice)
+        const basePrice = (rate.adjustedPrice !== null && rate.adjustedPrice !== undefined && rate.adjustedPrice > 0) 
+          ? rate.adjustedPrice 
+          : rate.normalPrice;
+        
+        // Calculate new adjusted price: basePrice + current market change + manualAdjustment
+        // This ensures prices accumulate/increase properly every second based on market movements
+        // On first run: adjustedPrice = normalPrice + silverDiff + manualAdj
+        // On subsequent runs: adjustedPrice = lastAdjustedPrice + silverDiff + manualAdj
+        rate.adjustedPrice = basePrice + silverDiff + manualAdj;
+        
+        // Keep ratePerGram in sync with adjustedPrice
+        rate.ratePerGram = rate.adjustedPrice;
         
         // Log adjustment application for debugging (only for first rate to avoid spam)
         if (rate.name === rates[0]?.name) {
-          console.log(`💰 Applied adjustment: Normal ₹${rate.normalPrice.toFixed(2)}/gram + Diff ₹${silverDiff.toFixed(2)} + Manual ₹${manualAdj.toFixed(2)}/gram = Adjusted ₹${rate.adjustedPrice.toFixed(2)}/gram`);
+          const priceSource = (oldAdjustedPrice !== null && oldAdjustedPrice !== undefined && oldAdjustedPrice > 0) ? 'last adjusted' : 'normal';
+          console.log(`💰 Applied adjustment: Base ₹${basePrice.toFixed(2)}/gram (${priceSource}, normal: ₹${rate.normalPrice.toFixed(2)}) + Market Change ₹${silverDiff.toFixed(2)} + Manual ₹${manualAdj.toFixed(2)}/gram = New Adjusted ₹${rate.adjustedPrice.toFixed(2)}/gram`);
         }
         
         // Calculate total rate based on weight
@@ -186,7 +215,7 @@ const updateRates = async (io) => {
           await rate.save();
           // Log successful save (only for first rate to avoid spam)
           if (rate.name === rates[0]?.name) {
-            console.log(`💾 Saved to MongoDB: ${rate.name} = ₹${rate.adjustedPrice}/gram (normal: ₹${rate.normalPrice}, diff: ₹${silverDiff.toFixed(2)})`);
+            console.log(`💾 Saved to MongoDB: ${rate.name} = ₹${rate.adjustedPrice.toFixed(2)}/gram (base: ₹${basePrice.toFixed(2)}, normal: ₹${rate.normalPrice.toFixed(2)}, market change: ₹${silverDiff.toFixed(2)})`);
           }
         } catch (saveError) {
           console.error(`❌ Failed to save ${rate.name} to MongoDB:`, saveError.message);

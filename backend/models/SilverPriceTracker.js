@@ -22,6 +22,11 @@ const silverPriceTrackerSchema = new mongoose.Schema({
   lastUpdated: {
     type: Date,
     default: Date.now
+  },
+  // Previous market rate (for calculating changes between updates)
+  previousMarketRate: {
+    type: Number,
+    default: null
   }
 }, {
   timestamps: true
@@ -50,6 +55,7 @@ silverPriceTrackerSchema.statics.setBasePriceIfNotExists = async function(baseSi
   if (!existing) {
     const tracker = new this({
       baseSilverPrice,
+      previousMarketRate: baseSilverPrice, // Initialize previous rate to base price
       location,
       firstSetAt: new Date(),
       lastUpdated: new Date()
@@ -62,6 +68,22 @@ silverPriceTrackerSchema.statics.setBasePriceIfNotExists = async function(baseSi
   // Base price already exists, don't update
   console.log(`ℹ️ Base silver price already set to ₹${existing.baseSilverPrice} for ${location}`);
   return existing;
+};
+
+// Static method to get tracker with previous market rate
+silverPriceTrackerSchema.statics.getTracker = async function(location = 'Andhra Pradesh') {
+  return await this.findOne({ location });
+};
+
+// Static method to update previous market rate
+silverPriceTrackerSchema.statics.updatePreviousMarketRate = async function(currentRate, location = 'Andhra Pradesh') {
+  const tracker = await this.findOne({ location });
+  if (tracker) {
+    tracker.previousMarketRate = currentRate;
+    tracker.lastUpdated = new Date();
+    await tracker.save();
+  }
+  return tracker;
 };
 
 module.exports = mongoose.model('SilverPriceTracker', silverPriceTrackerSchema);
