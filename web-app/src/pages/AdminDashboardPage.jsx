@@ -45,20 +45,19 @@ function AdminDashboardPage() {
     fetchBaseRate();
     fetchRates(true); // Use skipUpdate=true for fast initial load (backend will update in background)
     
-    // Set up interval to fetch base rate every 5 seconds for live Normal Price updates
-    // Reduced from 1 second to prevent UI flickering while still keeping prices updated
+    // Set up interval to fetch base rate every second for live Normal Price updates
     baseRateIntervalRef.current = setInterval(() => {
       fetchBaseRate();
-    }, 5000); // Update every 5 seconds
+    }, 1000); // Update every second
     
-    // Set up interval to fetch rates every 5 seconds for live Adjusted Price updates
+    // Set up interval to fetch rates every second for live Adjusted Price updates
     // Use skipUpdate=true for fast polling (backend triggers updates in background on Vercel)
-    // Reduced from 1 second to prevent UI flickering while still keeping adjusted prices updated
+    // Optimized to update smoothly without causing UI flickering
     ratesIntervalRef.current = setInterval(() => {
       // Use skipUpdate=true for fast polling - backend will trigger updates in background
       // Pass isPolling=true to suppress error alerts during automatic polling
       fetchRates(true, true);
-    }, 5000); // Update every 5 seconds (reduced from 1 second to prevent flickering)
+    }, 1000); // Update every second
     
     // Cleanup on unmount
     return () => {
@@ -144,10 +143,11 @@ function AdminDashboardPage() {
 
   const fetchRates = async (skipUpdate = true, isPolling = false) => {
     try {
-      // Only show loading spinner on initial load, not during polling to avoid UI flickering
+      // Only show loading spinner on initial load, never during polling to avoid UI flickering
       if (!rates || rates.length === 0) {
         setLoadingRates(true);
       }
+      // CRITICAL: Never set loadingRates=true during polling to prevent UI flickering
       console.log('📡 Fetching rates from /rates endpoint...', skipUpdate ? '(skipping update)' : '(allowing update)');
       
       // CRITICAL: Always fetch base rate FIRST to ensure Normal Price shows exact RB Gold prices
@@ -162,17 +162,30 @@ function AdminDashboardPage() {
         timeout: skipUpdate ? 10000 : 60000 // 10 seconds for polling (fast), 60s for manual refresh (full update)
       });
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
-      // Update rates only if data changed to prevent unnecessary re-renders and UI flickering
+      // Update rates only if data actually changed to prevent unnecessary re-renders and UI flickering
       setRates(prevRates => {
         const newRates = response.data || [];
-        // Only update if rates actually changed (compare first rate's adjustedPrice)
-        if (prevRates.length === 0 || 
-            !prevRates[0] || 
-            prevRates[0].adjustedPrice !== newRates[0]?.adjustedPrice ||
-            prevRates[0].ratePerGram !== newRates[0]?.ratePerGram) {
+        // Compare all rates to detect any changes in adjustedPrice or ratePerGram
+        // This ensures we only update state when prices actually change
+        if (prevRates.length === 0 || prevRates.length !== newRates.length) {
           return newRates;
         }
-        return prevRates; // No change, keep previous rates to avoid re-render
+        
+        // Check if any rate's price has changed
+        const hasChanges = newRates.some((newRate, index) => {
+          const prevRate = prevRates[index];
+          if (!prevRate) return true;
+          // Compare key price fields that affect display
+          return (
+            prevRate.adjustedPrice !== newRate.adjustedPrice ||
+            prevRate.ratePerGram !== newRate.ratePerGram ||
+            prevRate.normalPrice !== newRate.normalPrice ||
+            prevRate.rate !== newRate.rate
+          );
+        });
+        
+        // Only update if prices actually changed
+        return hasChanges ? newRates : prevRates;
       });
       
       // CRITICAL: Ensure base rate is available for Normal Price calculation
