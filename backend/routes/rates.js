@@ -1771,8 +1771,33 @@ const updateRatesHandler = async (req, res = null) => {
     const baseRatePerGram = liveRate.ratePerGram;
     const baseRatePerKg = liveRate.ratePerKg; // Use exact value from source
     
+    // Get or set baseSilverPrice using SilverPriceTracker collection
+    const SilverPriceTracker = require('../models/SilverPriceTracker');
+    let baseSilverPrice = null;
+    try {
+      baseSilverPrice = await SilverPriceTracker.getOrCreateBasePrice('Andhra Pradesh');
+    } catch (err) {
+      console.warn('Could not fetch baseSilverPrice from tracker:', err.message);
+    }
+    
+    if (baseSilverPrice === null) {
+      // Set baseSilverPrice to current baseRatePerGram (stored once only)
+      try {
+        await SilverPriceTracker.setBasePriceIfNotExists(baseRatePerGram, 'Andhra Pradesh');
+        baseSilverPrice = baseRatePerGram;
+        console.log(`🔧 Set baseSilverPrice to ₹${baseSilverPrice.toFixed(2)}/gram`);
+      } catch (err) {
+        console.error('Could not set baseSilverPrice:', err.message);
+        baseSilverPrice = baseRatePerGram; // Use current rate as fallback
+      }
+    }
+    
+    // Calculate difference from base silver price (for adjusting normalPrice)
+    // Adjusted price = normalPrice + silverDiff + manualAdjustment
+    const silverDiff = baseRatePerGram - baseSilverPrice;
+    
     // ALWAYS log MongoDB update (critical for debugging)
-    console.log(`💾 Updating MongoDB with LIVE base rate: ₹${baseRatePerGram.toFixed(2)}/gram (₹${baseRatePerKg}/kg)`);
+    console.log(`💾 Updating MongoDB with LIVE base rate: ₹${baseRatePerGram.toFixed(2)}/gram (₹${baseRatePerKg}/kg, diff from base: ₹${silverDiff.toFixed(2)})`);
     const rateDefinitions = [
       { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
       { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
@@ -1786,40 +1811,54 @@ const updateRatesHandler = async (req, res = null) => {
       { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
     ];
 
-    // Fetch current manual adjustments from MongoDB
-    let adjustmentsMap = {};
+    // Fetch existing rates from MongoDB to get normalPrice and manualAdjustment
+    let existingRatesMap = {};
     try {
       const existingRates = await SilverRate.find({ 
         location: 'Andhra Pradesh',
         name: { $in: rateDefinitions.map(r => r.name) }
-      }).select('name manualAdjustment');
+      });
       
       existingRates.forEach(rate => {
-        adjustmentsMap[rate.name] = rate.manualAdjustment || 0;
+        existingRatesMap[rate.name] = {
+          normalPrice: rate.normalPrice,
+          manualAdjustment: rate.manualAdjustment || 0
+        };
       });
-    } catch (adjError) {
-      console.warn('Could not fetch manual adjustments from MongoDB, using defaults:', adjError.message);
+    } catch (fetchError) {
+      console.warn('Could not fetch existing rates from MongoDB, using defaults:', fetchError.message);
     }
 
     let updatedCount = 0;
     // Use bulk write for faster MongoDB updates (more efficient than individual updates)
     const bulkOps = rateDefinitions.map((rateDef) => {
-      let ratePerGram = baseRatePerGram;
+      // Calculate rate per gram based on purity
+      let ratePerGramForPurity = baseRatePerGram;
       if (rateDef.purity === '92.5%') {
-        ratePerGram = baseRatePerGram * 0.96;
+        ratePerGramForPurity = baseRatePerGram * 0.96;
       } else if (rateDef.purity === '99.99%') {
-        ratePerGram = baseRatePerGram * 1.005;
+        ratePerGramForPurity = baseRatePerGram * 1.005;
       }
-
-      // Get manual adjustment from MongoDB (not in-memory)
-      // IMPORTANT: manualAdjustment persists in MongoDB and is applied to live rates every second
-      const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
-      ratePerGram = ratePerGram + manualAdjustment;
-      ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
+      
+      // Get existing rate data (normalPrice and manualAdjustment)
+      const existingRate = existingRatesMap[rateDef.name] || {};
+      const manualAdjustment = existingRate.manualAdjustment || 0;
+      
+      // Get or set normalPrice (immutable base price)
+      // If normalPrice doesn't exist, use current purity-adjusted rate as normalPrice
+      let normalPrice = existingRate.normalPrice;
+      if (normalPrice === null || normalPrice === undefined) {
+        normalPrice = rateDef.name.includes('236') ? 236 : ratePerGramForPurity;
+      }
+      
+      // CRITICAL: Calculate adjustedPrice = normalPrice + silverDiff + manualAdjustment
+      // This ensures prices update correctly every second based on normalPrice, not accumulating incorrectly
+      const adjustedPrice = normalPrice + silverDiff + manualAdjustment;
+      const ratePerGram = Math.max(0, adjustedPrice); // Ensure non-negative
       
       // Log adjustment application for first rate (to verify adjustments are being applied)
-      if (rateDef.name === rateDefinitions[0]?.name && manualAdjustment !== 0) {
-        console.log(`💰 updateRatesHandler: Applied adjustment ₹${manualAdjustment.toFixed(2)}/gram to ${rateDef.name}`);
+      if (rateDef.name === rateDefinitions[0]?.name) {
+        console.log(`💰 updateRatesHandler: Normal ₹${normalPrice.toFixed(2)}/gram + Market Diff ₹${silverDiff.toFixed(2)} + Manual ₹${manualAdjustment.toFixed(2)}/gram = Adjusted ₹${adjustedPrice.toFixed(2)}/gram`);
       }
 
       let weightInGrams = rateDef.weight.value;
@@ -1842,6 +1881,8 @@ const updateRatesHandler = async (req, res = null) => {
               purity: rateDef.purity,
               ratePerGram: ratePerGram,
               rate: totalRate,
+              normalPrice: normalPrice,
+              adjustedPrice: adjustedPrice,
               lastUpdated: new Date(),
               location: 'Andhra Pradesh',
               unit: 'INR',
@@ -1889,20 +1930,16 @@ const updateRatesHandler = async (req, res = null) => {
       // Log first rate for verification
       if (rateDefinitions.length > 0) {
         const firstRate = rateDefinitions[0];
-        let firstRatePerGram = baseRatePerGram;
-        if (firstRate.purity === '92.5%') {
-          firstRatePerGram = baseRatePerGram * 0.96;
-        } else if (firstRate.purity === '99.99%') {
-          firstRatePerGram = baseRatePerGram * 1.005;
-        }
-        const manualAdj = adjustmentsMap[firstRate.name] || 0;
-        firstRatePerGram = firstRatePerGram + manualAdj;
+        const existingFirstRate = existingRatesMap[firstRate.name] || {};
+        const firstNormalPrice = existingFirstRate.normalPrice || baseRatePerGram;
+        const firstManualAdj = existingFirstRate.manualAdjustment || 0;
+        const firstAdjustedPrice = firstNormalPrice + silverDiff + firstManualAdj;
         let weightInGrams = firstRate.weight.value;
         if (firstRate.weight.unit === 'kg') {
           weightInGrams = firstRate.weight.value * 1000;
         }
-        const totalRate = Math.round(firstRatePerGram * weightInGrams * 100) / 100;
-        console.log(`✅ Sample update: ${firstRate.name} = ₹${firstRatePerGram.toFixed(2)}/gram (₹${totalRate}/total) from base ₹${baseRatePerGram.toFixed(2)}/gram`);
+        const totalRate = firstAdjustedPrice * weightInGrams;
+        console.log(`✅ Sample update: ${firstRate.name} = ₹${firstAdjustedPrice.toFixed(2)}/gram (₹${totalRate.toFixed(2)}/total, normal: ₹${firstNormalPrice.toFixed(2)}, diff: ₹${silverDiff.toFixed(2)}, manual: ₹${firstManualAdj.toFixed(2)})`);
       }
     } catch (bulkErr) {
       console.error('❌ Bulk update failed, falling back to individual updates:', bulkErr.message);
