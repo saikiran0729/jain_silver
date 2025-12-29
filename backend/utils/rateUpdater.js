@@ -144,29 +144,30 @@ const updateRates = async (io) => {
         }
         // 99.9% uses base rate as-is
         
-        // Set normalPrice if not set (immutable base price)
-        if (rate.normalPrice === null || rate.normalPrice === undefined) {
-          // For products with normalPrice = 236, set it once
-          // For other products, use the current base rate as normalPrice
-          rate.normalPrice = rate.name.includes('236') ? 236 : ratePerGram;
-          console.log(`🔧 Set normalPrice for ${rate.name} to ₹${rate.normalPrice.toFixed(2)}/gram`);
+        // CRITICAL: normalPrice should ALWAYS be the current market rate (updates every second)
+        // This ensures that when normalPrice increases/decreases, adjustedPrice also increases/decreases accordingly
+        // Set normalPrice to current market rate for this purity level
+        const previousNormalPrice = rate.normalPrice;
+        rate.normalPrice = rate.name.includes('236') ? 236 : ratePerGram;
+        
+        // If this is the first time, log it
+        if (previousNormalPrice === null || previousNormalPrice === undefined) {
+          console.log(`🔧 Set normalPrice for ${rate.name} to ₹${rate.normalPrice.toFixed(2)}/gram (current market rate)`);
         }
         
         // Get manual adjustment (can be negative) - this REPLACES previous adjustment, not cumulative
         const manualAdj = (typeof rate.manualAdjustment === 'number') ? rate.manualAdjustment : 0;
         
-        // CRITICAL: ALWAYS use normalPrice as base (never use last adjustedPrice)
-        // Adjusted price = normalPrice + market difference + latest manual adjustment
-        // Every second, recalculate from normalPrice + current silverDiff + manualAdjustment
-        // This ensures prices update correctly every second based on normalPrice, not accumulating incorrectly
-        rate.adjustedPrice = rate.normalPrice + silverDiff + manualAdj;
+        // CRITICAL: Calculate adjustedPrice = normalPrice (current market rate) + manualAdjustment
+        // When normalPrice increases by ₹1, adjustedPrice also increases by ₹1 (keeping manualAdjustment constant)
+        rate.adjustedPrice = rate.normalPrice + manualAdj;
         
         // Keep ratePerGram in sync with adjustedPrice
         rate.ratePerGram = rate.adjustedPrice;
         
         // Log adjustment application for debugging (only for first rate to avoid spam)
         if (rate.name === rates[0]?.name) {
-          console.log(`💰 Applied adjustment: Normal ₹${rate.normalPrice.toFixed(2)}/gram + Market Diff ₹${silverDiff.toFixed(2)} + Manual ₹${manualAdj.toFixed(2)}/gram = Adjusted ₹${rate.adjustedPrice.toFixed(2)}/gram`);
+          console.log(`💰 Applied adjustment: Normal ₹${rate.normalPrice.toFixed(2)}/gram (current market rate) + Manual ₹${manualAdj.toFixed(2)}/gram = Adjusted ₹${rate.adjustedPrice.toFixed(2)}/gram`);
         }
         
         // Calculate total rate based on weight

@@ -1850,16 +1850,23 @@ const updateRatesHandler = async (req, res = null) => {
       const existingRate = existingRatesMap[rateDef.name] || {};
       const manualAdjustment = existingRate.manualAdjustment || 0;
       
-      // Get or set normalPrice (immutable base price)
-      // If normalPrice doesn't exist, use current purity-adjusted rate as normalPrice
-      let normalPrice = existingRate.normalPrice;
-      if (normalPrice === null || normalPrice === undefined) {
+      // CRITICAL: normalPrice should ALWAYS be the current market rate (updates every second)
+      // This ensures that when normalPrice increases/decreases, adjustedPrice also increases/decreases accordingly
+      // Set normalPrice to current market rate for this purity level
+      let normalPrice = ratePerGramForPurity;
+      
+      // If this is the first time (normalPrice doesn't exist), use current rate
+      // Otherwise, always update normalPrice to current market rate
+      if (existingRate.normalPrice === null || existingRate.normalPrice === undefined) {
         normalPrice = rateDef.name.includes('236') ? 236 : ratePerGramForPurity;
+      } else {
+        // Always update normalPrice to current market rate
+        normalPrice = ratePerGramForPurity;
       }
       
-      // CRITICAL: Calculate adjustedPrice = normalPrice + silverDiff + manualAdjustment
-      // This ensures prices update correctly every second based on normalPrice, not accumulating incorrectly
-      const adjustedPrice = normalPrice + silverDiff + manualAdjustment;
+      // CRITICAL: Calculate adjustedPrice = normalPrice (current market rate) + manualAdjustment
+      // When normalPrice increases by ₹1, adjustedPrice also increases by ₹1 (keeping manualAdjustment constant)
+      const adjustedPrice = normalPrice + manualAdjustment;
       const ratePerGram = Math.max(0, adjustedPrice); // Ensure non-negative
       
       // Log adjustment application for first rate (to verify adjustments are being applied)
