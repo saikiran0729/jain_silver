@@ -875,7 +875,9 @@ router.get('/', async (req, res) => {
             return res.json(ratesWithUSD);
           }
           
-          // If rates are very stale OR contain old 99.9% rates, trigger update
+        }
+        
+        // If rates are very stale OR contain old 99.9% rates, trigger update
           // On Vercel, trigger non-blocking update. On other platforms, wait for update.
           if (mongoAge > VERY_STALE_THRESHOLD || hasOld99_9Rates) {
             if (process.env.VERCEL) {
