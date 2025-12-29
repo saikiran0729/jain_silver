@@ -1962,15 +1962,23 @@ const updateRatesHandler = async (req, res = null) => {
       // Fallback to individual updates if bulk write fails
       const updatePromises = rateDefinitions.map(async (rateDef) => {
         try {
-          let ratePerGram = baseRatePerGram;
+          // Calculate rate per gram based on purity
+          let ratePerGramForPurity = baseRatePerGram;
           if (rateDef.purity === '92.5%') {
-            ratePerGram = baseRatePerGram * 0.96;
+            ratePerGramForPurity = baseRatePerGram * 0.96;
           } else if (rateDef.purity === '99.99%') {
-            ratePerGram = baseRatePerGram * 1.005;
+            ratePerGramForPurity = baseRatePerGram * 1.005;
           }
           
-          const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
-          ratePerGram = ratePerGram + manualAdjustment;
+          // Get existing rate data
+          const existingRate = existingRatesMap[rateDef.name] || {};
+          const manualAdjustment = existingRate.manualAdjustment || 0;
+          
+          // CRITICAL: normalPrice = current market rate (updates every second)
+          const normalPrice = rateDef.name.includes('236') ? 236 : ratePerGramForPurity;
+          
+          // CRITICAL: adjustedPrice = normalPrice + manualAdjustment
+          let ratePerGram = normalPrice + manualAdjustment;
           ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
 
           let weightInGrams = rateDef.weight.value;
