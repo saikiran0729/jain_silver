@@ -628,7 +628,7 @@ router.get('/', async (req, res) => {
         }
       }
       
-        if (mongoose.connection.readyState === 1) {
+      if (mongoose.connection.readyState === 1) {
         // Fetch ALL products from MongoDB (including disabled ones) - no filter on isVisible
         // CRITICAL: Do NOT filter by isVisible here - admin needs to see all products
         let mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' })
@@ -1460,34 +1460,35 @@ router.get('/', async (req, res) => {
             }
             
             return res.json(ratesWithUSD);
-        } else {
-          console.warn('⚠️ No rates found in MongoDB, triggering update...');
-          // If no rates exist, try to update immediately
-          try {
-            await updateRatesHandler(req, res);
-            // After update, fetch again
-            const updatedRates = await SilverRate.find({ location: 'Andhra Pradesh' })
-              .sort({ name: 1 })
-              .lean();
-            if (updatedRates && updatedRates.length > 0) {
-              const ratesWithUSD = updatedRates.map(rate => ({
-                ...rate,
-                usdInrRate: cachedBaseRate.usdInrRate || 89.25
-              }));
-              res.set({
-                'Cache-Control': 'no-cache, no-store, must-revalidate',
-                'Pragma': 'no-cache',
-                'Expires': '0'
-              });
-              return res.json(ratesWithUSD);
+          } else {
+            console.warn('⚠️ No rates found in MongoDB, triggering update...');
+            // If no rates exist, try to update immediately
+            try {
+              await updateRatesHandler(req, res);
+              // After update, fetch again
+              const updatedRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+                .sort({ name: 1 })
+                .lean();
+              if (updatedRates && updatedRates.length > 0) {
+                const ratesWithUSD = updatedRates.map(rate => ({
+                  ...rate,
+                  usdInrRate: cachedBaseRate.usdInrRate || 89.25
+                }));
+                res.set({
+                  'Cache-Control': 'no-cache, no-store, must-revalidate',
+                  'Pragma': 'no-cache',
+                  'Expires': '0'
+                });
+                return res.json(ratesWithUSD);
+              }
+            } catch (updateErr) {
+              console.error('Update failed:', updateErr.message);
             }
-          } catch (updateErr) {
-            console.error('Update failed:', updateErr.message);
+            console.warn('⚠️ Falling back to cache');
           }
-          console.warn('⚠️ Falling back to cache');
+        } else {
+          console.warn('⚠️ MongoDB not connected, falling back to cache');
         }
-      } else {
-        console.warn('⚠️ MongoDB not connected, falling back to cache');
       }
     } catch (mongoErr) {
       console.error('❌ MongoDB read failed:', mongoErr.message);
