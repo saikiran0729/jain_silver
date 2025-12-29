@@ -55,7 +55,8 @@ function AdminDashboardPage() {
     // This ensures adjusted prices update every second: normalPrice + manualAdjustment
     ratesIntervalRef.current = setInterval(() => {
       // Use skipUpdate=true for fast polling - backend will trigger updates in background
-      fetchRates(true);
+      // Pass isPolling=true to suppress error alerts during automatic polling
+      fetchRates(true, true);
     }, 1000); // Update every second
     
     // Cleanup on unmount
@@ -140,7 +141,7 @@ function AdminDashboardPage() {
     }
   };
 
-  const fetchRates = async (skipUpdate = true) => {
+  const fetchRates = async (skipUpdate = true, isPolling = false) => {
     try {
       // Only show loading spinner on initial load, not during polling to avoid UI flickering
       if (!rates || rates.length === 0) {
@@ -197,26 +198,37 @@ function AdminDashboardPage() {
       
       const errorMsg = error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to fetch rates';
       
-      // Handle different error types
-      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-        console.warn('⏱️ Request timeout - rates endpoint may be slow');
-        alert('Request timeout. The rates endpoint may be slow. Please try again.');
-      } else if (!error.response) {
-        console.warn('🌐 Network error - check if server is running');
-        alert(`Network error: ${error.message}. Please check your internet connection and try again.`);
-      } else if (error.response?.status === 503) {
-        console.warn('⚠️ Service temporarily unavailable - rate update in progress');
-        alert('Rates are being updated. Please wait a moment and try again.');
-      } else if (error.response?.status === 500) {
-        console.warn('⚠️ Server error');
-        alert(`Server error: ${errorMsg}. Please try again later.`);
+      // Handle different error types - only show alerts for manual refreshes, not during polling
+      if (!isPolling) {
+        if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+          console.warn('⏱️ Request timeout - rates endpoint may be slow');
+          alert('Request timeout. The rates endpoint may be slow. Please try again.');
+        } else if (!error.response) {
+          console.warn('🌐 Network error - check if server is running');
+          alert(`Network error: ${error.message}. Please check your internet connection and try again.`);
+        } else if (error.response?.status === 503) {
+          console.warn('⚠️ Service temporarily unavailable - rate update in progress');
+          alert('Rates are being updated. Please wait a moment and try again.');
+        } else if (error.response?.status === 500) {
+          console.warn('⚠️ Server error');
+          alert(`Server error: ${errorMsg}. Please try again later.`);
+        } else {
+          console.warn(`⚠️ Failed to fetch rates: ${errorMsg}`);
+          alert(`Failed to fetch rates: ${errorMsg}`);
+        }
       } else {
-        console.warn(`⚠️ Failed to fetch rates: ${errorMsg}`);
-        alert(`Failed to fetch rates: ${errorMsg}`);
+        // During polling, just log warnings without alerts
+        if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+          console.warn('⏱️ Request timeout during polling - will retry on next poll');
+        } else {
+          console.warn(`⚠️ Error during polling: ${errorMsg} - will retry on next poll`);
+        }
       }
       
-      // Set empty array on error to prevent UI issues
-      setRates([]);
+      // Don't clear rates on polling errors - keep showing last known rates
+      if (!isPolling) {
+        setRates([]);
+      }
     } finally {
       setLoadingRates(false);
     }
