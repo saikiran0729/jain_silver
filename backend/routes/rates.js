@@ -1940,15 +1940,22 @@ const updateRatesHandler = async (req, res = null) => {
       if (rateDefinitions.length > 0) {
         const firstRate = rateDefinitions[0];
         const existingFirstRate = existingRatesMap[firstRate.name] || {};
-        const firstNormalPrice = existingFirstRate.normalPrice || baseRatePerGram;
+        // Use current market rate as normalPrice (updates every second)
+        let firstRatePerGramForPurity = baseRatePerGram;
+        if (firstRate.purity === '92.5%') {
+          firstRatePerGramForPurity = baseRatePerGram * 0.96;
+        } else if (firstRate.purity === '99.99%') {
+          firstRatePerGramForPurity = baseRatePerGram * 1.005;
+        }
+        const firstNormalPrice = firstRatePerGramForPurity; // Current market rate
         const firstManualAdj = existingFirstRate.manualAdjustment || 0;
-        const firstAdjustedPrice = firstNormalPrice + silverDiff + firstManualAdj;
+        const firstAdjustedPrice = firstNormalPrice + firstManualAdj;
         let weightInGrams = firstRate.weight.value;
         if (firstRate.weight.unit === 'kg') {
           weightInGrams = firstRate.weight.value * 1000;
         }
         const totalRate = firstAdjustedPrice * weightInGrams;
-        console.log(`✅ Sample update: ${firstRate.name} = ₹${firstAdjustedPrice.toFixed(2)}/gram (₹${totalRate.toFixed(2)}/total, normal: ₹${firstNormalPrice.toFixed(2)}, diff: ₹${silverDiff.toFixed(2)}, manual: ₹${firstManualAdj.toFixed(2)})`);
+        console.log(`✅ Sample update: ${firstRate.name} = ₹${firstAdjustedPrice.toFixed(2)}/gram (₹${totalRate.toFixed(2)}/total, normal: ₹${firstNormalPrice.toFixed(2)}, manual: ₹${firstManualAdj.toFixed(2)})`);
       }
     } catch (bulkErr) {
       console.error('❌ Bulk update failed, falling back to individual updates:', bulkErr.message);
