@@ -1998,6 +1998,8 @@ const updateRatesHandler = async (req, res = null) => {
                 purity: rateDef.purity,
                 ratePerGram: ratePerGram,
                 rate: totalRate,
+                normalPrice: normalPrice,
+                adjustedPrice: ratePerGram,
                 lastUpdated: new Date(),
                 location: 'Andhra Pradesh',
                 unit: 'INR',
