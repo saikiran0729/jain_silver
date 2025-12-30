@@ -148,7 +148,10 @@ function AdminDashboardPage() {
       if (!rates || rates.length === 0) {
         setLoadingRates(true);
       }
-      // CRITICAL: Never set loadingRates=true during polling to prevent UI flickering
+      // Only set loading on initial fetch, not during polling
+      if (!skipUpdate || rates.length === 0) {
+        setLoadingRates(true);
+      }
       console.log('📡 Fetching rates from /rates endpoint...', skipUpdate ? '(skipping update)' : '(allowing update)');
       
       // CRITICAL: Always fetch base rate FIRST to ensure Normal Price shows exact RB Gold prices
@@ -163,6 +166,7 @@ function AdminDashboardPage() {
         timeout: skipUpdate ? 15000 : 60000 // 15 seconds for polling (allows time for MongoDB read), 60s for manual refresh (full update)
       });
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
+      setLoadingRates(false); // Always clear loading after successful fetch
       // Update rates only if data actually changed to prevent unnecessary re-renders and UI flickering
       setRates(prevRates => {
         const newRates = response.data || [];
@@ -222,20 +226,18 @@ function AdminDashboardPage() {
           const adjustedRatePerGram = originalRatePerGram + manualAdjustment;
           const adjustedPrice = Math.max(0, adjustedRatePerGram * weightInGrams);
           
-          if (!prevRate) {
-            hasChanges = true;
-            updatedPrevRates[rateKey] = {
-              adjustedPrice: adjustedPrice,
-              adjustedRatePerGram: adjustedRatePerGram,
-              originalTotalPrice: originalTotalPrice,
-              originalRatePerGram: originalRatePerGram
-            };
-            return;
-          }
+          // Get previous calculated values from previousRates state
+          const prevCalculated = previousRates[rateKey] || {};
+          const prevOriginalTotalPrice = prevCalculated.originalTotalPrice || 0;
+          const prevAdjustedPrice = prevCalculated.adjustedPrice || 0;
           
-          // Get previous calculated values
-          const prevOriginalTotalPrice = prevRate.originalTotalPrice || 0;
-          const prevAdjustedPrice = prevRate.adjustedPrice || 0;
+          // Always update the calculated values in previousRates
+          updatedPrevRates[rateKey] = {
+            adjustedPrice: adjustedPrice,
+            adjustedRatePerGram: adjustedRatePerGram,
+            originalTotalPrice: originalTotalPrice,
+            originalRatePerGram: originalRatePerGram
+          };
           
           // Check if prices changed (compare calculated values)
           const priceChanged = (
@@ -243,18 +245,15 @@ function AdminDashboardPage() {
             Math.abs(prevAdjustedPrice - adjustedPrice) > 0.01
           );
           
-          if (priceChanged) {
+          if (priceChanged && prevCalculated.originalTotalPrice !== undefined) {
             hasChanges = true;
-            // Update previous rates with new calculated values
+            // Store old values for animation
             updatedPrevRates[rateKey] = {
-              adjustedPrice: adjustedPrice,
-              adjustedRatePerGram: adjustedRatePerGram,
-              originalTotalPrice: originalTotalPrice,
-              originalRatePerGram: originalRatePerGram,
-              oldAdjustedPrice: prevRate.adjustedPrice || 0,
-              oldAdjustedRatePerGram: prevRate.adjustedRatePerGram || 0,
-              oldOriginalTotalPrice: prevRate.originalTotalPrice || 0,
-              oldOriginalRatePerGram: prevRate.originalRatePerGram || 0,
+              ...updatedPrevRates[rateKey],
+              oldAdjustedPrice: prevCalculated.adjustedPrice || 0,
+              oldAdjustedRatePerGram: prevCalculated.adjustedRatePerGram || 0,
+              oldOriginalTotalPrice: prevCalculated.originalTotalPrice || 0,
+              oldOriginalRatePerGram: prevCalculated.originalRatePerGram || 0,
               timestamp: Date.now()
             };
             
@@ -275,13 +274,12 @@ function AdminDashboardPage() {
           }
         });
         
-        // Update previous rates state
-        if (hasChanges) {
-          setPreviousRates(updatedPrevRates);
-        }
+        // Always update previous rates state with current calculated values
+        setPreviousRates(updatedPrevRates);
         
-        // Only update if prices actually changed
-        return hasChanges ? newRates : prevRates;
+        // Always return new rates to ensure prices are displayed
+        // The comparison was preventing updates when it shouldn't
+        return newRates;
       });
       
       // CRITICAL: Ensure base rate is available for Normal Price calculation
@@ -345,8 +343,9 @@ function AdminDashboardPage() {
         setRates([]);
       }
     } finally {
-      // Only hide loading spinner if not polling (to prevent flickering during automatic updates)
-      if (!isPolling) {
+      // Always clear loading state after fetch completes (success or error)
+      // But only if we don't have rates yet (to prevent flickering during polling)
+      if (rates.length === 0 || !isPolling) {
         setLoadingRates(false);
       }
     }
@@ -904,7 +903,7 @@ function AdminDashboardPage() {
               Refresh
             </Button>
           </Box>
-          {loadingRates ? (
+          {loadingRates && rates.length === 0 ? (
             <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
               <CircularProgress size={24} />
             </Box>
