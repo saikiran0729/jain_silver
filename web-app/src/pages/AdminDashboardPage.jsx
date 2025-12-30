@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Box, Card, CardContent, Typography, Button, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Chip, Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Tabs, Tab, CircularProgress, MenuItem, Select, FormControl, InputLabel, Grid, IconButton, TextareaAutosize, Accordion, AccordionSummary, AccordionDetails, Checkbox, FormControlLabel, Switch } from '@mui/material';
-import { Logout, CheckCircle, Cancel, Visibility, Remove, Add, Edit, Delete, Delete as DeleteIcon, Add as AddIcon, Newspaper, Person, Store, RestartAlt, ExpandMore } from '@mui/icons-material';
+import { Logout, CheckCircle, Cancel, Visibility, Remove, Add, Edit, Delete, Delete as DeleteIcon, Add as AddIcon, Newspaper, Person, Store, RestartAlt, ExpandMore, TrendingUp, TrendingDown } from '@mui/icons-material';
 import { AuthContext } from '../context/AuthContext';
 import api from '../config/api';
 import colors from '../theme/colors';
@@ -34,6 +34,7 @@ function AdminDashboardPage() {
   const [showOriginalRates, setShowOriginalRates] = useState(false); // Toggle to show original rates without adjustments
   const [baseRateFromSource, setBaseRateFromSource] = useState(null); // Current base rate from RB Gold
   const [globalShowAsItIs, setGlobalShowAsItIs] = useState(false); // Global "Show As It Is" setting
+  const [previousRates, setPreviousRates] = useState({}); // Track previous prices for smooth animations
   
   // Poll base rate every second to update Normal Price live (same as "Show As It Is")
   const baseRateIntervalRef = React.useRef(null);
@@ -168,21 +169,116 @@ function AdminDashboardPage() {
         // Compare all rates to detect any changes in adjustedPrice or ratePerGram
         // This ensures we only update state when prices actually change
         if (prevRates.length === 0 || prevRates.length !== newRates.length) {
+          // Initialize previous rates tracking
+          const initialPrevRates = {};
+          newRates.forEach(rate => {
+            const rateKey = rate._id?.toString() || rate.name;
+            initialPrevRates[rateKey] = {
+              adjustedPrice: rate.adjustedPrice || rate.rate || 0,
+              adjustedRatePerGram: rate.ratePerGram || 0,
+              originalTotalPrice: rate.normalPrice || rate.rate || 0,
+              originalRatePerGram: rate.ratePerGram || 0
+            };
+          });
+          setPreviousRates(initialPrevRates);
           return newRates;
         }
         
-        // Check if any rate's price has changed
-        const hasChanges = newRates.some((newRate, index) => {
-          const prevRate = prevRates[index];
-          if (!prevRate) return true;
-          // Compare key price fields that affect display
-          return (
-            prevRate.adjustedPrice !== newRate.adjustedPrice ||
-            prevRate.ratePerGram !== newRate.ratePerGram ||
-            prevRate.normalPrice !== newRate.normalPrice ||
-            prevRate.rate !== newRate.rate
+        // Track price changes for smooth animations
+        const updatedPrevRates = { ...previousRates };
+        let hasChanges = false;
+        
+        newRates.forEach((newRate, index) => {
+          const rateKey = newRate._id?.toString() || newRate.name;
+          const prevRate = prevRates.find(r => (r._id?.toString() || r.name) === rateKey);
+          
+          // Calculate weight in grams for this rate
+          let weightInGrams = newRate.weight?.value || 1;
+          if (newRate.weight?.unit === 'kg') {
+            weightInGrams = weightInGrams * 1000;
+          }
+          
+          // Calculate normal price (original price from base rate)
+          // Apply purity adjustments to base rate
+          let originalRatePerGram = 0;
+          if (baseRateFromSource?.baseRatePerGram) {
+            const baseRate = baseRateFromSource.baseRatePerGram;
+            if (newRate.purity === '92.5%') {
+              originalRatePerGram = baseRate * 0.96;
+            } else if (newRate.purity === '99.99%') {
+              originalRatePerGram = baseRate * 1.005;
+            } else {
+              // 99.9% uses base rate as-is
+              originalRatePerGram = baseRate;
+            }
+          } else {
+            // Fallback if baseRateFromSource not available
+            originalRatePerGram = newRate.ratePerGram || 0;
+          }
+          const originalTotalPrice = originalRatePerGram * weightInGrams;
+          
+          // Calculate adjusted price in real-time: Normal Price + Manual Adjustment
+          const manualAdjustment = newRate.manualAdjustment || 0;
+          const adjustedRatePerGram = originalRatePerGram + manualAdjustment;
+          const adjustedPrice = Math.max(0, adjustedRatePerGram * weightInGrams);
+          
+          if (!prevRate) {
+            hasChanges = true;
+            updatedPrevRates[rateKey] = {
+              adjustedPrice: adjustedPrice,
+              adjustedRatePerGram: adjustedRatePerGram,
+              originalTotalPrice: originalTotalPrice,
+              originalRatePerGram: originalRatePerGram
+            };
+            return;
+          }
+          
+          // Get previous calculated values
+          const prevOriginalTotalPrice = prevRate.originalTotalPrice || 0;
+          const prevAdjustedPrice = prevRate.adjustedPrice || 0;
+          
+          // Check if prices changed (compare calculated values)
+          const priceChanged = (
+            Math.abs(prevOriginalTotalPrice - originalTotalPrice) > 0.01 ||
+            Math.abs(prevAdjustedPrice - adjustedPrice) > 0.01
           );
+          
+          if (priceChanged) {
+            hasChanges = true;
+            // Update previous rates with new calculated values
+            updatedPrevRates[rateKey] = {
+              adjustedPrice: adjustedPrice,
+              adjustedRatePerGram: adjustedRatePerGram,
+              originalTotalPrice: originalTotalPrice,
+              originalRatePerGram: originalRatePerGram,
+              oldAdjustedPrice: prevRate.adjustedPrice || 0,
+              oldAdjustedRatePerGram: prevRate.adjustedRatePerGram || 0,
+              oldOriginalTotalPrice: prevRate.originalTotalPrice || 0,
+              oldOriginalRatePerGram: prevRate.originalRatePerGram || 0,
+              timestamp: Date.now()
+            };
+            
+            // Clear animation after 2 seconds
+            setTimeout(() => {
+              setPreviousRates(prev => {
+                const updated = { ...prev };
+                if (updated[rateKey]) {
+                  delete updated[rateKey].oldAdjustedPrice;
+                  delete updated[rateKey].oldAdjustedRatePerGram;
+                  delete updated[rateKey].oldOriginalTotalPrice;
+                  delete updated[rateKey].oldOriginalRatePerGram;
+                  delete updated[rateKey].timestamp;
+                }
+                return updated;
+              });
+            }, 2000);
+          }
         });
+        
+        // Update previous rates state
+        if (hasChanges) {
+          setPreviousRates(updatedPrevRates);
+        }
         
         // Only update if prices actually changed
         return hasChanges ? newRates : prevRates;
@@ -858,22 +954,23 @@ function AdminDashboardPage() {
                     // CRITICAL: Always use base rate from RB Gold source if available
                     // This ensures Normal Price shows EXACT RB Gold price without any manual adjustments
                     if (baseRateFromSource && baseRateFromSource.baseRatePerGram) {
-                      // Get exact base rate from RB Gold.
-                      // IMPORTANT: Do NOT re‑apply purity adjustments here – the backend/ source
-                      // price already includes any purity factors. Re‑applying them causes
-                      // mismatched per‑gram prices between 1g and 1kg products (e.g. 216 vs 217).
-                      // We want:
-                      //   totalPrice = baseRatePerGram × weightInGrams
-                      // so that 1g at ₹216 → 1kg = 1000 × 216 = ₹216000 exactly.
+                      // Get exact base rate from RB Gold and apply purity adjustments
                       const baseRate = baseRateFromSource.baseRatePerGram;
-
-                      // Use EXACT value from RB Gold (no rounding, no manual adjustments)
-                      // Normal Price will now be strictly proportional to weight.
-                      originalRatePerGram = baseRate;
+                      
+                      // Apply purity adjustments (same as backend)
+                      if (rate.purity === '92.5%') {
+                        originalRatePerGram = baseRate * 0.96;
+                      } else if (rate.purity === '99.99%') {
+                        originalRatePerGram = baseRate * 1.005;
+                      } else {
+                        // 99.9% uses base rate as-is
+                        originalRatePerGram = baseRate;
+                      }
                     } else {
                       // Fallback only if baseRateFromSource is not available (should rarely happen)
-                      // Calculate from current rate - adjustment (less accurate)
-                      originalRatePerGram = currentRatePerGram - adjustment;
+                      // Calculate from current rate - manual adjustment (less accurate)
+                      const manualAdjustment = rate.manualAdjustment || 0;
+                      originalRatePerGram = currentRatePerGram - manualAdjustment;
                       
                       if (originalRatePerGram <= 0) {
                         // Try stored values as last resort
@@ -897,24 +994,52 @@ function AdminDashboardPage() {
                     //   Silver Bar 1kg = ₹208.5 × 1000 = ₹208,500 ✓
                     const originalTotalPrice = originalRatePerGram * weightInGrams;
                     
-                    // Adjusted price (current rate, may be 0 if adjustment makes it negative)
-                    const adjustedPrice = currentTotalRate;
-                    const adjustedRatePerGram = currentRatePerGram;
+                    // Calculate manual adjustment (per gram)
+                    const manualAdjustment = rate.manualAdjustment || 0;
+                    
+                    // Calculate Adjusted Price in real-time based on Normal Price + Manual Adjustment
+                    // This ensures adjusted price updates smoothly every second as normal price changes
+                    // Formula: Adjusted Price = Normal Price + (Manual Adjustment × Weight in Grams)
+                    // Adjusted Rate Per Gram = Normal Rate Per Gram + Manual Adjustment
+                    const adjustedRatePerGram = originalRatePerGram + manualAdjustment;
+                    const adjustedPrice = adjustedRatePerGram * weightInGrams;
+                    
+                    // Ensure adjusted price doesn't go negative
+                    const finalAdjustedPrice = Math.max(0, adjustedPrice);
+                    const finalAdjustedRatePerGram = Math.max(0, adjustedRatePerGram);
 
                     // Compute adjustment as the difference between adjusted rate and calculated original rate.
-                    // This covers cases where `rate.manualAdjustment` is 0 but rates differ due to timing
-                    // or source/base-rate/purity calculation differences. Prefer a small epsilon to avoid
-                    // showing insignificant floating-point differences.
-                    const computedAdjustment = adjustedRatePerGram - originalRatePerGram;
+                    // Since we're calculating adjusted price from normal price + manual adjustment,
+                    // the displayed adjustment is simply the manual adjustment value
+                    const displayedAdjustment = manualAdjustment;
                     const EPS = 0.0001;
-                    // Prefer the computed adjustment when it's significant, otherwise fall back to stored value
-                    const displayedAdjustment = Math.abs(computedAdjustment) > EPS ? computedAdjustment : (rate.manualAdjustment || 0);
                     const hasAdjustment = Math.abs(displayedAdjustment) > EPS;
+                    
+                    // Get price change indicators for smooth animations
+                    const rateKey = rate._id?.toString() || rate.name;
+                    const prevRate = previousRates[rateKey] || {};
+                    const originalPriceChanged = prevRate.oldOriginalTotalPrice !== undefined && 
+                      Math.abs((prevRate.oldOriginalTotalPrice || 0) - (originalTotalPrice || 0)) > 0.01;
+                    const adjustedPriceChanged = prevRate.oldAdjustedPrice !== undefined && 
+                      Math.abs((prevRate.oldAdjustedPrice || 0) - (finalAdjustedPrice || 0)) > 0.01;
+                    
+                    const originalPriceIsUp = originalPriceChanged && (originalTotalPrice || 0) > (prevRate.oldOriginalTotalPrice || 0);
+                    const originalPriceIsDown = originalPriceChanged && (originalTotalPrice || 0) < (prevRate.oldOriginalTotalPrice || 0);
+                    const adjustedPriceIsUp = adjustedPriceChanged && (finalAdjustedPrice || 0) > (prevRate.oldAdjustedPrice || 0);
+                    const adjustedPriceIsDown = adjustedPriceChanged && (finalAdjustedPrice || 0) < (prevRate.oldAdjustedPrice || 0);
                     
                     // When showing "as it is", display original rates without adjustments
                     if (showOriginalRates) {
                       return (
-                        <TableRow key={rate._id || rate.name}>
+                        <TableRow 
+                          key={rate._id || rate.name}
+                          sx={{
+                            backgroundColor: originalPriceChanged 
+                              ? (originalPriceIsUp ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)')
+                              : 'transparent',
+                            transition: 'background-color 0.3s ease-in-out'
+                          }}
+                        >
                           <TableCell>
                             <Typography variant="body2" sx={{ fontWeight: 500 }}>
                               {rate.name}
@@ -924,14 +1049,52 @@ function AdminDashboardPage() {
                             </Typography>
                           </TableCell>
                           <TableCell align="right">
-                            <Typography variant="body2" sx={{ fontWeight: 600, color: colors.textPrimary }}>
-                              ₹{Number(originalTotalPrice || 0).toFixed(2)}
-                            </Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                              {originalPriceChanged && (
+                                originalPriceIsUp ? (
+                                  <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
+                                ) : (
+                                  <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
+                                )
+                              )}
+                              <Typography 
+                                variant="body2" 
+                                sx={{ 
+                                  fontWeight: 600, 
+                                  color: originalPriceChanged 
+                                    ? (originalPriceIsUp ? colors.success : colors.error)
+                                    : colors.textPrimary,
+                                  transition: 'color 0.3s ease-in-out, transform 0.2s ease-in-out',
+                                  transform: originalPriceChanged ? 'scale(1.05)' : 'scale(1)'
+                                }}
+                              >
+                                ₹{Number(originalTotalPrice || 0).toFixed(2)}
+                              </Typography>
+                            </Box>
                           </TableCell>
                           <TableCell align="right">
-                            <Typography variant="body2" sx={{ fontWeight: 600, color: colors.textPrimary }}>
-                              ₹{Number(originalRatePerGram || 0).toFixed(2)}/gram
-                            </Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                              {originalPriceChanged && (
+                                originalPriceIsUp ? (
+                                  <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
+                                ) : (
+                                  <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
+                                )
+                              )}
+                              <Typography 
+                                variant="body2" 
+                                sx={{ 
+                                  fontWeight: 600, 
+                                  color: originalPriceChanged 
+                                    ? (originalPriceIsUp ? colors.success : colors.error)
+                                    : colors.textPrimary,
+                                  transition: 'color 0.3s ease-in-out, transform 0.2s ease-in-out',
+                                  transform: originalPriceChanged ? 'scale(1.05)' : 'scale(1)'
+                                }}
+                              >
+                                ₹{Number(originalRatePerGram || 0).toFixed(2)}/gram
+                              </Typography>
+                            </Box>
                           </TableCell>
                           <TableCell align="center">
                             <Switch
@@ -957,7 +1120,15 @@ function AdminDashboardPage() {
                     
                     // Default view: show both normal and adjusted prices
                     return (
-                      <TableRow key={rate._id || rate.name}>
+                      <TableRow 
+                        key={rate._id || rate.name}
+                        sx={{
+                          backgroundColor: adjustedPriceChanged 
+                            ? (adjustedPriceIsUp ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)')
+                            : 'transparent',
+                          transition: 'background-color 0.3s ease-in-out'
+                        }}
+                      >
                         <TableCell>
                           <Typography variant="body2" sx={{ fontWeight: 500 }}>
                             {rate.name}
@@ -967,26 +1138,97 @@ function AdminDashboardPage() {
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
-                          <Typography variant="body2" sx={{ color: colors.textSecondary }}>
-                            ₹{Number(originalTotalPrice || 0).toFixed(2)}
-                          </Typography>
-                          <Typography variant="caption" sx={{ color: colors.textSecondary, display: 'block' }}>
-                            ₹{Number(originalRatePerGram || 0).toFixed(2)}/gram
-                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                            {originalPriceChanged && (
+                              originalPriceIsUp ? (
+                                <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
+                              ) : (
+                                <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
+                              )
+                            )}
+                            <Typography 
+                              variant="body2" 
+                              sx={{ 
+                                color: originalPriceChanged 
+                                  ? (originalPriceIsUp ? colors.success : colors.error)
+                                  : colors.textSecondary,
+                                transition: 'color 0.3s ease-in-out',
+                                fontWeight: originalPriceChanged ? 600 : 400
+                              }}
+                            >
+                              ₹{Number(originalTotalPrice || 0).toFixed(2)}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                            {originalPriceChanged && (
+                              originalPriceIsUp ? (
+                                <TrendingUp sx={{ fontSize: 12, color: colors.success }} />
+                              ) : (
+                                <TrendingDown sx={{ fontSize: 12, color: colors.error }} />
+                              )
+                            )}
+                            <Typography 
+                              variant="caption" 
+                              sx={{ 
+                                color: originalPriceChanged 
+                                  ? (originalPriceIsUp ? colors.success : colors.error)
+                                  : colors.textSecondary,
+                                transition: 'color 0.3s ease-in-out',
+                                display: 'block'
+                              }}
+                            >
+                              ₹{Number(originalRatePerGram || 0).toFixed(2)}/gram
+                            </Typography>
+                          </Box>
                         </TableCell>
                         <TableCell align="right">
-                          <Typography 
-                            variant="body2" 
-                            sx={{ 
-                              fontWeight: hasAdjustment ? 600 : 400,
-                              color: adjustedPrice === 0 ? colors.error : (hasAdjustment ? (displayedAdjustment > 0 ? colors.success : colors.error) : colors.textPrimary)
-                            }}
-                          >
-                            ₹{Number(adjustedPrice || 0).toFixed(2)}
-                          </Typography>
-                          <Typography variant="caption" sx={{ color: adjustedPrice === 0 ? colors.error : colors.textSecondary, display: 'block' }}>
-                            ₹{Number(adjustedRatePerGram || 0).toFixed(2)}/gram
-                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                            {adjustedPriceChanged && (
+                              adjustedPriceIsUp ? (
+                                <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
+                              ) : (
+                                <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
+                              )
+                            )}
+                            <Typography 
+                              variant="body2" 
+                              sx={{ 
+                                fontWeight: hasAdjustment ? 600 : 400,
+                                color: finalAdjustedPrice === 0 
+                                  ? colors.error 
+                                  : adjustedPriceChanged
+                                    ? (adjustedPriceIsUp ? colors.success : colors.error)
+                                    : (hasAdjustment ? (displayedAdjustment > 0 ? colors.success : colors.error) : colors.textPrimary),
+                                transition: 'color 0.3s ease-in-out, transform 0.2s ease-in-out',
+                                transform: adjustedPriceChanged ? 'scale(1.05)' : 'scale(1)'
+                              }}
+                            >
+                              ₹{Number(finalAdjustedPrice || 0).toFixed(2)}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                            {adjustedPriceChanged && (
+                              adjustedPriceIsUp ? (
+                                <TrendingUp sx={{ fontSize: 12, color: colors.success }} />
+                              ) : (
+                                <TrendingDown sx={{ fontSize: 12, color: colors.error }} />
+                              )
+                            )}
+                            <Typography 
+                              variant="caption" 
+                              sx={{ 
+                                color: finalAdjustedRatePerGram === 0 
+                                  ? colors.error 
+                                  : adjustedPriceChanged
+                                    ? (adjustedPriceIsUp ? colors.success : colors.error)
+                                    : colors.textSecondary,
+                                transition: 'color 0.3s ease-in-out',
+                                display: 'block'
+                              }}
+                            >
+                              ₹{Number(finalAdjustedRatePerGram || 0).toFixed(2)}/gram
+                            </Typography>
+                          </Box>
                         </TableCell>
                         <TableCell align="right">
                           {hasAdjustment ? (
