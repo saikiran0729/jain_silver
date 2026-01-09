@@ -264,6 +264,7 @@ const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false
 };
 
 // Cache for live base rate (updated on every request)
+// This cache is updated frequently to ensure fresh rates
 let cachedBaseRate = {
   ratePerGram: 207.0, // Default fallback rate (updated for current market rate ~₹207,000/kg)
   ratePerKg: 207000,
@@ -279,7 +280,7 @@ const MAX_HISTORY_SIZE = 10;
 // Track last update attempt to prevent too frequent updates
 let lastUpdateAttempt = 0;
 let lastSuccessfulUpdate = 0;
-const MIN_UPDATE_INTERVAL = 1000; // Update at most once per second
+const MIN_UPDATE_INTERVAL = 500; // Update at most every 500ms for near real-time updates
 
 // Rate smoothing: Update on ANY price change to reflect live market rates immediately
 // Set to 0 to capture all price changes in real-time
@@ -689,8 +690,8 @@ router.get('/', async (req, res) => {
           }, mongoRates[0]);
           
           const mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
-          const STALE_THRESHOLD = 1000; // 1 second - update every second for live rates (real-time updates)
-          const VERY_STALE_THRESHOLD = 3000; // 3 seconds - if very stale, wait for update before serving
+          const STALE_THRESHOLD = 500; // 500ms - trigger update if older than 0.5 seconds for near real-time
+          const VERY_STALE_THRESHOLD = 2000; // 2 seconds - if very stale, wait for update before serving
           const OLD_RATE_THRESHOLD = 100; // If rate is below this, it's likely old cached data (updated for current rates ~207)
           
           // Check if ANY 99.9% rate is old cached data (should be ~₹200-210, not below ₹100)
@@ -1111,44 +1112,54 @@ router.get('/', async (req, res) => {
           // Since mobile app polls every second, this ensures rates update every second.
           // On Vercel, always trigger non-blocking update (even with skipUpdate) to keep rates fresh
           // This ensures adjustedPrice = normalPrice (current market rate) + manualAdjustment updates every second
+          // ALWAYS trigger update if rates are stale (even slightly stale) to ensure fresh data
           if (mongoAge > STALE_THRESHOLD) {
             if (process.env.VERCEL) {
-              // On Vercel, trigger non-blocking update (fire and forget) even if skipUpdate=true
-              // This ensures rates update every second for real-time adjusted prices
-              if (!skipUpdate) {
-                console.log(`🔄 Rates are stale (${Math.round(mongoAge/1000)}s old), triggering non-blocking update on Vercel...`);
-              }
+              // On Vercel, ALWAYS trigger non-blocking update when stale (even for admin/skipUpdate)
+              // This ensures rates are constantly being updated in the background
               updateRatesHandler(req, null).catch(err => {
-                console.error('❌ Background rate update failed:', err.message);
+                // Only log errors occasionally to avoid spam
+                if (Math.random() < 0.1) {
+                  console.error('❌ Background rate update failed:', err.message);
+                }
               });
               
               // CRITICAL: For customer requests (non-admin, non-skipUpdate), recalculate rates on-the-fly
               // This ensures customers always see current prices even if MongoDB hasn't updated yet
               if (!skipUpdate && !isAdmin) {
                 try {
-                  // Get current base rate (from cache or fetch fresh)
+                  // Get current base rate - ALWAYS fetch fresh for customer requests to ensure accuracy
                   let currentBaseRate = cachedBaseRate.ratePerGram;
+                  let fetchSuccess = false;
                   try {
                     const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
+                    // Use shorter timeout for faster response to customers
                     const liveRate = await Promise.race([
                       fetchSilverRatesFromMultipleSources(),
                       new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Timeout after 3 seconds')), 3000)
+                        setTimeout(() => reject(new Error('Timeout after 2 seconds')), 2000)
                       )
                     ]);
                     if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0) {
                       currentBaseRate = liveRate.ratePerGram;
-                      // Update cache
+                      fetchSuccess = true;
+                      // Update cache immediately
                       cachedBaseRate = {
                         ...cachedBaseRate,
                         ratePerGram: liveRate.ratePerGram,
                         ratePerKg: liveRate.ratePerKg,
                         lastUpdated: new Date(),
-                        source: liveRate.source || 'live'
+                        source: liveRate.source || 'live',
+                        usdInrRate: liveRate.usdInrRate || cachedBaseRate.usdInrRate || 89.25
                       };
                     }
                   } catch (fetchError) {
-                    console.warn('Could not fetch fresh base rate for on-the-fly recalculation, using cached:', fetchError.message);
+                    // Use cached rate if fetch fails - still better than stale MongoDB data
+                    if (cachedBaseRate && cachedBaseRate.ratePerGram > 0) {
+                      console.log(`Using cached base rate ₹${cachedBaseRate.ratePerGram.toFixed(2)}/gram (fetch failed: ${fetchError.message.substring(0, 50)})`);
+                    } else {
+                      console.warn('Could not fetch fresh base rate and no valid cache, using MongoDB rates:', fetchError.message);
+                    }
                   }
                   
                   // Fetch all manual adjustments at once
@@ -1880,6 +1891,16 @@ const updateRatesHandler = async (req, res = null) => {
     // ALWAYS log the fetched rate details (critical for debugging)
     console.log(`📊 Fetched LIVE rate: ₹${liveRate.ratePerGram.toFixed(2)}/gram (₹${liveRate.ratePerKg}/kg)`);
     console.log(`📊 Source: ${liveRate.source}, Raw Ask: ${liveRate.rawData?.ask || 'N/A'}, Raw High: ${liveRate.rawData?.high || 'N/A'}`);
+    
+    // CRITICAL: Update cached base rate immediately so on-the-fly recalculation uses fresh data
+    cachedBaseRate = {
+      ratePerGram: liveRate.ratePerGram,
+      ratePerKg: liveRate.ratePerKg,
+      source: liveRate.source || 'live',
+      lastUpdated: new Date(),
+      usdInrRate: liveRate.usdInrRate || cachedBaseRate.usdInrRate || 89.25
+    };
+    lastSuccessfulUpdate = Date.now();
     
     // Warn if rate seems too low (might be old/cached)
     // Updated threshold: current rates are ~207 per gram, so flag anything below 100 as suspicious
