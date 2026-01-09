@@ -585,10 +585,16 @@ router.get('/', async (req, res) => {
       showAsItIs = true;
     } else {
       try {
-        const showAsItIsSetting = await Settings.getSetting('showAsItIs');
-        showAsItIs = showAsItIsSetting.value;
+        // Ensure Settings model is available
+        if (Settings && typeof Settings.getSetting === 'function') {
+          const showAsItIsSetting = await Settings.getSetting('showAsItIs');
+          if (showAsItIsSetting && showAsItIsSetting.value !== undefined) {
+            showAsItIs = showAsItIsSetting.value;
+          }
+        }
       } catch (settingsError) {
         console.warn('Could not fetch showAsItIs setting, defaulting to false:', settingsError.message);
+        // Continue with default false value
       }
     }
     
@@ -632,9 +638,25 @@ router.get('/', async (req, res) => {
       if (mongoose.connection.readyState === 1) {
         // Fetch ALL products from MongoDB (including disabled ones) - no filter on isVisible
         // CRITICAL: Do NOT filter by isVisible here - admin needs to see all products
-        let mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' })
-          .sort({ name: 1 })
-          .lean();
+        let mongoRates;
+        try {
+          mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+            .sort({ name: 1 })
+            .lean();
+          
+          // Ensure mongoRates is an array
+          if (!Array.isArray(mongoRates)) {
+            console.error('❌ MongoDB query returned non-array:', typeof mongoRates);
+            mongoRates = [];
+          }
+        } catch (queryError) {
+          console.error('❌ MongoDB query failed:', queryError.message);
+          if (queryError.stack) {
+            console.error('Query error stack:', queryError.stack.substring(0, 500));
+          }
+          // Set to empty array to continue with fallback
+          mongoRates = [];
+        }
         
         // Declare latestRate and mongoAge in broader scope so they're accessible later
         let latestRate = null;
@@ -1137,10 +1159,10 @@ router.get('/', async (req, res) => {
               
               // CRITICAL: For customer requests (non-admin, non-skipUpdate), recalculate rates on-the-fly
               // This ensures customers always see current prices even if MongoDB hasn't updated yet
-              if (!skipUpdate && !isAdmin && mongoRates && mongoRates.length > 0) {
+              if (!skipUpdate && !isAdmin && mongoRates && Array.isArray(mongoRates) && mongoRates.length > 0) {
                 try {
                   // Get current base rate - ALWAYS fetch fresh for customer requests to ensure accuracy
-                  let currentBaseRate = cachedBaseRate.ratePerGram;
+                  let currentBaseRate = (cachedBaseRate && cachedBaseRate.ratePerGram) ? cachedBaseRate.ratePerGram : 207.0;
                   let fetchSuccess = false;
                   try {
                     const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
@@ -1189,9 +1211,19 @@ router.get('/', async (req, res) => {
                   
                   // Recalculate rates on-the-fly from current base rate + manual adjustments
                   const recalculatedRates = mongoRates.map((rate) => {
+                    // Validate rate object
+                    if (!rate || typeof rate !== 'object') {
+                      console.error('❌ Invalid rate object in recalculation:', rate);
+                      return null;
+                    }
+                    
                     // Get manual adjustment for this rate
-                    const rateName = rate.originalName || rate.name;
-                    const manualAdjustment = adjustmentsMap[rateName] || rate.manualAdjustment || 0;
+                    const rateName = (rate.originalName || rate.name);
+                    if (!rateName) {
+                      console.error('❌ Rate missing name:', rate);
+                      return null;
+                    }
+                    const manualAdjustment = adjustmentsMap[rateName] || (rate.manualAdjustment || 0);
                     
                     // Calculate ratePerGram based on purity
                     let ratePerGram = currentBaseRate;
@@ -1206,8 +1238,8 @@ router.get('/', async (req, res) => {
                     ratePerGram = Math.max(0, ratePerGram);
                     
                     // Calculate total rate
-                    let weightInGrams = rate.weight?.value || 1;
-                    if (rate.weight?.unit === 'kg') {
+                    let weightInGrams = (rate.weight && rate.weight.value) ? rate.weight.value : 1;
+                    if (rate.weight && rate.weight.unit === 'kg') {
                       weightInGrams = rate.weight.value * 1000;
                     }
                     const totalRate = ratePerGram * weightInGrams;
@@ -1221,7 +1253,7 @@ router.get('/', async (req, res) => {
                       manualAdjustment: manualAdjustment,
                       lastUpdated: new Date() // Mark as fresh
                     };
-                  });
+                  }).filter(rate => rate !== null); // Filter out any null rates
                   
                   // Filter visible products for non-admin
                   const visibleRates = recalculatedRates.filter(rate => rate.isVisible !== false);
