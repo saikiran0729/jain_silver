@@ -1577,9 +1577,15 @@ router.get('/', async (req, res) => {
             finalRates = await applyManualAdjustments(mongoRates, isAdmin, skipUpdate);
           }
           
+          // Validate finalRates before proceeding
+          if (!finalRates || !Array.isArray(finalRates) || finalRates.length === 0) {
+            console.error('❌ finalRates is invalid:', { finalRates, type: typeof finalRates, isArray: Array.isArray(finalRates) });
+            throw new Error('Failed to process rates - finalRates is invalid');
+          }
+          
           // Add USD rate to all rates if available
-            // CRITICAL: Preserve isVisible field when mapping
-            const ratesWithUSD = finalRates.map(rate => ({
+          // CRITICAL: Preserve isVisible field when mapping
+          const ratesWithUSD = finalRates.map(rate => ({
               ...rate,
               usdInrRate: cachedBaseRate.usdInrRate || 89.25,
               // Explicitly preserve isVisible to ensure it's not lost
