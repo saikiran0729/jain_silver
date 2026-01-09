@@ -1234,6 +1234,14 @@ router.get('/', async (req, res) => {
                     usdInrRate: cachedBaseRate.usdInrRate || 89.25
                   }));
                   
+                  if (!finalRates || finalRates.length === 0) {
+                    throw new Error('No rates calculated from recalculation');
+                  }
+                  
+                  if (!currentBaseRate || currentBaseRate <= 0) {
+                    throw new Error(`Invalid base rate: ${currentBaseRate}`);
+                  }
+                  
                   console.log(`✅ Recalculated ${finalRates.length} rates on-the-fly for customer (base: ₹${currentBaseRate.toFixed(2)}/gram, MongoDB was ${Math.round(mongoAge/1000)}s old)`);
                   
                   res.set({
