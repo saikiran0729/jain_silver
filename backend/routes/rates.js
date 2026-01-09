@@ -1217,7 +1217,7 @@ router.get('/', async (req, res) => {
                       manualAdjustment: manualAdjustment,
                       lastUpdated: new Date() // Mark as fresh
                     };
-                  }));
+                  });
                   
                   // Filter visible products for non-admin
                   const visibleRates = recalculatedRates.filter(rate => rate.isVisible !== false);
