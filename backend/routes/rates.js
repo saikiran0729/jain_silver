@@ -1121,6 +1121,104 @@ router.get('/', async (req, res) => {
               updateRatesHandler(req, null).catch(err => {
                 console.error('❌ Background rate update failed:', err.message);
               });
+              
+              // CRITICAL: For customer requests (non-admin, non-skipUpdate), recalculate rates on-the-fly
+              // This ensures customers always see current prices even if MongoDB hasn't updated yet
+              if (!skipUpdate && !isAdmin) {
+                try {
+                  // Get current base rate (from cache or fetch fresh)
+                  let currentBaseRate = cachedBaseRate.ratePerGram;
+                  try {
+                    const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
+                    const liveRate = await Promise.race([
+                      fetchSilverRatesFromMultipleSources(),
+                      new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Timeout after 3 seconds')), 3000)
+                      )
+                    ]);
+                    if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0) {
+                      currentBaseRate = liveRate.ratePerGram;
+                      // Update cache
+                      cachedBaseRate = {
+                        ...cachedBaseRate,
+                        ratePerGram: liveRate.ratePerGram,
+                        ratePerKg: liveRate.ratePerKg,
+                        lastUpdated: new Date(),
+                        source: liveRate.source || 'live'
+                      };
+                    }
+                  } catch (fetchError) {
+                    console.warn('Could not fetch fresh base rate for on-the-fly recalculation, using cached:', fetchError.message);
+                  }
+                  
+                  // Fetch all manual adjustments at once
+                  const rateNames = mongoRates.map(r => r.originalName || r.name);
+                  const adjustmentsMap = await fetchManualAdjustments(rateNames);
+                  
+                  // Recalculate rates on-the-fly from current base rate + manual adjustments
+                  const recalculatedRates = mongoRates.map((rate) => {
+                    // Get manual adjustment for this rate
+                    const rateName = rate.originalName || rate.name;
+                    const manualAdjustment = adjustmentsMap[rateName] || rate.manualAdjustment || 0;
+                    
+                    // Calculate ratePerGram based on purity
+                    let ratePerGram = currentBaseRate;
+                    if (rate.purity === '92.5%') {
+                      ratePerGram = currentBaseRate * 0.96;
+                    } else if (rate.purity === '99.99%') {
+                      ratePerGram = currentBaseRate * 1.005;
+                    }
+                    
+                    // Apply manual adjustment
+                    ratePerGram = ratePerGram + manualAdjustment;
+                    ratePerGram = Math.max(0, ratePerGram);
+                    
+                    // Calculate total rate
+                    let weightInGrams = rate.weight?.value || 1;
+                    if (rate.weight?.unit === 'kg') {
+                      weightInGrams = rate.weight.value * 1000;
+                    }
+                    const totalRate = ratePerGram * weightInGrams;
+                    
+                    return {
+                      ...rate,
+                      ratePerGram: ratePerGram,
+                      rate: totalRate,
+                      originalRatePerGram: ratePerGram - manualAdjustment,
+                      originalRate: (ratePerGram - manualAdjustment) * weightInGrams,
+                      manualAdjustment: manualAdjustment,
+                      lastUpdated: new Date() // Mark as fresh
+                    };
+                  }));
+                  
+                  // Filter visible products for non-admin
+                  const visibleRates = recalculatedRates.filter(rate => rate.isVisible !== false);
+                  
+                  // Apply display names
+                  const finalRates = visibleRates.map(rate => ({
+                    ...rate,
+                    name: rate.displayName || rate.name,
+                    originalName: rate.originalName || rate.name
+                  }));
+                  
+                  const ratesWithUSD = finalRates.map(rate => ({
+                    ...rate,
+                    usdInrRate: cachedBaseRate.usdInrRate || 89.25
+                  }));
+                  
+                  console.log(`✅ Recalculated ${finalRates.length} rates on-the-fly for customer (base: ₹${currentBaseRate.toFixed(2)}/gram, MongoDB was ${Math.round(mongoAge/1000)}s old)`);
+                  
+                  res.set({
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
+                  });
+                  return res.json(ratesWithUSD);
+                } catch (recalcError) {
+                  console.error('❌ On-the-fly recalculation failed, serving MongoDB rates:', recalcError.message);
+                  // Fall through to serve MongoDB rates
+                }
+              }
               // Continue to serve current rates (they'll be updated in background)
             } else {
             console.log(`🔄 Rates are stale (${Math.round(mongoAge/1000)}s old), fetching fresh rates...`);
