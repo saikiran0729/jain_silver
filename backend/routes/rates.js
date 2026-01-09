@@ -1623,16 +1623,16 @@ router.put('/:id', auth, async (req, res) => {
     const { rate, manualAdjustment } = req.body;
 
     const rateDefinitions = [
-      { name: 'Silver Coin 1 Gram' },
-      { name: 'Silver Coin 5 Grams' },
-      { name: 'Silver Coin 10 Grams' },
-      { name: 'Silver Coin 50 Grams' },
-      { name: 'Silver Coin 100 Grams' },
-      { name: 'Silver Bar 100 Grams' },
-      { name: 'Silver Bar 500 Grams' },
-      { name: 'Silver Bar 1 Kg' },
-      { name: 'Silver Jewelry 92.5%' },
-      { name: 'Silver Jewelry 99.9%' }
+      { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
+      { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
+      { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
+      { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
+      { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
     ];
     
     const rateDef = rateDefinitions.find(r => {
@@ -1644,18 +1644,67 @@ router.put('/:id', auth, async (req, res) => {
       return res.status(404).json({ message: 'Rate not found' });
     }
 
-    // Update MongoDB with manual adjustment
+    // Get current base rate (from cache or fetch fresh)
+    let baseRatePerGram = cachedBaseRate.ratePerGram;
+    try {
+      const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
+      const liveRate = await Promise.race([
+        fetchSilverRatesFromMultipleSources(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout after 5 seconds')), 5000)
+        )
+      ]);
+      if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0) {
+        baseRatePerGram = liveRate.ratePerGram;
+      }
+    } catch (fetchError) {
+      console.warn('Could not fetch fresh base rate for manual adjustment update, using cached:', fetchError.message);
+    }
+
+    // Calculate ratePerGram based on purity
+    let calculatedRatePerGram = baseRatePerGram;
+    if (rateDef.purity === '92.5%') {
+      calculatedRatePerGram = baseRatePerGram * 0.96;
+    } else if (rateDef.purity === '99.99%') {
+      calculatedRatePerGram = baseRatePerGram * 1.005;
+    }
+
+    // Apply manual adjustment if provided
+    const finalManualAdjustment = manualAdjustment !== undefined ? manualAdjustment : 0;
+    calculatedRatePerGram = calculatedRatePerGram + finalManualAdjustment;
+    calculatedRatePerGram = Math.max(0, calculatedRatePerGram);
+
+    // Calculate total rate
+    let weightInGrams = rateDef.weight.value;
+    if (rateDef.weight.unit === 'kg') {
+      weightInGrams = rateDef.weight.value * 1000;
+    }
+    const totalRate = calculatedRatePerGram * weightInGrams;
+
+    // Update MongoDB with manual adjustment AND recalculated rates
+    const updateData = {
+      name: rateDef.name,
+      type: rateDef.type,
+      weight: rateDef.weight,
+      purity: rateDef.purity,
+      ratePerGram: calculatedRatePerGram,
+      rate: totalRate,
+      manualAdjustment: finalManualAdjustment,
+      lastUpdated: new Date(),
+      location: 'Andhra Pradesh',
+      unit: 'INR'
+    };
+
     if (manualAdjustment !== undefined) {
-      await SilverRate.updateOne(
+      await SilverRate.findOneAndUpdate(
         { name: rateDef.name, location: 'Andhra Pradesh' },
         { 
-          $set: { 
-            manualAdjustment: manualAdjustment,
-            lastUpdated: new Date()
-          } 
+          $set: updateData
         },
-        { upsert: true }
+        { upsert: true, new: true }
       );
+      
+      console.log(`✅ Updated ${rateDef.name}: ratePerGram=₹${calculatedRatePerGram.toFixed(2)}, total=₹${totalRate.toFixed(2)}, manualAdjustment=₹${finalManualAdjustment.toFixed(2)}`);
     }
 
     // Fetch updated rate from MongoDB
@@ -1668,7 +1717,9 @@ router.put('/:id', auth, async (req, res) => {
       message: 'Rate adjustment updated successfully',
       rate: {
         name: rateDef.name,
-        manualAdjustment: updatedRate?.manualAdjustment || 0
+        ratePerGram: updatedRate?.ratePerGram || calculatedRatePerGram,
+        rate: updatedRate?.rate || totalRate,
+        manualAdjustment: updatedRate?.manualAdjustment || finalManualAdjustment
       }
     });
   } catch (error) {
