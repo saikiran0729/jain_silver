@@ -1574,6 +1574,10 @@ router.get('/', async (req, res) => {
             // Apply manual adjustments to rates from MongoDB
             // This ensures admin adjustments are reflected immediately
             // CRITICAL: Pass skipUpdate to ensure disabled products are included
+            if (!mongoRates || !Array.isArray(mongoRates) || mongoRates.length === 0) {
+              console.error('❌ mongoRates is invalid before applyManualAdjustments:', { mongoRates, type: typeof mongoRates, isArray: Array.isArray(mongoRates) });
+              throw new Error('Failed to process rates - mongoRates is invalid');
+            }
             finalRates = await applyManualAdjustments(mongoRates, isAdmin, skipUpdate);
           }
           
