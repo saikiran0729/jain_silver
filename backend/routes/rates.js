@@ -1748,8 +1748,15 @@ router.get('/', async (req, res) => {
     return res.json(allRates);
     
   } catch (error) {
-    console.error('Get rates error:', error.message);
-    return res.status(500).json({ error: 'Failed to fetch rates', message: error.message });
+    console.error('❌ Get rates error:', error.message);
+    if (error.stack) {
+      console.error('Error stack:', error.stack.substring(0, 500));
+    }
+    // Return a more detailed error in development, generic in production
+    const errorDetails = process.env.NODE_ENV === 'development' 
+      ? { error: 'Failed to fetch rates', message: error.message, stack: error.stack?.substring(0, 500) }
+      : { error: 'Failed to fetch rates', message: 'An error occurred while fetching rates. Please try again.' };
+    return res.status(500).json(errorDetails);
   }
 });
 
