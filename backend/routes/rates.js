@@ -636,6 +636,10 @@ router.get('/', async (req, res) => {
           .sort({ name: 1 })
           .lean();
         
+        // Declare latestRate and mongoAge in broader scope so they're accessible later
+        let latestRate = null;
+        let mongoAge = 0;
+        
         // Log for debugging - always log when skipUpdate is true (likely admin dashboard)
         if (skipUpdate || isAdmin) {
           const disabledCount = mongoRates.filter(r => r.isVisible === false).length;
@@ -655,19 +659,19 @@ router.get('/', async (req, res) => {
         // Ensure all defined products exist for admins OR when skipUpdate is true (admin dashboard)
         // This ensures admin dashboard always shows all products even if admin check fails
         if ((isAdmin || skipUpdate) && mongoRates) {
-          const latestRate = mongoRates.length > 0 ? mongoRates.reduce((latest, rate) => {
+          const tempLatestRate = mongoRates.length > 0 ? mongoRates.reduce((latest, rate) => {
             return rate.lastUpdated > latest.lastUpdated ? rate : latest;
           }, mongoRates[0]) : null;
           // Use latest rate's ratePerGram to estimate base rate, or use cached
           let estimatedBaseRate = cachedBaseRate.ratePerGram;
-          if (latestRate && latestRate.ratePerGram > 0) {
+          if (tempLatestRate && tempLatestRate.ratePerGram > 0) {
             // Reverse calculate base rate from latest rate
-            if (latestRate.purity === '92.5%') {
-              estimatedBaseRate = latestRate.ratePerGram / 0.96;
-            } else if (latestRate.purity === '99.99%') {
-              estimatedBaseRate = latestRate.ratePerGram / 1.005;
+            if (tempLatestRate.purity === '92.5%') {
+              estimatedBaseRate = tempLatestRate.ratePerGram / 0.96;
+            } else if (tempLatestRate.purity === '99.99%') {
+              estimatedBaseRate = tempLatestRate.ratePerGram / 1.005;
             } else {
-              estimatedBaseRate = latestRate.ratePerGram;
+              estimatedBaseRate = tempLatestRate.ratePerGram;
             }
           }
           const ratesBeforeEnsure = mongoRates.length;
@@ -685,10 +689,10 @@ router.get('/', async (req, res) => {
         
         if (mongoRates && mongoRates.length > 0) {
           // Always use MongoDB rates if available (they're updated every second)
-          const latestRate = mongoRates.reduce((latest, rate) => {
-            if (!rate || !rate.lastUpdated) return latest;
+          latestRate = mongoRates.reduce((latest, rate) => {
+            if (!rate || !rate.lastUpdated) return latest || rate;
             const rateTime = new Date(rate.lastUpdated).getTime();
-            const latestTime = new Date(latest.lastUpdated).getTime();
+            const latestTime = latest && latest.lastUpdated ? new Date(latest.lastUpdated).getTime() : 0;
             return rateTime > latestTime ? rate : latest;
           }, mongoRates[0]);
           
@@ -696,7 +700,7 @@ router.get('/', async (req, res) => {
             throw new Error('Invalid rate data in MongoDB - missing lastUpdated');
           }
           
-          const mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
+          mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
           const STALE_THRESHOLD = 500; // 500ms - trigger update if older than 0.5 seconds for near real-time
           const VERY_STALE_THRESHOLD = 2000; // 2 seconds - if very stale, wait for update before serving
           const OLD_RATE_THRESHOLD = 100; // If rate is below this, it's likely old cached data (updated for current rates ~207)
@@ -1412,8 +1416,21 @@ router.get('/', async (req, res) => {
             }
           }
           
+          // Ensure latestRate and mongoAge are defined (might not be if coming from Vercel recalculation path)
+          if ((!latestRate || mongoAge === undefined) && mongoRates && mongoRates.length > 0) {
+            latestRate = mongoRates.reduce((latest, rate) => {
+              if (!rate || !rate.lastUpdated) return latest || rate;
+              const rateTime = new Date(rate.lastUpdated).getTime();
+              const latestTime = latest && latest.lastUpdated ? new Date(latest.lastUpdated).getTime() : 0;
+              return rateTime > latestTime ? rate : latest;
+            }, mongoRates[0]);
+            if (latestRate && latestRate.lastUpdated) {
+              mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
+            }
+          }
+          
           // Only log occasionally to avoid spam (every 10th request)
-          if (Math.random() < 0.1) {
+          if (Math.random() < 0.1 && latestRate && mongoRates) {
             console.log(`📦 Serving ${mongoRates.length} rates from MongoDB (${Math.round(mongoAge/1000)}s old, latest: ${latestRate.name} = ₹${latestRate.ratePerGram}/gram)`);
           }
           
