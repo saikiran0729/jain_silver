@@ -686,8 +686,15 @@ router.get('/', async (req, res) => {
         if (mongoRates && mongoRates.length > 0) {
           // Always use MongoDB rates if available (they're updated every second)
           const latestRate = mongoRates.reduce((latest, rate) => {
-            return rate.lastUpdated > latest.lastUpdated ? rate : latest;
+            if (!rate || !rate.lastUpdated) return latest;
+            const rateTime = new Date(rate.lastUpdated).getTime();
+            const latestTime = new Date(latest.lastUpdated).getTime();
+            return rateTime > latestTime ? rate : latest;
           }, mongoRates[0]);
+          
+          if (!latestRate || !latestRate.lastUpdated) {
+            throw new Error('Invalid rate data in MongoDB - missing lastUpdated');
+          }
           
           const mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
           const STALE_THRESHOLD = 500; // 500ms - trigger update if older than 0.5 seconds for near real-time
@@ -1126,7 +1133,7 @@ router.get('/', async (req, res) => {
               
               // CRITICAL: For customer requests (non-admin, non-skipUpdate), recalculate rates on-the-fly
               // This ensures customers always see current prices even if MongoDB hasn't updated yet
-              if (!skipUpdate && !isAdmin) {
+              if (!skipUpdate && !isAdmin && mongoRates && mongoRates.length > 0) {
                 try {
                   // Get current base rate - ALWAYS fetch fresh for customer requests to ensure accuracy
                   let currentBaseRate = cachedBaseRate.ratePerGram;
@@ -1159,11 +1166,21 @@ router.get('/', async (req, res) => {
                       console.log(`Using cached base rate ₹${cachedBaseRate.ratePerGram.toFixed(2)}/gram (fetch failed: ${fetchError.message.substring(0, 50)})`);
                     } else {
                       console.warn('Could not fetch fresh base rate and no valid cache, using MongoDB rates:', fetchError.message);
+                      // If we can't get a base rate, fall through to serve MongoDB rates
+                      throw new Error('No valid base rate available');
                     }
                   }
                   
+                  // Validate we have a valid base rate
+                  if (!currentBaseRate || currentBaseRate <= 0) {
+                    throw new Error('Invalid base rate for recalculation');
+                  }
+                  
                   // Fetch all manual adjustments at once
-                  const rateNames = mongoRates.map(r => r.originalName || r.name);
+                  const rateNames = mongoRates.map(r => r.originalName || r.name).filter(Boolean);
+                  if (rateNames.length === 0) {
+                    throw new Error('No rate names found for recalculation');
+                  }
                   const adjustmentsMap = await fetchManualAdjustments(rateNames);
                   
                   // Recalculate rates on-the-fly from current base rate + manual adjustments
@@ -1227,7 +1244,10 @@ router.get('/', async (req, res) => {
                   return res.json(ratesWithUSD);
                 } catch (recalcError) {
                   console.error('❌ On-the-fly recalculation failed, serving MongoDB rates:', recalcError.message);
-                  // Fall through to serve MongoDB rates
+                  if (recalcError.stack) {
+                    console.error('Recalculation error stack:', recalcError.stack.substring(0, 300));
+                  }
+                  // Fall through to serve MongoDB rates - don't throw, let it continue
                 }
               }
               // Continue to serve current rates (they'll be updated in background)
