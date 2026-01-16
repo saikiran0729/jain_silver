@@ -35,31 +35,31 @@ function AdminDashboardPage() {
   const [baseRateFromSource, setBaseRateFromSource] = useState(null); // Current base rate from RB Gold
   const [globalShowAsItIs, setGlobalShowAsItIs] = useState(false); // Global "Show As It Is" setting
   const [previousRates, setPreviousRates] = useState({}); // Track previous prices for smooth animations
-  
+
   // Poll base rate every second to update Normal Price live (same as "Show As It Is")
   const baseRateIntervalRef = React.useRef(null);
   // Poll rates every second to update Adjusted Price according to market changes + manual adjustments
   const ratesIntervalRef = React.useRef(null);
-  
+
   useEffect(() => {
     // Fetch immediately
     fetchBaseRate();
     fetchRates(true); // Use skipUpdate=true for fast initial load (backend will update in background)
-    
+
     // Set up interval to fetch base rate every second for live Normal Price updates
     baseRateIntervalRef.current = setInterval(() => {
       fetchBaseRate();
     }, 1000); // Update every second
-    
+
     // Set up interval to fetch rates every second for live Adjusted Price updates
     // Use skipUpdate=true for fast polling (backend triggers updates in background on Vercel)
     // Optimized to update smoothly without causing UI flickering
     ratesIntervalRef.current = setInterval(() => {
-      // Use skipUpdate=true for fast polling - backend will trigger updates in background
+      // Use skipUpdate=false to ensure fresh rates are polled (backend will return current rates immediately on Vercel)
       // Pass isPolling=true to suppress error alerts during automatic polling
-      fetchRates(true, true);
+      fetchRates(false, true);
     }, 1000); // Update every second
-    
+
     // Cleanup on unmount
     return () => {
       if (baseRateIntervalRef.current) {
@@ -115,9 +115,11 @@ function AdminDashboardPage() {
 
   const fetchBaseRate = async () => {
     try {
-      // Fetch with cache-busting timestamp to ensure fresh data every second
+      // Use dedicated endpoint to get just the base rate (faster)
+      // Add cache busting timestamp
       const response = await api.get('/rates/base-rate', {
-        params: { _t: Date.now() } // Cache busting for live updates
+        params: { _t: Date.now() },
+        timeout: 5000
       });
       if (response.data && response.data.baseRatePerGram) {
         setBaseRateFromSource(response.data);
@@ -153,16 +155,19 @@ function AdminDashboardPage() {
         setLoadingRates(true);
       }
       console.log('📡 Fetching rates from /rates endpoint...', skipUpdate ? '(skipping update)' : '(allowing update)');
-      
+
       // CRITICAL: Always fetch base rate FIRST to ensure Normal Price shows exact RB Gold prices
       // Fetch base rate before rates to ensure it's available when calculating Normal Price
       await fetchBaseRate();
-      
+
       // Use skipUpdate=true for fast polling (just read from MongoDB)
       // Backend will trigger updates in background on Vercel even when skipUpdate=true
       // Use longer timeout for skipUpdate=false (manual refresh that triggers full update)
       const response = await api.get('/rates', {
-        params: { skipUpdate: skipUpdate ? 'true' : undefined },
+        params: {
+          skipUpdate: skipUpdate ? 'true' : undefined,
+          _t: Date.now() // Cache busting
+        },
         timeout: skipUpdate ? 15000 : 60000 // 15 seconds for polling (allows time for MongoDB read), 60s for manual refresh (full update)
       });
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
@@ -187,21 +192,21 @@ function AdminDashboardPage() {
           setPreviousRates(initialPrevRates);
           return newRates;
         }
-        
+
         // Track price changes for smooth animations
         const updatedPrevRates = { ...previousRates };
         let hasChanges = false;
-        
+
         newRates.forEach((newRate, index) => {
           const rateKey = newRate._id?.toString() || newRate.name;
           const prevRate = prevRates.find(r => (r._id?.toString() || r.name) === rateKey);
-          
+
           // Calculate weight in grams for this rate
           let weightInGrams = newRate.weight?.value || 1;
           if (newRate.weight?.unit === 'kg') {
             weightInGrams = weightInGrams * 1000;
           }
-          
+
           // Calculate normal price (original price from base rate)
           // Apply purity adjustments to base rate
           let originalRatePerGram = 0;
@@ -220,17 +225,17 @@ function AdminDashboardPage() {
             originalRatePerGram = newRate.ratePerGram || 0;
           }
           const originalTotalPrice = originalRatePerGram * weightInGrams;
-          
+
           // Calculate adjusted price in real-time: Normal Price + Manual Adjustment
           const manualAdjustment = newRate.manualAdjustment || 0;
           const adjustedRatePerGram = originalRatePerGram + manualAdjustment;
           const adjustedPrice = Math.max(0, adjustedRatePerGram * weightInGrams);
-          
+
           // Get previous calculated values from previousRates state
           const prevCalculated = previousRates[rateKey] || {};
           const prevOriginalTotalPrice = prevCalculated.originalTotalPrice || 0;
           const prevAdjustedPrice = prevCalculated.adjustedPrice || 0;
-          
+
           // Always update the calculated values in previousRates
           updatedPrevRates[rateKey] = {
             adjustedPrice: adjustedPrice,
@@ -238,13 +243,13 @@ function AdminDashboardPage() {
             originalTotalPrice: originalTotalPrice,
             originalRatePerGram: originalRatePerGram
           };
-          
+
           // Check if prices changed (compare calculated values)
           const priceChanged = (
             Math.abs(prevOriginalTotalPrice - originalTotalPrice) > 0.01 ||
             Math.abs(prevAdjustedPrice - adjustedPrice) > 0.01
           );
-          
+
           if (priceChanged && prevCalculated.originalTotalPrice !== undefined) {
             hasChanges = true;
             // Store old values for animation
@@ -256,7 +261,7 @@ function AdminDashboardPage() {
               oldOriginalRatePerGram: prevCalculated.originalRatePerGram || 0,
               timestamp: Date.now()
             };
-            
+
             // Clear animation after 2 seconds
             setTimeout(() => {
               setPreviousRates(prev => {
@@ -273,18 +278,19 @@ function AdminDashboardPage() {
             }, 2000);
           }
         });
-        
+
         // Always update previous rates state with current calculated values
         setPreviousRates(updatedPrevRates);
-        
+
         // Always return new rates to ensure prices are displayed
         // The comparison was preventing updates when it shouldn't
         return newRates;
       });
-      
+
       // CRITICAL: Ensure base rate is available for Normal Price calculation
       // Re-fetch if not available to ensure Normal Price shows exact RB Gold prices
-      if (!baseRateFromSource || !baseRateFromSource.baseRatePerGram) {console.warn('⚠️ Base rate not available after fetching rates, re-fetching...');
+      if (!baseRateFromSource || !baseRateFromSource.baseRatePerGram) {
+        console.warn('⚠️ Base rate not available after fetching rates, re-fetching...');
         const baseRate = await fetchBaseRate();
         if (baseRate && baseRate.baseRatePerGram) {
           console.log(`✅ Base rate now available: ₹${baseRate.baseRatePerGram}/gram (exact RB Gold price)`);
@@ -296,7 +302,7 @@ function AdminDashboardPage() {
       }
     } catch (error) {
       const errorMsg = error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to fetch rates';
-      
+
       // During polling, only log warnings (not errors) to prevent console spam
       if (isPolling) {
         if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
@@ -316,7 +322,7 @@ function AdminDashboardPage() {
         console.error('Error config URL:', error.config?.url);
         console.error('Error config baseURL:', error.config?.baseURL);
       }
-      
+
       // Handle different error types - only show alerts for manual refreshes, not during polling
       if (!isPolling) {
         if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
@@ -337,7 +343,7 @@ function AdminDashboardPage() {
         }
       }
       // During polling, errors are already logged above as warnings (no alerts)
-      
+
       // Don't clear rates on polling errors - keep showing last known rates
       if (!isPolling) {
         setRates([]);
@@ -354,7 +360,7 @@ function AdminDashboardPage() {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      
+
       // Check if user is authenticated
       const token = localStorage.getItem('token');
       if (!token) {
@@ -362,12 +368,12 @@ function AdminDashboardPage() {
         navigate('/admin/login');
         return;
       }
-      
+
       console.log('🔍 Starting to fetch users...');
       console.log('Token exists:', !!token);
       console.log('API base URL:', api.defaults.baseURL);
       console.log('Full URL will be:', `${api.defaults.baseURL}/admin/pending-users`);
-      
+
       try {
         console.log('📡 Making request to /admin/pending-users...');
         const pendingResponse = await api.get('/admin/pending-users');
@@ -391,15 +397,15 @@ function AdminDashboardPage() {
         console.error('Error response data:', JSON.stringify(pendingError.response?.data, null, 2));
         console.error('Error config URL:', pendingError.config?.url);
         console.error('Error config baseURL:', pendingError.config?.baseURL);
-        
+
         const errorMsg = pendingError.response?.data?.message || pendingError.message || 'Failed to fetch pending users';
-        
+
         if (pendingError.response?.status === 401 || pendingError.response?.status === 403) {
           alert(`Authentication error: ${errorMsg}. Please sign in again.`);
           navigate('/admin/login');
           return;
         }
-        
+
         // Show detailed error message
         if (pendingError.code === 'ECONNABORTED' || pendingError.message?.includes('timeout')) {
           console.warn('⏱️ Request timeout - server may be slow or unavailable');
@@ -413,7 +419,7 @@ function AdminDashboardPage() {
         }
         setPendingUsers([]);
       }
-      
+
       // Try to fetch all users
       try {
         console.log('📡 Making request to /admin/users...');
@@ -438,9 +444,9 @@ function AdminDashboardPage() {
         console.error('Error response data:', JSON.stringify(allUsersError.response?.data, null, 2));
         console.error('Error config URL:', allUsersError.config?.url);
         console.error('Error config baseURL:', allUsersError.config?.baseURL);
-        
+
         const errorMsg = allUsersError.response?.data?.message || allUsersError.message || 'Failed to fetch all users';
-        
+
         if (allUsersError.response?.status === 401 || allUsersError.response?.status === 403) {
           // Already handled above, just use pending users
           console.warn('⚠️ Authentication error for all users, using pending users only');
@@ -500,8 +506,8 @@ function AdminDashboardPage() {
   const handleEditProduct = (product) => {
     setEditingProduct(product);
     // Use displayName if it's different from original, otherwise use current name
-    const currentDisplayName = product.displayName !== undefined && product.displayName !== null 
-      ? product.displayName 
+    const currentDisplayName = product.displayName !== undefined && product.displayName !== null
+      ? product.displayName
       : (product.originalName || product.name || '');
     setEditProductName(currentDisplayName);
     setEditProductDialogOpen(true);
@@ -509,7 +515,7 @@ function AdminDashboardPage() {
 
   const handleSaveProduct = async () => {
     if (!editingProduct) return;
-    
+
     try {
       setLoadingAction(true);
       // Use originalName if available (for admin), otherwise use name
@@ -561,7 +567,7 @@ function AdminDashboardPage() {
     try {
       setLoadingAction(true);
       const finalValue = adjustType === 'decrease' ? -Math.abs(value) : value;
-      
+
       // CRITICAL: Ensure we're sending the originalName, not displayName
       let itemNameToSend = selectedItem;
       if (selectedItem !== 'all') {
@@ -571,7 +577,7 @@ function AdminDashboardPage() {
           const displayName = r.displayName || r.name;
           return originalName === selectedItem || displayName === selectedItem;
         });
-        
+
         if (selectedRate) {
           itemNameToSend = selectedRate.originalName || selectedRate.name;
           console.log(`🔍 Adjust rates: Selected "${selectedItem}" → Sending originalName: "${itemNameToSend}"`);
@@ -722,7 +728,7 @@ function AdminDashboardPage() {
   const handleSaveStoreInfo = async () => {
     try {
       setLoadingAction(true);
-      
+
       // Prepare the data to send - ensure arrays are properly formatted
       const dataToSend = {
         welcomeMessage: storeForm.welcomeMessage || '',
@@ -734,17 +740,17 @@ function AdminDashboardPage() {
         storeTimings: Array.isArray(storeForm.storeTimings) ? storeForm.storeTimings : [],
         bankDetails: Array.isArray(storeForm.bankDetails) ? storeForm.bankDetails : []
       };
-      
+
       // Validate data before sending
       if (!dataToSend.welcomeMessage && !dataToSend.address && !dataToSend.phoneNumber) {
         alert('Please fill in at least one field (Welcome Message, Address, or Phone Number)');
         return;
       }
-      
+
       console.log('Saving store info:', JSON.stringify(dataToSend, null, 2));
       console.log('Request URL:', '/store/info');
       console.log('Request method:', 'PUT');
-      
+
       const response = await api.put('/store/info', dataToSend, {
         timeout: 30000,
         headers: {
@@ -752,7 +758,7 @@ function AdminDashboardPage() {
         }
       });
       console.log('Store info saved response:', response.data);
-      
+
       if (response.data && response.data.storeInfo) {
         // Update local state with the response data
         setStoreInfo(response.data.storeInfo);
@@ -767,7 +773,7 @@ function AdminDashboardPage() {
           bankDetails: response.data.storeInfo.bankDetails || []
         });
       }
-      
+
       alert('Store information updated successfully');
       setStoreDialogOpen(false);
       await fetchStoreInfo(); // Refresh store info display
@@ -784,7 +790,7 @@ function AdminDashboardPage() {
           data: error.config?.data
         }
       });
-      
+
       let errorMessage = 'Failed to update store information.';
       if (error.response?.data?.message) {
         errorMessage = error.response.data.message;
@@ -793,7 +799,7 @@ function AdminDashboardPage() {
       } else if (error.message) {
         errorMessage = `Error: ${error.message}`;
       }
-      
+
       if (error.response?.status === 401) {
         errorMessage = 'Unauthorized. Please login again.';
       } else if (error.response?.status === 403) {
@@ -803,7 +809,7 @@ function AdminDashboardPage() {
       } else if (!error.response) {
         errorMessage = 'Network error. Please check your connection and try again.';
       }
-      
+
       alert(errorMessage);
     } finally {
       setLoadingAction(false);
@@ -833,679 +839,679 @@ function AdminDashboardPage() {
       {/* Users Tab Content */}
       {mainTab === 0 && (
         <>
-      {/* Rate Adjustment Card */}
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 700 }}>Rate Adjustment</Typography>
-          <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
-            Adjust silver rates per gram. Enter positive amount to increase or decrease rates.
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2 }}>
-            <Button
-              variant="contained"
-              color="error"
-              startIcon={<Remove />}
-              onClick={() => {
-                setAdjustType('decrease');
-                setAdjustValueType('amount');
-                setAdjustValue('');
-                setSelectedItem('all');
-                setAdjustDialogOpen(true);
-              }}
-              disabled={loadingAction}
-            >
-              Decrease Rates
-            </Button>
-            <Button
-              variant="contained"
-              color="success"
-              startIcon={<Add />}
-              onClick={() => {
-                setAdjustType('increase');
-                setAdjustValueType('amount');
-                setAdjustValue('');
-                setSelectedItem('all');
-                setAdjustDialogOpen(true);
-              }}
-              disabled={loadingAction}
-            >
-              Increase Rates
-            </Button>
-            <Box sx={{ ml: 'auto', display: 'flex', gap: 1, alignItems: 'center' }}>
-              <Chip 
-                label={globalShowAsItIs ? 'Global: Show As It Is ON' : 'Global: Show As It Is OFF'}
-                color={globalShowAsItIs ? "success" : "default"}
-                size="small"
-                sx={{ mr: 1 }}
-              />
-              <Button
-                size="small"
-                variant={globalShowAsItIs ? "contained" : "outlined"}
-                {...(globalShowAsItIs ? { color: "primary" } : {})}
-                startIcon={<RestartAlt />}
-                onClick={toggleShowAsItIs}
-                disabled={loadingAction || loadingRates}
-                sx={{ minWidth: 150 }}
-              >
-                {globalShowAsItIs ? 'Disable Show As It Is' : 'Enable Show As It Is'}
-              </Button>
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
+          {/* Rate Adjustment Card */}
+          <Card sx={{ mb: 3 }}>
+            <CardContent>
+              <Typography variant="h6" sx={{ mb: 2, fontWeight: 700 }}>Rate Adjustment</Typography>
+              <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
+                Adjust silver rates per gram. Enter positive amount to increase or decrease rates.
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2 }}>
+                <Button
+                  variant="contained"
+                  color="error"
+                  startIcon={<Remove />}
+                  onClick={() => {
+                    setAdjustType('decrease');
+                    setAdjustValueType('amount');
+                    setAdjustValue('');
+                    setSelectedItem('all');
+                    setAdjustDialogOpen(true);
+                  }}
+                  disabled={loadingAction}
+                >
+                  Decrease Rates
+                </Button>
+                <Button
+                  variant="contained"
+                  color="success"
+                  startIcon={<Add />}
+                  onClick={() => {
+                    setAdjustType('increase');
+                    setAdjustValueType('amount');
+                    setAdjustValue('');
+                    setSelectedItem('all');
+                    setAdjustDialogOpen(true);
+                  }}
+                  disabled={loadingAction}
+                >
+                  Increase Rates
+                </Button>
+                <Box sx={{ ml: 'auto', display: 'flex', gap: 1, alignItems: 'center' }}>
+                  <Chip
+                    label={globalShowAsItIs ? 'Global: Show As It Is ON' : 'Global: Show As It Is OFF'}
+                    color={globalShowAsItIs ? "success" : "default"}
+                    size="small"
+                    sx={{ mr: 1 }}
+                  />
+                  <Button
+                    size="small"
+                    variant={globalShowAsItIs ? "contained" : "outlined"}
+                    {...(globalShowAsItIs ? { color: "primary" } : {})}
+                    startIcon={<RestartAlt />}
+                    onClick={toggleShowAsItIs}
+                    disabled={loadingAction || loadingRates}
+                    sx={{ minWidth: 150 }}
+                  >
+                    {globalShowAsItIs ? 'Disable Show As It Is' : 'Enable Show As It Is'}
+                  </Button>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
 
-      {/* Current Rates Display Card */}
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6" sx={{ fontWeight: 700 }}>Current Silver Rates</Typography>
-            <Button size="small" onClick={() => fetchRates(false)} disabled={loadingRates}>
-              Refresh
-            </Button>
-          </Box>
-          {loadingRates && rates.length === 0 ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
-              <CircularProgress size={24} />
-            </Box>
-          ) : rates.length > 0 ? (
-            <TableContainer>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={{ fontWeight: 700 }}>Product</TableCell>
-                    {showOriginalRates ? (
-                      <>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>Original Price</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>Price per Gram</TableCell>
-                      </>
-                    ) : (
-                      <>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>Normal Price</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>Adjusted Price</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>Adjustment</TableCell>
-                      </>
-                    )}
-                    <TableCell align="center" sx={{ fontWeight: 700 }}>Visible</TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 700 }}>Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {rates.map((rate) => {
-                    
-                    // Calculate weight in grams
-                    let weightInGrams = rate.weight?.value || 1;
-                    if (rate.weight?.unit === 'kg') {
-                      weightInGrams = weightInGrams * 1000;
-                    }
-                    
-                    // Calculate original rate from RB Gold by subtracting manual adjustment
-                    // IMPORTANT: Always calculate original from current rate - adjustment
-                    // The backend may store incorrect originalRatePerGram, so we calculate it ourselves
-                    // Original Rate = Current Rate - Manual Adjustment
-                    // This gives us the true original price from the source (RB Gold) without any adjustments
-                    const currentRatePerGram = rate.ratePerGram || 0;
-                    const currentTotalRate = rate.rate || 0;
-                    
-                    // Calculate Normal Price = EXACT RB Gold price (with purity adjustments only, NO manual adjustments)
-                    // ALWAYS use base rate from RB Gold source for Normal Price
-                    let originalRatePerGram;
-                    
-                    // CRITICAL: Always use base rate from RB Gold source if available
-                    // This ensures Normal Price shows EXACT RB Gold price without any manual adjustments
-                    if (baseRateFromSource && baseRateFromSource.baseRatePerGram) {
-                      // Get exact base rate from RB Gold and apply purity adjustments
-                      const baseRate = baseRateFromSource.baseRatePerGram;
-                      
-                      // Apply purity adjustments (same as backend)
-                      if (rate.purity === '92.5%') {
-                        originalRatePerGram = baseRate * 0.96;
-                      } else if (rate.purity === '99.99%') {
-                        originalRatePerGram = baseRate * 1.005;
-                      } else {
-                        // 99.9% uses base rate as-is
-                        originalRatePerGram = baseRate;
-                      }
-                    } else {
-                      // Fallback only if baseRateFromSource is not available (should rarely happen)
-                      // Calculate from current rate - manual adjustment (less accurate)
-                      const manualAdjustment = rate.manualAdjustment || 0;
-                      originalRatePerGram = currentRatePerGram - manualAdjustment;
-                      
-                      if (originalRatePerGram <= 0) {
-                        // Try stored values as last resort
-                        if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
-                          originalRatePerGram = rate.originalRatePerGram;
-                        } else if (rate.originalRate && rate.originalRate > 0) {
-                          originalRatePerGram = rate.originalRate / weightInGrams;
-                        } else {
-                          originalRatePerGram = currentRatePerGram;
-                          console.warn(`⚠️ [${rate.name}] Base rate not available, using current rate as fallback: ₹${originalRatePerGram}`);
+          {/* Current Rates Display Card */}
+          <Card sx={{ mb: 3 }}>
+            <CardContent>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700 }}>Current Silver Rates</Typography>
+                <Button size="small" onClick={() => fetchRates(false)} disabled={loadingRates}>
+                  Refresh
+                </Button>
+              </Box>
+              {loadingRates && rates.length === 0 ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+                  <CircularProgress size={24} />
+                </Box>
+              ) : rates.length > 0 ? (
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: 700 }}>Product</TableCell>
+                        {showOriginalRates ? (
+                          <>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>Original Price</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>Price per Gram</TableCell>
+                          </>
+                        ) : (
+                          <>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>Normal Price</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>Adjusted Price</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>Adjustment</TableCell>
+                          </>
+                        )}
+                        <TableCell align="center" sx={{ fontWeight: 700 }}>Visible</TableCell>
+                        <TableCell align="center" sx={{ fontWeight: 700 }}>Actions</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {rates.map((rate) => {
+
+                        // Calculate weight in grams
+                        let weightInGrams = rate.weight?.value || 1;
+                        if (rate.weight?.unit === 'kg') {
+                          weightInGrams = weightInGrams * 1000;
                         }
-                      }
-                      console.warn(`⚠️ [${rate.name}] Base rate from RB Gold not available, using calculated fallback: ₹${originalRatePerGram}`);
-                    }
-                    
-                    // Calculate total price (no rounding to preserve exact RB Gold price)
-                    // CRITICAL: For Silver Bar 1kg (99.99%), calculation must be: ₹208.5/gram × 1000g = ₹208,500
-                    // Formula: originalRatePerGram × weightInGrams = totalPrice
-                    // Example: If baseRate = ₹207.46/gram (99.9%), then:
-                    //   99.99% rate = ₹207.46 × 1.005 = ₹208.5/gram
-                    //   Silver Bar 1kg = ₹208.5 × 1000 = ₹208,500 ✓
-                    const originalTotalPrice = originalRatePerGram * weightInGrams;
-                    
-                    // Calculate manual adjustment (per gram)
-                    const manualAdjustment = rate.manualAdjustment || 0;
-                    
-                    // Calculate Adjusted Price in real-time based on Normal Price + Manual Adjustment
-                    // This ensures adjusted price updates smoothly every second as normal price changes
-                    // Formula: Adjusted Price = Normal Price + (Manual Adjustment × Weight in Grams)
-                    // Adjusted Rate Per Gram = Normal Rate Per Gram + Manual Adjustment
-                    const adjustedRatePerGram = originalRatePerGram + manualAdjustment;
-                    const adjustedPrice = adjustedRatePerGram * weightInGrams;
-                    
-                    // Ensure adjusted price doesn't go negative
-                    const finalAdjustedPrice = Math.max(0, adjustedPrice);
-                    const finalAdjustedRatePerGram = Math.max(0, adjustedRatePerGram);
 
-                    // Compute adjustment as the difference between adjusted rate and calculated original rate.
-                    // Since we're calculating adjusted price from normal price + manual adjustment,
-                    // the displayed adjustment is simply the manual adjustment value
-                    const displayedAdjustment = manualAdjustment;
-                    const EPS = 0.0001;
-                    const hasAdjustment = Math.abs(displayedAdjustment) > EPS;
-                    
-                    // Get price change indicators for smooth animations
-                    const rateKey = rate._id?.toString() || rate.name;
-                    const prevRate = previousRates[rateKey] || {};
-                    const originalPriceChanged = prevRate.oldOriginalTotalPrice !== undefined && 
-                      Math.abs((prevRate.oldOriginalTotalPrice || 0) - (originalTotalPrice || 0)) > 0.01;
-                    const adjustedPriceChanged = prevRate.oldAdjustedPrice !== undefined && 
-                      Math.abs((prevRate.oldAdjustedPrice || 0) - (finalAdjustedPrice || 0)) > 0.01;
-                    
-                    const originalPriceIsUp = originalPriceChanged && (originalTotalPrice || 0) > (prevRate.oldOriginalTotalPrice || 0);
-                    const originalPriceIsDown = originalPriceChanged && (originalTotalPrice || 0) < (prevRate.oldOriginalTotalPrice || 0);
-                    const adjustedPriceIsUp = adjustedPriceChanged && (finalAdjustedPrice || 0) > (prevRate.oldAdjustedPrice || 0);
-                    const adjustedPriceIsDown = adjustedPriceChanged && (finalAdjustedPrice || 0) < (prevRate.oldAdjustedPrice || 0);
-                    
-                    // When showing "as it is", display original rates without adjustments
-                    if (showOriginalRates) {
-                      return (
-                        <TableRow 
-                          key={rate._id || rate.name}
-                          sx={{
-                            backgroundColor: originalPriceChanged 
-                              ? (originalPriceIsUp ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)')
-                              : 'transparent',
-                            transition: 'background-color 0.3s ease-in-out'
-                          }}
-                        >
+                        // Calculate original rate from RB Gold by subtracting manual adjustment
+                        // IMPORTANT: Always calculate original from current rate - adjustment
+                        // The backend may store incorrect originalRatePerGram, so we calculate it ourselves
+                        // Original Rate = Current Rate - Manual Adjustment
+                        // This gives us the true original price from the source (RB Gold) without any adjustments
+                        const currentRatePerGram = rate.ratePerGram || 0;
+                        const currentTotalRate = rate.rate || 0;
+
+                        // Calculate Normal Price = EXACT RB Gold price (with purity adjustments only, NO manual adjustments)
+                        // ALWAYS use base rate from RB Gold source for Normal Price
+                        let originalRatePerGram;
+
+                        // CRITICAL: Always use base rate from RB Gold source if available
+                        // This ensures Normal Price shows EXACT RB Gold price without any manual adjustments
+                        if (baseRateFromSource && baseRateFromSource.baseRatePerGram) {
+                          // Get exact base rate from RB Gold and apply purity adjustments
+                          const baseRate = baseRateFromSource.baseRatePerGram;
+
+                          // Apply purity adjustments (same as backend)
+                          if (rate.purity === '92.5%') {
+                            originalRatePerGram = baseRate * 0.96;
+                          } else if (rate.purity === '99.99%') {
+                            originalRatePerGram = baseRate * 1.005;
+                          } else {
+                            // 99.9% uses base rate as-is
+                            originalRatePerGram = baseRate;
+                          }
+                        } else {
+                          // Fallback only if baseRateFromSource is not available (should rarely happen)
+                          // Calculate from current rate - manual adjustment (less accurate)
+                          const manualAdjustment = rate.manualAdjustment || 0;
+                          originalRatePerGram = currentRatePerGram - manualAdjustment;
+
+                          if (originalRatePerGram <= 0) {
+                            // Try stored values as last resort
+                            if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
+                              originalRatePerGram = rate.originalRatePerGram;
+                            } else if (rate.originalRate && rate.originalRate > 0) {
+                              originalRatePerGram = rate.originalRate / weightInGrams;
+                            } else {
+                              originalRatePerGram = currentRatePerGram;
+                              console.warn(`⚠️ [${rate.name}] Base rate not available, using current rate as fallback: ₹${originalRatePerGram}`);
+                            }
+                          }
+                          console.warn(`⚠️ [${rate.name}] Base rate from RB Gold not available, using calculated fallback: ₹${originalRatePerGram}`);
+                        }
+
+                        // Calculate total price (no rounding to preserve exact RB Gold price)
+                        // CRITICAL: For Silver Bar 1kg (99.99%), calculation must be: ₹208.5/gram × 1000g = ₹208,500
+                        // Formula: originalRatePerGram × weightInGrams = totalPrice
+                        // Example: If baseRate = ₹207.46/gram (99.9%), then:
+                        //   99.99% rate = ₹207.46 × 1.005 = ₹208.5/gram
+                        //   Silver Bar 1kg = ₹208.5 × 1000 = ₹208,500 ✓
+                        const originalTotalPrice = originalRatePerGram * weightInGrams;
+
+                        // Calculate manual adjustment (per gram)
+                        const manualAdjustment = rate.manualAdjustment || 0;
+
+                        // Calculate Adjusted Price in real-time based on Normal Price + Manual Adjustment
+                        // This ensures adjusted price updates smoothly every second as normal price changes
+                        // Formula: Adjusted Price = Normal Price + (Manual Adjustment × Weight in Grams)
+                        // Adjusted Rate Per Gram = Normal Rate Per Gram + Manual Adjustment
+                        const adjustedRatePerGram = originalRatePerGram + manualAdjustment;
+                        const adjustedPrice = adjustedRatePerGram * weightInGrams;
+
+                        // Ensure adjusted price doesn't go negative
+                        const finalAdjustedPrice = Math.max(0, adjustedPrice);
+                        const finalAdjustedRatePerGram = Math.max(0, adjustedRatePerGram);
+
+                        // Compute adjustment as the difference between adjusted rate and calculated original rate.
+                        // Since we're calculating adjusted price from normal price + manual adjustment,
+                        // the displayed adjustment is simply the manual adjustment value
+                        const displayedAdjustment = manualAdjustment;
+                        const EPS = 0.0001;
+                        const hasAdjustment = Math.abs(displayedAdjustment) > EPS;
+
+                        // Get price change indicators for smooth animations
+                        const rateKey = rate._id?.toString() || rate.name;
+                        const prevRate = previousRates[rateKey] || {};
+                        const originalPriceChanged = prevRate.oldOriginalTotalPrice !== undefined &&
+                          Math.abs((prevRate.oldOriginalTotalPrice || 0) - (originalTotalPrice || 0)) > 0.01;
+                        const adjustedPriceChanged = prevRate.oldAdjustedPrice !== undefined &&
+                          Math.abs((prevRate.oldAdjustedPrice || 0) - (finalAdjustedPrice || 0)) > 0.01;
+
+                        const originalPriceIsUp = originalPriceChanged && (originalTotalPrice || 0) > (prevRate.oldOriginalTotalPrice || 0);
+                        const originalPriceIsDown = originalPriceChanged && (originalTotalPrice || 0) < (prevRate.oldOriginalTotalPrice || 0);
+                        const adjustedPriceIsUp = adjustedPriceChanged && (finalAdjustedPrice || 0) > (prevRate.oldAdjustedPrice || 0);
+                        const adjustedPriceIsDown = adjustedPriceChanged && (finalAdjustedPrice || 0) < (prevRate.oldAdjustedPrice || 0);
+
+                        // When showing "as it is", display original rates without adjustments
+                        if (showOriginalRates) {
+                          return (
+                            <TableRow
+                              key={rate._id || rate.name}
+                              sx={{
+                                backgroundColor: originalPriceChanged
+                                  ? (originalPriceIsUp ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)')
+                                  : 'transparent',
+                                transition: 'background-color 0.3s ease-in-out'
+                              }}
+                            >
+                              <TableCell>
+                                <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                                  {rate.name}
+                                </Typography>
+                                <Typography variant="caption" sx={{ color: colors.textSecondary }}>
+                                  {rate.purity} • {rate.weight?.value} {rate.weight?.unit}
+                                </Typography>
+                              </TableCell>
+                              <TableCell align="right">
+                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                                  {originalPriceChanged && (
+                                    originalPriceIsUp ? (
+                                      <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
+                                    ) : (
+                                      <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
+                                    )
+                                  )}
+                                  <Typography
+                                    variant="body2"
+                                    sx={{
+                                      fontWeight: 600,
+                                      color: originalPriceChanged
+                                        ? (originalPriceIsUp ? colors.success : colors.error)
+                                        : colors.textPrimary,
+                                      transition: 'color 0.3s ease-in-out, transform 0.2s ease-in-out',
+                                      transform: originalPriceChanged ? 'scale(1.05)' : 'scale(1)'
+                                    }}
+                                  >
+                                    ₹{Number(originalTotalPrice || 0).toFixed(2)}
+                                  </Typography>
+                                </Box>
+                              </TableCell>
+                              <TableCell align="right">
+                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                                  {originalPriceChanged && (
+                                    originalPriceIsUp ? (
+                                      <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
+                                    ) : (
+                                      <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
+                                    )
+                                  )}
+                                  <Typography
+                                    variant="body2"
+                                    sx={{
+                                      fontWeight: 600,
+                                      color: originalPriceChanged
+                                        ? (originalPriceIsUp ? colors.success : colors.error)
+                                        : colors.textPrimary,
+                                      transition: 'color 0.3s ease-in-out, transform 0.2s ease-in-out',
+                                      transform: originalPriceChanged ? 'scale(1.05)' : 'scale(1)'
+                                    }}
+                                  >
+                                    ₹{Number(originalRatePerGram || 0).toFixed(2)}/gram
+                                  </Typography>
+                                </Box>
+                              </TableCell>
+                              <TableCell align="center">
+                                <Switch
+                                  checked={rate.isVisible !== undefined ? rate.isVisible : true}
+                                  onChange={() => handleToggleVisibility(rate)}
+                                  size="small"
+                                  disabled={loadingAction}
+                                />
+                              </TableCell>
+                              <TableCell align="center">
+                                <IconButton
+                                  size="small"
+                                  onClick={() => handleEditProduct(rate)}
+                                  disabled={loadingAction}
+                                  color="primary"
+                                >
+                                  <Edit fontSize="small" />
+                                </IconButton>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        }
+
+                        // Default view: show both normal and adjusted prices
+                        return (
+                          <TableRow
+                            key={rate._id || rate.name}
+                            sx={{
+                              backgroundColor: adjustedPriceChanged
+                                ? (adjustedPriceIsUp ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)')
+                                : 'transparent',
+                              transition: 'background-color 0.3s ease-in-out'
+                            }}
+                          >
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                                {rate.name}
+                              </Typography>
+                              <Typography variant="caption" sx={{ color: colors.textSecondary }}>
+                                {rate.purity} • {rate.weight?.value} {rate.weight?.unit}
+                              </Typography>
+                            </TableCell>
+                            <TableCell align="right">
+                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                                {originalPriceChanged && (
+                                  originalPriceIsUp ? (
+                                    <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
+                                  ) : (
+                                    <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
+                                  )
+                                )}
+                                <Typography
+                                  variant="body2"
+                                  sx={{
+                                    color: originalPriceChanged
+                                      ? (originalPriceIsUp ? colors.success : colors.error)
+                                      : colors.textSecondary,
+                                    transition: 'color 0.3s ease-in-out',
+                                    fontWeight: originalPriceChanged ? 600 : 400
+                                  }}
+                                >
+                                  ₹{Number(originalTotalPrice || 0).toFixed(2)}
+                                </Typography>
+                              </Box>
+                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                                {originalPriceChanged && (
+                                  originalPriceIsUp ? (
+                                    <TrendingUp sx={{ fontSize: 12, color: colors.success }} />
+                                  ) : (
+                                    <TrendingDown sx={{ fontSize: 12, color: colors.error }} />
+                                  )
+                                )}
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    color: originalPriceChanged
+                                      ? (originalPriceIsUp ? colors.success : colors.error)
+                                      : colors.textSecondary,
+                                    transition: 'color 0.3s ease-in-out',
+                                    display: 'block'
+                                  }}
+                                >
+                                  ₹{Number(originalRatePerGram || 0).toFixed(2)}/gram
+                                </Typography>
+                              </Box>
+                            </TableCell>
+                            <TableCell align="right">
+                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                                {adjustedPriceChanged && (
+                                  adjustedPriceIsUp ? (
+                                    <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
+                                  ) : (
+                                    <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
+                                  )
+                                )}
+                                <Typography
+                                  variant="body2"
+                                  sx={{
+                                    fontWeight: hasAdjustment ? 600 : 400,
+                                    color: finalAdjustedPrice === 0
+                                      ? colors.error
+                                      : adjustedPriceChanged
+                                        ? (adjustedPriceIsUp ? colors.success : colors.error)
+                                        : (hasAdjustment ? (displayedAdjustment > 0 ? colors.success : colors.error) : colors.textPrimary),
+                                    transition: 'color 0.3s ease-in-out, transform 0.2s ease-in-out',
+                                    transform: adjustedPriceChanged ? 'scale(1.05)' : 'scale(1)'
+                                  }}
+                                >
+                                  ₹{Number(finalAdjustedPrice || 0).toFixed(2)}
+                                </Typography>
+                              </Box>
+                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                                {adjustedPriceChanged && (
+                                  adjustedPriceIsUp ? (
+                                    <TrendingUp sx={{ fontSize: 12, color: colors.success }} />
+                                  ) : (
+                                    <TrendingDown sx={{ fontSize: 12, color: colors.error }} />
+                                  )
+                                )}
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    color: finalAdjustedRatePerGram === 0
+                                      ? colors.error
+                                      : adjustedPriceChanged
+                                        ? (adjustedPriceIsUp ? colors.success : colors.error)
+                                        : colors.textSecondary,
+                                    transition: 'color 0.3s ease-in-out',
+                                    display: 'block'
+                                  }}
+                                >
+                                  ₹{Number(finalAdjustedRatePerGram || 0).toFixed(2)}/gram
+                                </Typography>
+                              </Box>
+                            </TableCell>
+                            <TableCell align="right">
+                              {hasAdjustment ? (
+                                <Chip
+                                  label={`${displayedAdjustment > 0 ? '+' : ''}₹${Number(Math.abs(displayedAdjustment) || 0).toFixed(2)}/gram`}
+                                  size="small"
+                                  sx={{
+                                    backgroundColor: displayedAdjustment > 0 ? colors.success : colors.error,
+                                    color: 'white',
+                                    fontWeight: 600
+                                  }}
+                                />
+                              ) : (
+                                <Typography variant="caption" sx={{ color: colors.textSecondary }}>
+                                  No adjustment
+                                </Typography>
+                              )}
+                            </TableCell>
+                            <TableCell align="center">
+                              <Switch
+                                checked={rate.isVisible !== undefined ? rate.isVisible : true}
+                                onChange={() => handleToggleVisibility(rate)}
+                                size="small"
+                                disabled={loadingAction}
+                              />
+                            </TableCell>
+                            <TableCell align="center">
+                              <IconButton
+                                size="small"
+                                onClick={() => handleEditProduct(rate)}
+                                disabled={loadingAction}
+                                color="primary"
+                              >
+                                <Edit fontSize="small" />
+                              </IconButton>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              ) : (
+                <Typography variant="body2" sx={{ color: colors.textSecondary, textAlign: 'center', p: 2 }}>
+                  No rates available
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Users Table Card */}
+          <Card>
+            <CardContent>
+              <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)} sx={{ mb: 2 }}>
+                <Tab label={`Pending Users (${pendingUsers.length})`} />
+                <Tab label={`All Users (${allUsers.length})`} />
+              </Tabs>
+
+              {loading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : usersToShow.length === 0 ? (
+                <Alert severity="info">No users found</Alert>
+              ) : (
+                <TableContainer component={Paper}>
+                  <Table>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: 700 }}>Name</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Email</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Phone</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Actions</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {usersToShow.map((userItem) => (
+                        <TableRow key={userItem._id}>
+                          <TableCell>{userItem.name}</TableCell>
+                          <TableCell>{userItem.email}</TableCell>
+                          <TableCell>{userItem.phone}</TableCell>
                           <TableCell>
-                            <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                              {rate.name}
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: colors.textSecondary }}>
-                              {rate.purity} • {rate.weight?.value} {rate.weight?.unit}
-                            </Typography>
-                          </TableCell>
-                          <TableCell align="right">
-                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
-                              {originalPriceChanged && (
-                                originalPriceIsUp ? (
-                                  <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
-                                ) : (
-                                  <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
-                                )
-                              )}
-                              <Typography 
-                                variant="body2" 
-                                sx={{ 
-                                  fontWeight: 600, 
-                                  color: originalPriceChanged 
-                                    ? (originalPriceIsUp ? colors.success : colors.error)
-                                    : colors.textPrimary,
-                                  transition: 'color 0.3s ease-in-out, transform 0.2s ease-in-out',
-                                  transform: originalPriceChanged ? 'scale(1.05)' : 'scale(1)'
-                                }}
-                              >
-                                ₹{Number(originalTotalPrice || 0).toFixed(2)}
-                              </Typography>
-                            </Box>
-                          </TableCell>
-                          <TableCell align="right">
-                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
-                              {originalPriceChanged && (
-                                originalPriceIsUp ? (
-                                  <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
-                                ) : (
-                                  <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
-                                )
-                              )}
-                              <Typography 
-                                variant="body2" 
-                                sx={{ 
-                                  fontWeight: 600, 
-                                  color: originalPriceChanged 
-                                    ? (originalPriceIsUp ? colors.success : colors.error)
-                                    : colors.textPrimary,
-                                  transition: 'color 0.3s ease-in-out, transform 0.2s ease-in-out',
-                                  transform: originalPriceChanged ? 'scale(1.05)' : 'scale(1)'
-                                }}
-                              >
-                                ₹{Number(originalRatePerGram || 0).toFixed(2)}/gram
-                              </Typography>
-                            </Box>
-                          </TableCell>
-                          <TableCell align="center">
-                            <Switch
-                              checked={rate.isVisible !== undefined ? rate.isVisible : true}
-                              onChange={() => handleToggleVisibility(rate)}
+                            <Chip
+                              label={userItem.status || 'pending'}
+                              color={userItem.status === 'approved' ? 'success' : userItem.status === 'rejected' ? 'error' : 'warning'}
                               size="small"
-                              disabled={loadingAction}
                             />
                           </TableCell>
-                          <TableCell align="center">
-                            <IconButton
-                              size="small"
-                              onClick={() => handleEditProduct(rate)}
-                              disabled={loadingAction}
-                              color="primary"
-                            >
-                              <Edit fontSize="small" />
-                            </IconButton>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                              {userItem.status === 'pending' && (
+                                <>
+                                  <Button
+                                    size="small"
+                                    color="success"
+                                    startIcon={<CheckCircle />}
+                                    onClick={() => handleApprove(userItem._id)}
+                                    disabled={loadingAction}
+                                    variant="contained"
+                                  >
+                                    Approve
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    color="error"
+                                    startIcon={<Cancel />}
+                                    onClick={() => handleReject(userItem._id)}
+                                    disabled={loadingAction}
+                                    variant="contained"
+                                  >
+                                    Reject
+                                  </Button>
+                                </>
+                              )}
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                startIcon={<Visibility />}
+                                onClick={() => handleViewDocuments(userItem._id)}
+                              >
+                                View Docs
+                              </Button>
+                            </Box>
                           </TableCell>
                         </TableRow>
-                      );
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Adjust Rates Dialog */}
+          <Dialog
+            open={adjustDialogOpen}
+            onClose={() => {
+              setAdjustDialogOpen(false);
+              setAdjustValue('');
+              setAdjustValueType('amount');
+              setSelectedItem('all');
+            }}
+            maxWidth="sm"
+            fullWidth
+            disableEnforceFocus={false}
+            disableAutoFocus={false}
+            keepMounted={false}
+            aria-labelledby="adjust-rates-dialog-title"
+          >
+            <DialogTitle id="adjust-rates-dialog-title">
+              {adjustType === 'decrease' ? 'Decrease Rates' : 'Increase Rates'}
+            </DialogTitle>
+            <DialogContent>
+              <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
+                Choose adjustment type and enter the value to {adjustType === 'decrease' ? 'decrease' : 'increase'} rates.
+                {adjustValueType === 'amount'
+                  ? ` Example: Enter 100 to ${adjustType === 'decrease' ? 'decrease' : 'increase'} by ₹100/gram.`
+                  : ` Example: Enter 5 to ${adjustType === 'decrease' ? 'decrease' : 'increase'} by 5%.`
+                }
+              </Typography>
+              <FormControl fullWidth margin="normal">
+                <InputLabel>Select Item</InputLabel>
+                <Select
+                  value={selectedItem}
+                  onChange={(e) => setSelectedItem(e.target.value)}
+                  label="Select Item"
+                >
+                  <MenuItem value="all">All Items</MenuItem>
+                  {rates.map((rate) => {
+                    // Use originalName for backend lookup, but show displayName or name to user
+                    // CRITICAL: Always use the database name (originalName) for the value
+                    // This ensures backend can find the rate even if displayName is changed
+                    const originalName = rate.originalName || rate.name;
+                    const displayName = rate.displayName || rate.name;
+
+                    // Debug log to verify we're sending the right value
+                    if (displayName !== originalName) {
+                      console.log(`🔍 Rate dropdown: "${displayName}" → sending originalName: "${originalName}"`);
                     }
-                    
-                    // Default view: show both normal and adjusted prices
+
                     return (
-                      <TableRow 
-                        key={rate._id || rate.name}
-                        sx={{
-                          backgroundColor: adjustedPriceChanged 
-                            ? (adjustedPriceIsUp ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)')
-                            : 'transparent',
-                          transition: 'background-color 0.3s ease-in-out'
-                        }}
-                      >
-                        <TableCell>
-                          <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                            {rate.name}
-                          </Typography>
-                          <Typography variant="caption" sx={{ color: colors.textSecondary }}>
-                            {rate.purity} • {rate.weight?.value} {rate.weight?.unit}
-                          </Typography>
-                        </TableCell>
-                        <TableCell align="right">
-                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
-                            {originalPriceChanged && (
-                              originalPriceIsUp ? (
-                                <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
-                              ) : (
-                                <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
-                              )
-                            )}
-                            <Typography 
-                              variant="body2" 
-                              sx={{ 
-                                color: originalPriceChanged 
-                                  ? (originalPriceIsUp ? colors.success : colors.error)
-                                  : colors.textSecondary,
-                                transition: 'color 0.3s ease-in-out',
-                                fontWeight: originalPriceChanged ? 600 : 400
-                              }}
-                            >
-                              ₹{Number(originalTotalPrice || 0).toFixed(2)}
-                            </Typography>
-                          </Box>
-                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
-                            {originalPriceChanged && (
-                              originalPriceIsUp ? (
-                                <TrendingUp sx={{ fontSize: 12, color: colors.success }} />
-                              ) : (
-                                <TrendingDown sx={{ fontSize: 12, color: colors.error }} />
-                              )
-                            )}
-                            <Typography 
-                              variant="caption" 
-                              sx={{ 
-                                color: originalPriceChanged 
-                                  ? (originalPriceIsUp ? colors.success : colors.error)
-                                  : colors.textSecondary,
-                                transition: 'color 0.3s ease-in-out',
-                                display: 'block'
-                              }}
-                            >
-                              ₹{Number(originalRatePerGram || 0).toFixed(2)}/gram
-                            </Typography>
-                          </Box>
-                        </TableCell>
-                        <TableCell align="right">
-                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
-                            {adjustedPriceChanged && (
-                              adjustedPriceIsUp ? (
-                                <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
-                              ) : (
-                                <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
-                              )
-                            )}
-                            <Typography 
-                              variant="body2" 
-                              sx={{ 
-                                fontWeight: hasAdjustment ? 600 : 400,
-                                color: finalAdjustedPrice === 0 
-                                  ? colors.error 
-                                  : adjustedPriceChanged
-                                    ? (adjustedPriceIsUp ? colors.success : colors.error)
-                                    : (hasAdjustment ? (displayedAdjustment > 0 ? colors.success : colors.error) : colors.textPrimary),
-                                transition: 'color 0.3s ease-in-out, transform 0.2s ease-in-out',
-                                transform: adjustedPriceChanged ? 'scale(1.05)' : 'scale(1)'
-                              }}
-                            >
-                              ₹{Number(finalAdjustedPrice || 0).toFixed(2)}
-                            </Typography>
-                          </Box>
-                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
-                            {adjustedPriceChanged && (
-                              adjustedPriceIsUp ? (
-                                <TrendingUp sx={{ fontSize: 12, color: colors.success }} />
-                              ) : (
-                                <TrendingDown sx={{ fontSize: 12, color: colors.error }} />
-                              )
-                            )}
-                            <Typography 
-                              variant="caption" 
-                              sx={{ 
-                                color: finalAdjustedRatePerGram === 0 
-                                  ? colors.error 
-                                  : adjustedPriceChanged
-                                    ? (adjustedPriceIsUp ? colors.success : colors.error)
-                                    : colors.textSecondary,
-                                transition: 'color 0.3s ease-in-out',
-                                display: 'block'
-                              }}
-                            >
-                              ₹{Number(finalAdjustedRatePerGram || 0).toFixed(2)}/gram
-                            </Typography>
-                          </Box>
-                        </TableCell>
-                        <TableCell align="right">
-                          {hasAdjustment ? (
-                            <Chip
-                              label={`${displayedAdjustment > 0 ? '+' : ''}₹${Number(Math.abs(displayedAdjustment) || 0).toFixed(2)}/gram`}
-                              size="small"
-                              sx={{
-                                backgroundColor: displayedAdjustment > 0 ? colors.success : colors.error,
-                                color: 'white',
-                                fontWeight: 600
-                              }}
-                            />
-                          ) : (
-                            <Typography variant="caption" sx={{ color: colors.textSecondary }}>
-                              No adjustment
-                            </Typography>
-                          )}
-                        </TableCell>
-                        <TableCell align="center">
-                          <Switch
-                            checked={rate.isVisible !== undefined ? rate.isVisible : true}
-                            onChange={() => handleToggleVisibility(rate)}
-                            size="small"
-                            disabled={loadingAction}
-                          />
-                        </TableCell>
-                        <TableCell align="center">
-                          <IconButton
-                            size="small"
-                            onClick={() => handleEditProduct(rate)}
-                            disabled={loadingAction}
-                            color="primary"
-                          >
-                            <Edit fontSize="small" />
-                          </IconButton>
-                        </TableCell>
-                      </TableRow>
+                      <MenuItem key={rate._id || originalName} value={originalName}>
+                        {displayName}
+                      </MenuItem>
                     );
                   })}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          ) : (
-            <Typography variant="body2" sx={{ color: colors.textSecondary, textAlign: 'center', p: 2 }}>
-              No rates available
-            </Typography>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Users Table Card */}
-      <Card>
-        <CardContent>
-          <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)} sx={{ mb: 2 }}>
-            <Tab label={`Pending Users (${pendingUsers.length})`} />
-            <Tab label={`All Users (${allUsers.length})`} />
-          </Tabs>
-          
-          {loading ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-              <CircularProgress />
-            </Box>
-          ) : usersToShow.length === 0 ? (
-            <Alert severity="info">No users found</Alert>
-          ) : (
-            <TableContainer component={Paper}>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={{ fontWeight: 700 }}>Name</TableCell>
-                    <TableCell sx={{ fontWeight: 700 }}>Email</TableCell>
-                    <TableCell sx={{ fontWeight: 700 }}>Phone</TableCell>
-                    <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
-                    <TableCell sx={{ fontWeight: 700 }}>Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {usersToShow.map((userItem) => (
-                    <TableRow key={userItem._id}>
-                      <TableCell>{userItem.name}</TableCell>
-                      <TableCell>{userItem.email}</TableCell>
-                      <TableCell>{userItem.phone}</TableCell>
-                      <TableCell>
-                        <Chip
-                          label={userItem.status || 'pending'}
-                          color={userItem.status === 'approved' ? 'success' : userItem.status === 'rejected' ? 'error' : 'warning'}
-                          size="small"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                          {userItem.status === 'pending' && (
-                            <>
-                              <Button
-                                size="small"
-                                color="success"
-                                startIcon={<CheckCircle />}
-                                onClick={() => handleApprove(userItem._id)}
-                                disabled={loadingAction}
-                                variant="contained"
-                              >
-                                Approve
-                              </Button>
-                              <Button
-                                size="small"
-                                color="error"
-                                startIcon={<Cancel />}
-                                onClick={() => handleReject(userItem._id)}
-                                disabled={loadingAction}
-                                variant="contained"
-                              >
-                                Reject
-                              </Button>
-                            </>
-                          )}
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            startIcon={<Visibility />}
-                            onClick={() => handleViewDocuments(userItem._id)}
-                          >
-                            View Docs
-                          </Button>
-                        </Box>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Adjust Rates Dialog */}
-      <Dialog 
-        open={adjustDialogOpen} 
-        onClose={() => {
-          setAdjustDialogOpen(false);
-          setAdjustValue('');
-          setAdjustValueType('amount');
-          setSelectedItem('all');
-        }} 
-        maxWidth="sm" 
-        fullWidth
-        disableEnforceFocus={false}
-        disableAutoFocus={false}
-        keepMounted={false}
-        aria-labelledby="adjust-rates-dialog-title"
-      >
-        <DialogTitle id="adjust-rates-dialog-title">
-          {adjustType === 'decrease' ? 'Decrease Rates' : 'Increase Rates'}
-        </DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
-            Choose adjustment type and enter the value to {adjustType === 'decrease' ? 'decrease' : 'increase'} rates.
-            {adjustValueType === 'amount' 
-              ? ` Example: Enter 100 to ${adjustType === 'decrease' ? 'decrease' : 'increase'} by ₹100/gram.`
-              : ` Example: Enter 5 to ${adjustType === 'decrease' ? 'decrease' : 'increase'} by 5%.`
-            }
-          </Typography>
-          <FormControl fullWidth margin="normal">
-            <InputLabel>Select Item</InputLabel>
-            <Select
-              value={selectedItem}
-              onChange={(e) => setSelectedItem(e.target.value)}
-              label="Select Item"
-            >
-              <MenuItem value="all">All Items</MenuItem>
-              {rates.map((rate) => {
-                // Use originalName for backend lookup, but show displayName or name to user
-                // CRITICAL: Always use the database name (originalName) for the value
-                // This ensures backend can find the rate even if displayName is changed
-                const originalName = rate.originalName || rate.name;
-                const displayName = rate.displayName || rate.name;
-                
-                // Debug log to verify we're sending the right value
-                if (displayName !== originalName) {
-                  console.log(`🔍 Rate dropdown: "${displayName}" → sending originalName: "${originalName}"`);
-                }
-                
-                return (
-                  <MenuItem key={rate._id || originalName} value={originalName}>
-                    {displayName}
-                  </MenuItem>
-                );
-              })}
-            </Select>
-          </FormControl>
-          <FormControl fullWidth margin="normal">
-            <InputLabel>Adjustment Type</InputLabel>
-            <Select
-              value={adjustValueType}
-              onChange={(e) => setAdjustValueType(e.target.value)}
-              label="Adjustment Type"
-            >
-              <MenuItem value="amount">Amount (₹/gram)</MenuItem>
-              <MenuItem value="percentage">Percentage (%)</MenuItem>
-            </Select>
-          </FormControl>
-          <TextField
-            fullWidth
-            label={adjustValueType === 'amount' 
-              ? `Amount (₹/gram) to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`
-              : `Percentage (%) to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`
-            }
-            type="number"
-            value={adjustValue}
-            onChange={(e) => setAdjustValue(e.target.value)}
-            margin="normal"
-            placeholder={adjustValueType === 'amount' ? 'e.g., 100' : 'e.g., 5'}
-            inputProps={{ min: 0, step: adjustValueType === 'amount' ? 0.01 : 0.1 }}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => {
-            setAdjustDialogOpen(false);
-            setAdjustValue('');
-            setAdjustValueType('amount');
-            setSelectedItem('all');
-          }} disabled={loadingAction}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleAdjustRates}
-            variant="contained"
-            color={adjustType === 'decrease' ? 'error' : 'success'}
-            disabled={loadingAction || !adjustValue}
-          >
-            {loadingAction ? 'Applying...' : adjustType === 'decrease' ? 'Decrease' : 'Increase'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Edit Product Dialog */}
-      <Dialog 
-        open={editProductDialogOpen} 
-        onClose={() => {
-          setEditProductDialogOpen(false);
-          setEditingProduct(null);
-          setEditProductName('');
-        }} 
-        maxWidth="sm" 
-        fullWidth
-      >
-        <DialogTitle>Edit Product</DialogTitle>
-        <DialogContent>
-          {editingProduct && (
-            <>
-              <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
-                Original Name: <strong>{editingProduct.originalName || editingProduct.name}</strong>
-              </Typography>
+                </Select>
+              </FormControl>
+              <FormControl fullWidth margin="normal">
+                <InputLabel>Adjustment Type</InputLabel>
+                <Select
+                  value={adjustValueType}
+                  onChange={(e) => setAdjustValueType(e.target.value)}
+                  label="Adjustment Type"
+                >
+                  <MenuItem value="amount">Amount (₹/gram)</MenuItem>
+                  <MenuItem value="percentage">Percentage (%)</MenuItem>
+                </Select>
+              </FormControl>
               <TextField
                 fullWidth
-                label="Display Name"
-                value={editProductName}
-                onChange={(e) => setEditProductName(e.target.value)}
+                label={adjustValueType === 'amount'
+                  ? `Amount (₹/gram) to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`
+                  : `Percentage (%) to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`
+                }
+                type="number"
+                value={adjustValue}
+                onChange={(e) => setAdjustValue(e.target.value)}
                 margin="normal"
-                placeholder="Leave empty to use original name"
-                helperText="Leave empty to show the original product name to users"
+                placeholder={adjustValueType === 'amount' ? 'e.g., 100' : 'e.g., 5'}
+                inputProps={{ min: 0, step: adjustValueType === 'amount' ? 0.01 : 0.1 }}
               />
-            </>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => {
-            setEditProductDialogOpen(false);
-            setEditingProduct(null);
-            setEditProductName('');
-          }} disabled={loadingAction}>
-            Cancel
-          </Button>
-          <Button onClick={handleSaveProduct} variant="contained" disabled={loadingAction}>
-            {loadingAction ? 'Saving...' : 'Save'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-      </>
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => {
+                setAdjustDialogOpen(false);
+                setAdjustValue('');
+                setAdjustValueType('amount');
+                setSelectedItem('all');
+              }} disabled={loadingAction}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleAdjustRates}
+                variant="contained"
+                color={adjustType === 'decrease' ? 'error' : 'success'}
+                disabled={loadingAction || !adjustValue}
+              >
+                {loadingAction ? 'Applying...' : adjustType === 'decrease' ? 'Decrease' : 'Increase'}
+              </Button>
+            </DialogActions>
+          </Dialog>
+
+          {/* Edit Product Dialog */}
+          <Dialog
+            open={editProductDialogOpen}
+            onClose={() => {
+              setEditProductDialogOpen(false);
+              setEditingProduct(null);
+              setEditProductName('');
+            }}
+            maxWidth="sm"
+            fullWidth
+          >
+            <DialogTitle>Edit Product</DialogTitle>
+            <DialogContent>
+              {editingProduct && (
+                <>
+                  <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
+                    Original Name: <strong>{editingProduct.originalName || editingProduct.name}</strong>
+                  </Typography>
+                  <TextField
+                    fullWidth
+                    label="Display Name"
+                    value={editProductName}
+                    onChange={(e) => setEditProductName(e.target.value)}
+                    margin="normal"
+                    placeholder="Leave empty to use original name"
+                    helperText="Leave empty to show the original product name to users"
+                  />
+                </>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => {
+                setEditProductDialogOpen(false);
+                setEditingProduct(null);
+                setEditProductName('');
+              }} disabled={loadingAction}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveProduct} variant="contained" disabled={loadingAction}>
+                {loadingAction ? 'Saving...' : 'Save'}
+              </Button>
+            </DialogActions>
+          </Dialog>
+        </>
       )}
 
       {/* News Tab Content */}
@@ -1646,10 +1652,10 @@ function AdminDashboardPage() {
       )}
 
       {/* News Dialog */}
-      <Dialog 
-        open={newsDialogOpen} 
-        onClose={() => setNewsDialogOpen(false)} 
-        maxWidth="md" 
+      <Dialog
+        open={newsDialogOpen}
+        onClose={() => setNewsDialogOpen(false)}
+        maxWidth="md"
         fullWidth
         disableEnforceFocus={false}
         disableAutoFocus={false}
@@ -1726,10 +1732,10 @@ function AdminDashboardPage() {
       </Dialog>
 
       {/* Store Info Dialog */}
-      <Dialog 
-        open={storeDialogOpen} 
-        onClose={() => setStoreDialogOpen(false)} 
-        maxWidth="md" 
+      <Dialog
+        open={storeDialogOpen}
+        onClose={() => setStoreDialogOpen(false)}
+        maxWidth="md"
         fullWidth
         disableEnforceFocus={false}
         disableAutoFocus={false}
@@ -1784,7 +1790,7 @@ function AdminDashboardPage() {
             onChange={(e) => setStoreForm({ ...storeForm, youtube: e.target.value })}
             margin="normal"
           />
-          
+
           {/* Store Timings */}
           <Accordion sx={{ mt: 2 }}>
             <AccordionSummary expandIcon={<ExpandMore />}>
