@@ -1242,10 +1242,11 @@ router.get('/', async (req, res) => {
                     }
                   } catch (fetchError) {
                     // Use cached rate if fetch fails - still better than stale MongoDB data
+                    const errorMsg = fetchError?.message || 'Unknown error';
                     if (cachedBaseRate && cachedBaseRate.ratePerGram > 0) {
-                      console.log(`Using cached base rate ₹${cachedBaseRate.ratePerGram.toFixed(2)}/gram (fetch failed: ${fetchError.message.substring(0, 50)})`);
+                      console.log(`Using cached base rate ₹${cachedBaseRate.ratePerGram.toFixed(2)}/gram (fetch failed: ${errorMsg.substring(0, 50)})`);
                     } else {
-                      console.warn('Could not fetch fresh base rate and no valid cache, using MongoDB rates:', fetchError.message);
+                      console.warn('Could not fetch fresh base rate and no valid cache, using MongoDB rates:', errorMsg);
                       // If we can't get a base rate, fall through to serve MongoDB rates
                       throw new Error('No valid base rate available');
                     }
@@ -1866,7 +1867,8 @@ router.get('/', async (req, res) => {
 
   } catch (error) {
     clearTimeout(responseTimeout);
-    console.error('❌ Get rates error:', error.message);
+    const errorMsg = error?.message || 'Unknown error';
+    console.error('❌ Get rates error:', errorMsg);
     if (error.stack) {
       console.error('Error stack:', error.stack.substring(0, 500));
     }
@@ -1878,10 +1880,19 @@ router.get('/', async (req, res) => {
     }
 
     // Return a more detailed error in development, generic in production
+    // Ensure error message is safe for JSON (no special characters that break parsing)
+    const safeErrorMsg = String(errorMsg).replace(/[^\x20-\x7E]/g, ''); // Remove non-printable characters
     const errorDetails = process.env.NODE_ENV === 'development'
-      ? { error: 'Failed to fetch rates', message: error.message, stack: error.stack?.substring(0, 500) }
+      ? { error: 'Failed to fetch rates', message: safeErrorMsg, stack: (error.stack?.substring(0, 500) || '').replace(/[^\x20-\x7E]/g, '') }
       : { error: 'Failed to fetch rates', message: 'An error occurred while fetching rates. Please try again.' };
-    return res.status(500).json(errorDetails);
+    
+    try {
+      return res.status(500).json(errorDetails);
+    } catch (jsonError) {
+      // If JSON.stringify fails, send a simple text response
+      console.error('❌ Failed to send JSON error response:', jsonError.message);
+      return res.status(500).send('Internal Server Error');
+    }
   } finally {
     clearTimeout(responseTimeout);
   }
