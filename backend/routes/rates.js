@@ -981,7 +981,15 @@ router.get('/', async (req, res) => {
                 }
               }
             }
-            const ratesWithUSD = finalRates.map(rate => ({
+            
+            // CRITICAL: Filter out disabled products for non-admin users
+            let filteredFinalRates = finalRates;
+            if (!isAdmin && !skipUpdate) {
+              filteredFinalRates = finalRates.filter(rate => rate.isVisible !== false);
+              console.log(`🔒 skipUpdate=false: Filtered ${finalRates.length} → ${filteredFinalRates.length} products for non-admin`);
+            }
+
+            const ratesWithUSD = filteredFinalRates.map(rate => ({
               ...rate,
               usdInrRate: cachedBaseRate.usdInrRate || 89.25
             }));
@@ -1152,7 +1160,14 @@ router.get('/', async (req, res) => {
                     } else {
                       processedRates = await applyManualAdjustments(retryRates, isAdmin);
                     }
-                    const ratesWithUSD = processedRates.map(rate => ({
+                    // CRITICAL: Filter out disabled products for non-admin users
+                    let filteredProcessedRates = processedRates;
+                    if (!isAdmin) {
+                      filteredProcessedRates = processedRates.filter(rate => rate.isVisible !== false);
+                      console.log(`🔒 Filtered ${processedRates.length} → ${filteredProcessedRates.length} products for non-admin`);
+                    }
+
+                    const ratesWithUSD = filteredProcessedRates.map(rate => ({
                       ...rate,
                       usdInrRate: cachedBaseRate.usdInrRate || 89.25
                     }));
@@ -1203,7 +1218,14 @@ router.get('/', async (req, res) => {
                   } else {
                     processedRates = await applyManualAdjustments(freshRates, isAdmin);
                   }
-                  const ratesWithUSD = processedRates.map(rate => ({
+                  // CRITICAL: Filter out disabled products for non-admin users
+                  let filteredProcessedRates = processedRates;
+                  if (!isAdmin) {
+                    filteredProcessedRates = processedRates.filter(rate => rate.isVisible !== false);
+                    console.log(`🔒 Filtered ${processedRates.length} → ${filteredProcessedRates.length} products for non-admin`);
+                  }
+
+                  const ratesWithUSD = filteredProcessedRates.map(rate => ({
                     ...rate,
                     usdInrRate: cachedBaseRate.usdInrRate || 89.25
                   }));
@@ -1407,7 +1429,7 @@ router.get('/', async (req, res) => {
                     if (latestRate.purity === '92.5%') {
                       estimatedBaseRate = latestRate.ratePerGram / 0.96;
                     } else if (latestRate.purity === '99.99%') {
-                      estimatedBaseRate = latestRate.ratePerGram / 1.005;
+                      estimatedBaseRate = latestRate.ratePerGram; // 99.99% uses base rate as-is
                     } else {
                       estimatedBaseRate = latestRate.ratePerGram;
                     }
@@ -1423,7 +1445,15 @@ router.get('/', async (req, res) => {
                   console.log(`✅ Fresh rates fetched: ${freshRates.length} rates (${Math.round(freshAge / 1000)}s old, latest: ${freshLatest.name} = ₹${freshLatest.ratePerGram}/gram)`);
 
                   const ratesWithAdjustments = await applyManualAdjustments(freshRates, isAdmin);
-                  const ratesWithUSD = ratesWithAdjustments.map(rate => ({
+                  
+                  // CRITICAL: Filter out disabled products for non-admin users
+                  let filteredRatesWithAdjustments = ratesWithAdjustments;
+                  if (!isAdmin) {
+                    filteredRatesWithAdjustments = ratesWithAdjustments.filter(rate => rate.isVisible !== false);
+                    console.log(`🔒 Filtered ${ratesWithAdjustments.length} → ${filteredRatesWithAdjustments.length} products for non-admin`);
+                  }
+
+                  const ratesWithUSD = filteredRatesWithAdjustments.map(rate => ({
                     ...rate,
                     usdInrRate: cachedBaseRate.usdInrRate || 89.25
                   }));
@@ -1509,7 +1539,7 @@ router.get('/', async (req, res) => {
                     if (latestRate.purity === '92.5%') {
                       estimatedBaseRate = latestRate.ratePerGram / 0.96;
                     } else if (latestRate.purity === '99.99%') {
-                      estimatedBaseRate = latestRate.ratePerGram / 1.005;
+                      estimatedBaseRate = latestRate.ratePerGram; // 99.99% uses base rate as-is
                     } else {
                       estimatedBaseRate = latestRate.ratePerGram;
                     }
@@ -1519,7 +1549,15 @@ router.get('/', async (req, res) => {
 
                 if (freshRates && freshRates.length > 0) {
                   const ratesWithAdjustments = await applyManualAdjustments(freshRates, isAdmin);
-                  const ratesWithUSD = ratesWithAdjustments.map(rate => ({
+                  
+                  // CRITICAL: Filter out disabled products for non-admin users
+                  let filteredRatesWithAdjustments = ratesWithAdjustments;
+                  if (!isAdmin) {
+                    filteredRatesWithAdjustments = ratesWithAdjustments.filter(rate => rate.isVisible !== false);
+                    console.log(`🔒 Filtered ${ratesWithAdjustments.length} → ${filteredRatesWithAdjustments.length} products for non-admin`);
+                  }
+
+                  const ratesWithUSD = filteredRatesWithAdjustments.map(rate => ({
                     ...rate,
                     usdInrRate: cachedBaseRate.usdInrRate || 89.25
                   }));
@@ -1806,9 +1844,24 @@ router.get('/', async (req, res) => {
               throw new Error('Failed to process rates - finalRates is invalid');
             }
 
+            // CRITICAL: Filter out disabled products for non-admin users BEFORE adding USD rate
+            // This ensures customers NEVER see disabled products, even if filtering was missed earlier
+            let filteredFinalRates = finalRates;
+            if (!isAdmin && !skipUpdate) {
+              const beforeFilter = filteredFinalRates.length;
+              filteredFinalRates = finalRates.filter(rate => {
+                const isVisible = rate.isVisible !== undefined ? rate.isVisible : true;
+                return isVisible !== false;
+              });
+              const afterFilter = filteredFinalRates.length;
+              if (beforeFilter !== afterFilter) {
+                console.log(`🔒 FINAL FILTER: Non-admin - Filtered ${beforeFilter} → ${afterFilter} products (removed ${beforeFilter - afterFilter} disabled)`);
+              }
+            }
+
             // Add USD rate to all rates if available
             // CRITICAL: Preserve isVisible field when mapping
-            const ratesWithUSD = finalRates.map(rate => ({
+            const ratesWithUSD = filteredFinalRates.map(rate => ({
               ...rate,
               usdInrRate: cachedBaseRate.usdInrRate || 89.25,
               // Explicitly preserve isVisible to ensure it's not lost
@@ -1825,6 +1878,14 @@ router.get('/', async (req, res) => {
               // CRITICAL: Verify disabled products are in response
               if (disabledInResponse === 0) {
                 console.warn(`⚠️ WARNING: No disabled products in response! Check if they were filtered out.`);
+              }
+            } else {
+              // Log for non-admin to verify no disabled products
+              const disabledInResponse = ratesWithUSD.filter(r => r.isVisible === false).length;
+              if (disabledInResponse > 0) {
+                console.error(`❌ ERROR: Non-admin response contains ${disabledInResponse} disabled products! This should never happen.`);
+              } else {
+                console.log(`🔒 FINAL RESPONSE: Non-admin - Returning ${ratesWithUSD.length} visible products only (no disabled products)`);
               }
             }
 
@@ -1922,15 +1983,35 @@ router.get('/', async (req, res) => {
 
       // In fallback mode, we don't have MongoDB rates, so we can't filter by visibility
       // Default all to visible, but this is fallback only
+      // CRITICAL: Try to get visibility from MongoDB even in fallback mode
+      let visibilityMap = {};
+      try {
+        const mongoose = require('mongoose');
+        if (mongoose.connection.readyState === 1) {
+          const mongoRatesForVisibility = await SilverRate.find({ location: 'Andhra Pradesh' })
+            .select('name isVisible')
+            .lean();
+          mongoRatesForVisibility.forEach(rate => {
+            visibilityMap[rate.name] = rate.isVisible !== undefined ? rate.isVisible : true;
+          });
+        }
+      } catch (visError) {
+        console.warn('Could not fetch visibility in fallback:', visError.message);
+      }
+
       allRates = calculatedOriginalRates.map(rate => ({
         ...rate,
-        isVisible: true, // Default to visible in fallback mode
+        isVisible: visibilityMap[rate.name] !== undefined ? visibilityMap[rate.name] : true, // Use MongoDB visibility if available
         displayName: null,
         originalName: rate.name
       }));
 
-      // For non-admin users, we'd filter here, but in fallback we don't have visibility data
-      // So we show all in fallback mode (which shouldn't happen often)
+      // For non-admin users, filter by visibility even in fallback mode
+      if (!isAdmin) {
+        allRates = allRates.filter(rate => rate.isVisible !== false);
+        console.log(`🔒 Fallback mode: Filtered to ${allRates.length} visible products for non-admin`);
+      }
+
       console.log(`✅ "Show As It Is" enabled - returning original rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
     } else {
       // Fetch manual adjustments from MongoDB
@@ -1985,7 +2066,14 @@ router.get('/', async (req, res) => {
       });
     }
 
-    console.log(`📦 Serving ${allRates.length} rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
+    // CRITICAL: Filter out disabled products for non-admin users
+    let filteredAllRates = allRates;
+    if (!isAdmin) {
+      filteredAllRates = allRates.filter(rate => rate.isVisible !== false);
+      console.log(`🔒 Cache fallback: Filtered ${allRates.length} → ${filteredAllRates.length} products for non-admin`);
+    }
+
+    console.log(`📦 Serving ${filteredAllRates.length} rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
 
     // Set headers to prevent caching
     res.set({
@@ -1994,7 +2082,7 @@ router.get('/', async (req, res) => {
       'Expires': '0'
     });
 
-    return res.json(allRates);
+    return res.json(filteredAllRates);
 
   } catch (error) {
     const errorMsg = error?.message || 'Unknown error';

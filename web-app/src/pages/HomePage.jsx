@@ -178,7 +178,7 @@ function HomePage() {
             };
           });
           
-          // Sort rates to put "Silver 1 kg" first
+          // Filter and sort rates - CRITICAL: Only show enabled products
           return sortRates(updatedRates);
         });
       } else {
@@ -260,11 +260,19 @@ function HomePage() {
     return `${weight.value} ${weight.unit}`;
   };
 
-  // Sort rates to put "Silver 1 kg" first
+  // Filter and sort rates - CRITICAL: Only show enabled products to customers
   const sortRates = (ratesArray) => {
-    if (!Array.isArray(ratesArray)) return ratesArray;
+    if (!Array.isArray(ratesArray)) return [];
     
-    return [...ratesArray].sort((a, b) => {
+    // CRITICAL: Filter out disabled products (isVisible === false)
+    // Only show products where isVisible is true or undefined (default to visible)
+    const visibleRates = ratesArray.filter(rate => {
+      const isVisible = rate.isVisible !== undefined ? rate.isVisible : true;
+      return isVisible !== false;
+    });
+    
+    // Sort to put "Silver 1 kg" first
+    return [...visibleRates].sort((a, b) => {
       // Check if rate is "Silver 1 kg" (by name or weight)
       const aIs1Kg = (a.name?.toLowerCase().includes('1 kg') || a.name?.toLowerCase().includes('1kg')) &&
                      (a.weight?.value === 1 && a.weight?.unit === 'kg');
