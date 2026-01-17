@@ -296,8 +296,31 @@ app.get('/', (req, res) => {
 const loadRoute = (routePath, routeName) => {
   try {
     // Use absolute path to ensure it works on Vercel
-    const routeFile = path.join(__dirname, 'routes', routeName + '.js');
-    const route = require(routeFile);
+    // On Vercel, __dirname might be /var/task/backend or /var/task
+    // Try multiple possible paths
+    let routeFile = path.join(__dirname, 'routes', routeName + '.js');
+    let route = null;
+    
+    try {
+      route = require(routeFile);
+    } catch (firstError) {
+      // Try alternative path (in case __dirname is different on Vercel)
+      const altPath = path.join(__dirname, '..', 'routes', routeName + '.js');
+      try {
+        route = require(altPath);
+        routeFile = altPath;
+      } catch (secondError) {
+        // Try one more path
+        const altPath2 = path.join(process.cwd(), 'routes', routeName + '.js');
+        try {
+          route = require(altPath2);
+          routeFile = altPath2;
+        } catch (thirdError) {
+          throw firstError; // Throw original error
+        }
+      }
+    }
+    
     app.use(`/api/${routeName}`, route);
     console.log(`✅ Route loaded: /api/${routeName} from ${routeFile}`);
     return true;
@@ -305,13 +328,19 @@ const loadRoute = (routePath, routeName) => {
     console.error(`❌ Failed to load route /api/${routeName}:`, error.message);
     console.error(`   Attempted path: ${path.join(__dirname, 'routes', routeName + '.js')}`);
     console.error(`   __dirname: ${__dirname}`);
+    console.error(`   process.cwd(): ${process.cwd()}`);
+    if (error.stack) {
+      console.error(`   Error stack: ${error.stack.substring(0, 500)}`);
+    }
     // Add error route for failed route
     app.use(`/api/${routeName}`, (req, res) => {
       res.status(500).json({ 
         error: 'Route initialization failed', 
         route: routeName,
-        message: error.message,
-        attemptedPath: path.join(__dirname, 'routes', routeName + '.js')
+        message: String(error.message || 'Unknown error').replace(/[^\x20-\x7E]/g, ''),
+        attemptedPath: path.join(__dirname, 'routes', routeName + '.js'),
+        __dirname: __dirname,
+        cwd: process.cwd()
       });
     });
     return false;
