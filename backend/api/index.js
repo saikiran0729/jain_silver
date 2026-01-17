@@ -75,5 +75,12 @@ try {
 
 // Export the Express app for Vercel
 // Vercel will automatically handle Express apps
-module.exports = app;
+// For Vercel serverless functions, we need to export a handler function
+module.exports = (req, res) => {
+  // Delegate to Express app
+  return app(req, res);
+};
+
+// Also export the app directly for compatibility
+module.exports.default = app;
 

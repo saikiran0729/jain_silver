@@ -12,7 +12,8 @@
   "functions": {
     "api/index.js": {
       "maxDuration": 120,
-      "memory": 1024
+      "memory": 1024,
+      "runtime": "nodejs18.x"
     }
   },
   "rewrites": [
