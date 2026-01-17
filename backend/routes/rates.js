@@ -721,6 +721,11 @@ router.get('/', async (req, res) => {
         // Declare latestRate and mongoAge in broader scope so they're accessible later
         let latestRate = null;
         let mongoAge = 0;
+        
+        // Define thresholds at top level so they're accessible throughout the route handler
+        const STALE_THRESHOLD = 500; // 500ms - trigger update if older than 0.5 seconds for near real-time
+        const VERY_STALE_THRESHOLD = 2000; // 2 seconds - if very stale, wait for update before serving
+        const OLD_RATE_THRESHOLD = 200; // If rate is below this, it's likely old cached data (updated for current rates ~₹290/gram)
 
         // Log for debugging - always log when skipUpdate is true (likely admin dashboard)
         if (skipUpdate || isAdmin) {
@@ -783,9 +788,7 @@ router.get('/', async (req, res) => {
           }
 
           mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
-          const STALE_THRESHOLD = 500; // 500ms - trigger update if older than 0.5 seconds for near real-time
-          const VERY_STALE_THRESHOLD = 2000; // 2 seconds - if very stale, wait for update before serving
-          const OLD_RATE_THRESHOLD = 200; // If rate is below this, it's likely old cached data (updated for current rates ~₹290/gram)
+          // Thresholds are defined at top level above
 
           // Check if ANY 99.9% rate is old cached data (should be ~₹290, not below ₹200)
           const hasOld99_9Rates = mongoRates.some(rate =>
@@ -1973,7 +1976,6 @@ router.get('/', async (req, res) => {
     return res.json(allRates);
 
   } catch (error) {
-    clearTimeout(responseTimeout);
     const errorMsg = error?.message || 'Unknown error';
     console.error('❌ Get rates error:', errorMsg);
     if (error.stack) {
@@ -2000,8 +2002,6 @@ router.get('/', async (req, res) => {
       console.error('❌ Failed to send JSON error response:', jsonError.message);
       return res.status(500).send('Internal Server Error');
     }
-  } finally {
-    clearTimeout(responseTimeout);
   }
 });
 
