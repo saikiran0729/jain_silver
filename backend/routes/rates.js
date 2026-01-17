@@ -659,6 +659,12 @@ router.get('/', async (req, res) => {
     // In serverless, we need to ensure connection on each request
     try {
       const mongoose = require('mongoose');
+      
+      // Safety check: ensure mongoose is available
+      if (!mongoose) {
+        console.warn('⚠️ Mongoose not available, skipping MongoDB fetch');
+        throw new Error('Mongoose not available');
+      }
 
       // For serverless (Vercel), ensure connection on each request
       if (mongoose.connection.readyState !== 1) {
@@ -1247,22 +1253,28 @@ router.get('/', async (req, res) => {
                       console.log(`Using cached base rate ₹${cachedBaseRate.ratePerGram.toFixed(2)}/gram (fetch failed: ${errorMsg.substring(0, 50)})`);
                     } else {
                       console.warn('Could not fetch fresh base rate and no valid cache, using MongoDB rates:', errorMsg);
-                      // If we can't get a base rate, fall through to serve MongoDB rates
-                      throw new Error('No valid base rate available');
+                      // Don't throw - just use MongoDB rates as-is
+                      currentBaseRate = 207.0; // Fallback default
                     }
                   }
 
                   // Validate we have a valid base rate
-                  if (!currentBaseRate || currentBaseRate <= 0) {
-                    throw new Error('Invalid base rate for recalculation');
+                  if (!currentBaseRate || currentBaseRate <= 0 || isNaN(currentBaseRate)) {
+                    console.warn('Invalid base rate for recalculation, using default');
+                    currentBaseRate = 207.0; // Fallback default
                   }
 
-                  // Fetch all manual adjustments at once
-                  const rateNames = mongoRates.map(r => r.originalName || r.name).filter(Boolean);
-                  if (rateNames.length === 0) {
-                    throw new Error('No rate names found for recalculation');
+                  // Fetch all manual adjustments at once (with error handling)
+                  let adjustmentsMap = {};
+                  try {
+                    const rateNames = mongoRates.map(r => r.originalName || r.name).filter(Boolean);
+                    if (rateNames.length > 0) {
+                      adjustmentsMap = await fetchManualAdjustments(rateNames);
+                    }
+                  } catch (adjError) {
+                    console.warn('Could not fetch manual adjustments, using defaults:', adjError?.message || 'Unknown error');
+                    adjustmentsMap = {}; // Use empty map as fallback
                   }
-                  const adjustmentsMap = await fetchManualAdjustments(rateNames);
 
                   // Recalculate rates on-the-fly from current base rate + manual adjustments
                   const recalculatedRates = mongoRates.map((rate) => {
@@ -1326,21 +1338,21 @@ router.get('/', async (req, res) => {
                   }));
 
                   if (!finalRates || finalRates.length === 0) {
-                    throw new Error('No rates calculated from recalculation');
+                    console.warn('⚠️ No rates calculated from recalculation, falling back to MongoDB rates');
+                    // Don't throw - fall through to serve MongoDB rates
+                  } else if (!currentBaseRate || currentBaseRate <= 0 || isNaN(currentBaseRate)) {
+                    console.warn(`⚠️ Invalid base rate: ${currentBaseRate}, falling back to MongoDB rates`);
+                    // Don't throw - fall through to serve MongoDB rates
+                  } else {
+                    console.log(`✅ Recalculated ${finalRates.length} rates on-the-fly for customer (base: ₹${currentBaseRate.toFixed(2)}/gram, MongoDB was ${Math.round(mongoAge / 1000)}s old)`);
+
+                    res.set({
+                      'Cache-Control': 'no-cache, no-store, must-revalidate',
+                      'Pragma': 'no-cache',
+                      'Expires': '0'
+                    });
+                    return res.json(ratesWithUSD);
                   }
-
-                  if (!currentBaseRate || currentBaseRate <= 0) {
-                    throw new Error(`Invalid base rate: ${currentBaseRate}`);
-                  }
-
-                  console.log(`✅ Recalculated ${finalRates.length} rates on-the-fly for customer (base: ₹${currentBaseRate.toFixed(2)}/gram, MongoDB was ${Math.round(mongoAge / 1000)}s old)`);
-
-                  res.set({
-                    'Cache-Control': 'no-cache, no-store, must-revalidate',
-                    'Pragma': 'no-cache',
-                    'Expires': '0'
-                  });
-                  return res.json(ratesWithUSD);
                 } catch (recalcError) {
                   console.error('❌ On-the-fly recalculation failed, serving MongoDB rates:', recalcError.message);
                   if (recalcError.stack) {
