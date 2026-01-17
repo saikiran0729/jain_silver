@@ -726,6 +726,11 @@ router.get('/', async (req, res) => {
         const STALE_THRESHOLD = 500; // 500ms - trigger update if older than 0.5 seconds for near real-time
         const VERY_STALE_THRESHOLD = 2000; // 2 seconds - if very stale, wait for update before serving
         const OLD_RATE_THRESHOLD = 200; // If rate is below this, it's likely old cached data (updated for current rates ~₹290/gram)
+        
+        // Declare stale rate flags in broader scope
+        let hasStaleRates = false;
+        let hasStaleBaseRate = false;
+        let hasOld99_9Rates = false;
 
         // Log for debugging - always log when skipUpdate is true (likely admin dashboard)
         if (skipUpdate || isAdmin) {
@@ -791,15 +796,28 @@ router.get('/', async (req, res) => {
           // Thresholds are defined at top level above
 
           // Check if ANY 99.9% rate is old cached data (should be ~₹290, not below ₹200)
-          const hasOld99_9Rates = mongoRates.some(rate =>
+          hasOld99_9Rates = mongoRates.some(rate =>
             rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
           );
           
-          // Also check if rates are significantly below current market rate (₹290/gram)
-          // If any 99.9% rate is below ₹250, consider it old and force refresh
-          const hasStaleRates = mongoRates.some(rate =>
-            rate.purity === '99.9%' && rate.ratePerGram < 250
-          );
+          // CRITICAL: Check if rates are significantly below current market rate (₹290/gram)
+          // Lower threshold to ₹240 to catch rates like ₹235-236/gram
+          // Check both 99.9% and 99.99% purity rates for staleness
+          hasStaleRates = mongoRates.some(rate => {
+            if (rate.purity === '99.9%' && rate.ratePerGram < 240) return true;
+            if (rate.purity === '99.99%' && rate.ratePerGram < 240) return true;
+            return false;
+          });
+          
+          // Also check if base rate (from 99.9% rates) is significantly below expected
+          // This catches cases where rates might be slightly above threshold but still old
+          const baseRateFrom99_9 = mongoRates.find(r => r.purity === '99.9%')?.ratePerGram || 0;
+          const baseRateFrom99_99 = mongoRates.find(r => r.purity === '99.99%')?.ratePerGram || 0;
+          // Reverse calculate: 99.99% is 1.005x base, so base = 99.99% / 1.005
+          const estimatedBaseFrom99_99 = baseRateFrom99_99 > 0 ? baseRateFrom99_99 / 1.005 : 0;
+          const estimatedBase = Math.max(baseRateFrom99_9, estimatedBaseFrom99_99);
+          // If estimated base rate is below ₹240, consider all rates stale
+          hasStaleBaseRate = estimatedBase > 0 && estimatedBase < 240;
 
           // If skipUpdate is true, skip waiting for updates and return current rates immediately
           if (skipUpdate) {
@@ -1214,8 +1232,8 @@ router.get('/', async (req, res) => {
           // Since mobile app polls every second, this ensures rates update every second.
           // On Vercel, always trigger non-blocking update (even with skipUpdate) to keep rates fresh
           // This ensures adjustedPrice = normalPrice (current market rate) + manualAdjustment updates every second
-          // ALWAYS trigger update if rates are stale (even slightly stale) OR if rates are old (below ₹250) to ensure fresh data
-          if (mongoAge > STALE_THRESHOLD || hasStaleRates) {
+          // ALWAYS trigger update if rates are stale (even slightly stale) OR if rates are old (below ₹240) to ensure fresh data
+          if (mongoAge > STALE_THRESHOLD || hasStaleRates || hasStaleBaseRate) {
             if (process.env.VERCEL) {
               // On Vercel, ALWAYS trigger non-blocking update when stale (even for admin/skipUpdate)
               // This ensures rates are constantly being updated in the background
@@ -1542,10 +1560,12 @@ router.get('/', async (req, res) => {
               console.log(`📦 Serving ${mongoRates.length} rates from MongoDB (${Math.round(mongoAge / 1000)}s old, latest: ${latestRate.name} = ₹${latestRate.ratePerGram}/gram)`);
             }
 
-            // CRITICAL: If MongoDB rates are stale (below ₹250/gram), force recalculation with live rate
+            // CRITICAL: If MongoDB rates are stale (below ₹240/gram), force recalculation with live rate
             // This ensures users always see current market rates (₹290/gram) instead of old cached rates
-            if (hasStaleRates && !skipUpdate && !isAdmin) {
-              console.log('⚠️ MongoDB rates are stale (below ₹250/gram), forcing recalculation with live rate...');
+            // Check both hasStaleRates and hasStaleBaseRate to catch all stale cases
+            if ((hasStaleRates || hasStaleBaseRate) && !skipUpdate && !isAdmin) {
+              const staleReason = hasStaleRates ? 'rates below ₹240/gram' : 'base rate below ₹240/gram';
+              console.log(`⚠️ MongoDB rates are stale (${staleReason}), forcing recalculation with live rate...`);
               try {
                 const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
                 const liveRate = await Promise.race([
@@ -1554,7 +1574,7 @@ router.get('/', async (req, res) => {
                     setTimeout(() => reject(new Error('Timeout after 3 seconds')), 3000)
                   )
                 ]);
-                if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0 && liveRate.ratePerGram >= 250) {
+                if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0 && liveRate.ratePerGram >= 240) {
                   // Update cache with fresh rate
                   cachedBaseRate = {
                     ...cachedBaseRate,
