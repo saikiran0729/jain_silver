@@ -210,7 +210,7 @@ function AdminDashboardPage() {
           // Calculate normal price (original price from base rate)
           // Apply purity adjustments to base rate
           let originalRatePerGram = 0;
-          if (baseRateFromSource?.baseRatePerGram) {
+          if (baseRateFromSource?.baseRatePerGram && baseRateFromSource.baseRatePerGram > 0) {
             const baseRate = baseRateFromSource.baseRatePerGram;
             if (newRate.purity === '92.5%') {
               originalRatePerGram = baseRate * 0.96;
@@ -220,9 +220,19 @@ function AdminDashboardPage() {
               // 99.9% uses base rate as-is
               originalRatePerGram = baseRate;
             }
+            
+            // Validate calculated rate
+            if (!originalRatePerGram || originalRatePerGram <= 0 || isNaN(originalRatePerGram)) {
+              originalRatePerGram = newRate.ratePerGram || 290;
+            }
           } else {
             // Fallback if baseRateFromSource not available
-            originalRatePerGram = newRate.ratePerGram || 0;
+            originalRatePerGram = newRate.ratePerGram || 290;
+          }
+          
+          // Final validation
+          if (!originalRatePerGram || originalRatePerGram <= 0 || isNaN(originalRatePerGram) || !isFinite(originalRatePerGram)) {
+            originalRatePerGram = 290; // Default fallback
           }
           const originalTotalPrice = originalRatePerGram * weightInGrams;
 
@@ -958,7 +968,7 @@ function AdminDashboardPage() {
 
                         // CRITICAL: Always use base rate from RB Gold source if available
                         // This ensures Normal Price shows EXACT RB Gold price without any manual adjustments
-                        if (baseRateFromSource && baseRateFromSource.baseRatePerGram) {
+                        if (baseRateFromSource && baseRateFromSource.baseRatePerGram && baseRateFromSource.baseRatePerGram > 0) {
                           // Get exact base rate from RB Gold and apply purity adjustments
                           const baseRate = baseRateFromSource.baseRatePerGram;
 
@@ -971,24 +981,42 @@ function AdminDashboardPage() {
                             // 99.9% uses base rate as-is
                             originalRatePerGram = baseRate;
                           }
+                          
+                          // Validate calculated rate
+                          if (!originalRatePerGram || originalRatePerGram <= 0 || isNaN(originalRatePerGram)) {
+                            console.warn(`⚠️ [${rate.name}] Invalid calculated rate from base (${baseRate}), using fallback`);
+                            originalRatePerGram = currentRatePerGram || 290; // Fallback to current rate or default
+                          }
                         } else {
                           // Fallback only if baseRateFromSource is not available (should rarely happen)
                           // Calculate from current rate - manual adjustment (less accurate)
                           const manualAdjustment = rate.manualAdjustment || 0;
                           originalRatePerGram = currentRatePerGram - manualAdjustment;
 
-                          if (originalRatePerGram <= 0) {
+                          if (originalRatePerGram <= 0 || isNaN(originalRatePerGram)) {
                             // Try stored values as last resort
                             if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
                               originalRatePerGram = rate.originalRatePerGram;
                             } else if (rate.originalRate && rate.originalRate > 0) {
                               originalRatePerGram = rate.originalRate / weightInGrams;
-                            } else {
+                            } else if (currentRatePerGram && currentRatePerGram > 0) {
                               originalRatePerGram = currentRatePerGram;
-                              console.warn(`⚠️ [${rate.name}] Base rate not available, using current rate as fallback: ₹${originalRatePerGram}`);
+                            } else {
+                              // Final fallback to default market rate
+                              originalRatePerGram = 290; // Default market rate
+                              console.warn(`⚠️ [${rate.name}] All fallbacks failed, using default rate: ₹${originalRatePerGram}`);
                             }
                           }
-                          console.warn(`⚠️ [${rate.name}] Base rate from RB Gold not available, using calculated fallback: ₹${originalRatePerGram}`);
+                          
+                          // Only log warning if we're actually using fallback (not default)
+                          if (originalRatePerGram !== 290) {
+                            console.warn(`⚠️ [${rate.name}] Base rate from RB Gold not available, using calculated fallback: ₹${originalRatePerGram}`);
+                          }
+                        }
+                        
+                        // Final validation to ensure we have a valid number
+                        if (!originalRatePerGram || originalRatePerGram <= 0 || isNaN(originalRatePerGram) || !isFinite(originalRatePerGram)) {
+                          originalRatePerGram = 290; // Default fallback
                         }
 
                         // Calculate total price (no rounding to preserve exact RB Gold price)
