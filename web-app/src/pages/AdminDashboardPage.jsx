@@ -47,18 +47,20 @@ function AdminDashboardPage() {
     fetchRates(true); // Use skipUpdate=true for fast initial load (backend will update in background)
 
     // Set up interval to fetch base rate every second for live Normal Price updates
+    // CRITICAL: Reduce frequency to prevent UI disruption
     baseRateIntervalRef.current = setInterval(() => {
       fetchBaseRate();
-    }, 1000); // Update every second
+    }, 2000); // Update every 2 seconds to reduce load
 
     // Set up interval to fetch rates every second for live Adjusted Price updates
     // Use skipUpdate=true for fast polling (backend triggers updates in background on Vercel)
     // Optimized to update smoothly without causing UI flickering
+    // CRITICAL: Use skipUpdate=true during polling to prevent timeouts and UI disruption
     ratesIntervalRef.current = setInterval(() => {
-      // Use skipUpdate=false to ensure fresh rates are polled (backend will return current rates immediately on Vercel)
-      // Pass isPolling=true to suppress error alerts during automatic polling
-      fetchRates(false, true);
-    }, 1000); // Update every second
+      // Use skipUpdate=true for fast polling (backend triggers updates in background on Vercel)
+      // Pass isPolling=true to suppress error alerts and prevent loading state changes
+      fetchRates(true, true);
+    }, 2000); // Update every 2 seconds to reduce load and prevent UI disruption
 
     // Cleanup on unmount
     return () => {
@@ -117,9 +119,10 @@ function AdminDashboardPage() {
     try {
       // Use dedicated endpoint to get just the base rate (faster)
       // Add cache busting timestamp
+      // Increase timeout to prevent frequent timeouts
       const response = await api.get('/rates/base-rate', {
         params: { _t: Date.now() },
-        timeout: 5000
+        timeout: 10000 // Increased from 5000ms to 10000ms to reduce timeout errors
       });
       if (response.data && response.data.baseRatePerGram) {
         setBaseRateFromSource(response.data);
@@ -147,12 +150,15 @@ function AdminDashboardPage() {
   const fetchRates = async (skipUpdate = true, isPolling = false) => {
     try {
       // Only show loading spinner on initial load, never during polling to avoid UI flickering
-      if (!rates || rates.length === 0) {
-        setLoadingRates(true);
-      }
-      // Only set loading on initial fetch, not during polling
-      if (!skipUpdate || rates.length === 0) {
-        setLoadingRates(true);
+      // CRITICAL: Don't set loadingRates during polling to prevent button from being disabled
+      if (!isPolling) {
+        if (!rates || rates.length === 0) {
+          setLoadingRates(true);
+        }
+        // Only set loading on initial fetch, not during polling
+        if (!skipUpdate || rates.length === 0) {
+          setLoadingRates(true);
+        }
       }
       console.log('📡 Fetching rates from /rates endpoint...', skipUpdate ? '(skipping update)' : '(allowing update)');
 
@@ -171,7 +177,10 @@ function AdminDashboardPage() {
         timeout: skipUpdate ? 15000 : 60000 // 15 seconds for polling (allows time for MongoDB read), 60s for manual refresh (full update)
       });
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
-      setLoadingRates(false); // Always clear loading after successful fetch
+      // Only clear loading if we set it (not during polling)
+      if (!isPolling) {
+        setLoadingRates(false);
+      }
       // Update rates only if data actually changed to prevent unnecessary re-renders and UI flickering
       setRates(prevRates => {
         const newRates = response.data || [];
@@ -900,8 +909,8 @@ function AdminDashboardPage() {
                     {...(globalShowAsItIs ? { color: "primary" } : {})}
                     startIcon={<RestartAlt />}
                     onClick={toggleShowAsItIs}
-                    disabled={loadingAction || loadingRates}
-                    sx={{ minWidth: 150 }}
+                    disabled={loadingAction}
+                    sx={{ minWidth: 150, pointerEvents: loadingAction ? 'none' : 'auto' }}
                   >
                     {globalShowAsItIs ? 'Disable Show As It Is' : 'Enable Show As It Is'}
                   </Button>
