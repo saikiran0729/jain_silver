@@ -51,7 +51,7 @@
   "crons": [
     {
       "path": "/api/rates/update",
-      "schedule": "* * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }
