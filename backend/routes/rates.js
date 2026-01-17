@@ -1566,6 +1566,11 @@ router.get('/', async (req, res) => {
                   };
                   console.log(`✅ Updated cache with fresh rate: ₹${liveRate.ratePerGram.toFixed(2)}/gram (was using stale ₹${latestRate?.ratePerGram || 'N/A'}/gram)`);
                   
+                  // CRITICAL: Save updated rates to MongoDB so they persist for future requests
+                  console.log('💾 Saving updated rates to MongoDB...');
+                  await updateMongoDBRates(liveRate);
+                  console.log('✅ Updated rates saved to MongoDB');
+                  
                   // Recalculate rates on-the-fly with fresh base rate
                   let currentBaseRate = liveRate.ratePerGram;
                   const rateNames = mongoRates.map(r => r.originalName || r.name).filter(Boolean);
