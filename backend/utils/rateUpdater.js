@@ -154,11 +154,8 @@ const updateRates = async (io) => {
         if (rate.purity === '92.5%') {
           // Sterling silver (92.5%) is typically 3-5% less than pure silver
           ratePerGram = baseRatePerGram * 0.96;
-        } else if (rate.purity === '99.99%') {
-          // 99.99% is slightly higher than 99.9%
-          ratePerGram = baseRatePerGram * 1.005;
         }
-        // 99.9% uses base rate as-is
+        // Both 99.9% and 99.99% use base rate as-is (no multiplier)
         
         // CRITICAL: normalPrice should ALWAYS be the current market rate (updates every second)
         // This ensures that when normalPrice increases/decreases, adjustedPrice also increases/decreases accordingly

@@ -49,9 +49,8 @@ const getOriginalRates = async (baseRatePerGram) => {
     let ratePerGram = baseRatePerGram;
     if (rateDef.purity === '92.5%') {
       ratePerGram = baseRatePerGram * 0.96;
-    } else if (rateDef.purity === '99.99%') {
-      ratePerGram = baseRatePerGram * 1.005;
     }
+    // Both 99.9% and 99.99% use base rate as-is (no multiplier)
 
     // No rounding - keep exact value from RB Gold
     // ratePerGram stays as is
@@ -154,9 +153,8 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null, skipU
       if (baseRatePerGram) {
         if (def.purity === '92.5%') {
           ratePerGram = baseRatePerGram * 0.96;
-        } else if (def.purity === '99.99%') {
-          ratePerGram = baseRatePerGram * 1.005;
         }
+        // Both 99.9% and 99.99% use base rate as-is (no multiplier)
         // No rounding - keep exact value
         // ratePerGram stays as is
       }
@@ -455,9 +453,8 @@ const updateMongoDBRates = async (liveRate) => {
         let ratePerGram = baseRatePerGram;
         if (rateDef.purity === '92.5%') {
           ratePerGram = baseRatePerGram * 0.96;
-        } else if (rateDef.purity === '99.99%') {
-          ratePerGram = baseRatePerGram * 1.005;
         }
+        // Both 99.9% and 99.99% use base rate as-is (no multiplier)
 
         const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
         ratePerGram = ratePerGram + manualAdjustment;
@@ -761,7 +758,7 @@ router.get('/', async (req, res) => {
             if (tempLatestRate.purity === '92.5%') {
               estimatedBaseRate = tempLatestRate.ratePerGram / 0.96;
             } else if (tempLatestRate.purity === '99.99%') {
-              estimatedBaseRate = tempLatestRate.ratePerGram / 1.005;
+              estimatedBaseRate = tempLatestRate.ratePerGram; // 99.99% uses base rate as-is
             } else {
               estimatedBaseRate = tempLatestRate.ratePerGram;
             }
@@ -813,8 +810,8 @@ router.get('/', async (req, res) => {
           // This catches cases where rates might be slightly above threshold but still old
           const baseRateFrom99_9 = mongoRates.find(r => r.purity === '99.9%')?.ratePerGram || 0;
           const baseRateFrom99_99 = mongoRates.find(r => r.purity === '99.99%')?.ratePerGram || 0;
-          // Reverse calculate: 99.99% is 1.005x base, so base = 99.99% / 1.005
-          const estimatedBaseFrom99_99 = baseRateFrom99_99 > 0 ? baseRateFrom99_99 / 1.005 : 0;
+          // 99.99% uses base rate as-is (no multiplier), so base = 99.99% rate directly
+          const estimatedBaseFrom99_99 = baseRateFrom99_99 > 0 ? baseRateFrom99_99 : 0;
           const estimatedBase = Math.max(baseRateFrom99_9, estimatedBaseFrom99_99);
           // If estimated base rate is below ₹240, consider all rates stale
           hasStaleBaseRate = estimatedBase > 0 && estimatedBase < 240;
@@ -898,7 +895,7 @@ router.get('/', async (req, res) => {
                     if (mongoRate.purity === '92.5%') {
                       originalRatePerGram = baseRatePerGram * 0.96;
                     } else if (mongoRate.purity === '99.99%') {
-                      originalRatePerGram = baseRatePerGram * 1.005;
+                      originalRatePerGram = baseRatePerGram; // 99.99% uses base rate as-is
                     }
                     // 99.9% uses base rate as-is
 
@@ -1033,7 +1030,7 @@ router.get('/', async (req, res) => {
                   if (latestRate.purity === '92.5%') {
                     estimatedBaseRate = latestRate.ratePerGram / 0.96;
                   } else if (latestRate.purity === '99.99%') {
-                    estimatedBaseRate = latestRate.ratePerGram / 1.005;
+                    estimatedBaseRate = latestRate.ratePerGram; // 99.99% uses base rate as-is
                   } else {
                     estimatedBaseRate = latestRate.ratePerGram;
                   }
@@ -1324,7 +1321,7 @@ router.get('/', async (req, res) => {
                     if (rate.purity === '92.5%') {
                       ratePerGram = currentBaseRate * 0.96;
                     } else if (rate.purity === '99.99%') {
-                      ratePerGram = currentBaseRate * 1.005;
+                      ratePerGram = currentBaseRate; // 99.99% uses base rate as-is
                     }
 
                     // Apply manual adjustment
@@ -1726,7 +1723,7 @@ router.get('/', async (req, res) => {
                     if (mongoRate.purity === '92.5%') {
                       originalRatePerGram = baseRatePerGram * 0.96;
                     } else if (mongoRate.purity === '99.99%') {
-                      originalRatePerGram = baseRatePerGram * 1.005;
+                      originalRatePerGram = baseRatePerGram; // 99.99% uses base rate as-is
                     }
                     // 99.9% uses base rate as-is
 
@@ -1943,9 +1940,8 @@ router.get('/', async (req, res) => {
         let ratePerGram = baseRatePerGram;
         if (rateDef.purity === '92.5%') {
           ratePerGram = baseRatePerGram * 0.96;
-        } else if (rateDef.purity === '99.99%') {
-          ratePerGram = baseRatePerGram * 1.005;
         }
+        // Both 99.9% and 99.99% use base rate as-is (no multiplier)
 
         const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
         ratePerGram = ratePerGram + manualAdjustment;
@@ -2080,7 +2076,7 @@ router.put('/:id', auth, async (req, res) => {
     if (rateDef.purity === '92.5%') {
       calculatedRatePerGram = baseRatePerGram * 0.96;
     } else if (rateDef.purity === '99.99%') {
-      calculatedRatePerGram = baseRatePerGram * 1.005;
+      calculatedRatePerGram = baseRatePerGram; // 99.99% uses base rate as-is
     }
 
     // Apply manual adjustment if provided
@@ -2314,7 +2310,7 @@ const updateRatesHandler = async (req, res = null) => {
       if (rateDef.purity === '92.5%') {
         ratePerGramForPurity = baseRatePerGram * 0.96;
       } else if (rateDef.purity === '99.99%') {
-        ratePerGramForPurity = baseRatePerGram * 1.005;
+        ratePerGramForPurity = baseRatePerGram; // 99.99% uses base rate as-is
       }
 
       // Get existing rate data (normalPrice and manualAdjustment)
@@ -2532,7 +2528,7 @@ const updateRatesHandler = async (req, res = null) => {
       if (verifyRate.purity === '92.5%') {
         expectedRatePerGram = baseRatePerGram * 0.96;
       } else if (verifyRate.purity === '99.99%') {
-        expectedRatePerGram = baseRatePerGram * 1.005;
+        expectedRatePerGram = baseRatePerGram; // 99.99% uses base rate as-is
       }
       // Fetch adjustment for verification rate
       const verifyAdjustments = await fetchManualAdjustments([verifyRate.name]);
