@@ -1,19 +1,9 @@
 {
   "version": 2,
-  "buildCommand": "npm install",
-  "outputDirectory": ".",
-  "installCommand": "npm install",
-  "framework": null,
-  "git": {
-    "deploymentEnabled": {
-      "main": true
-    }
-  },
   "functions": {
     "api/index.js": {
       "maxDuration": 120,
-      "memory": 1024,
-      "runtime": "nodejs18.x"
+      "memory": 1024
     }
   },
   "rewrites": [
