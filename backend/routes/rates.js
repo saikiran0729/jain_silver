@@ -274,8 +274,8 @@ const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false
 // Cache for live base rate (updated on every request)
 // This cache is updated frequently to ensure fresh rates
 let cachedBaseRate = {
-  ratePerGram: 207.0, // Default fallback rate (updated for current market rate ~₹207,000/kg)
-  ratePerKg: 207000,
+  ratePerGram: 290.0, // Default fallback rate (updated for current market rate ~₹290,000/kg)
+  ratePerKg: 290000,
   source: 'cache',
   lastUpdated: new Date(),
   usdInrRate: 89.25
@@ -369,7 +369,7 @@ const updateRatesFromEndpoints = async () => {
       // Also update if cache is stale (older than 1 second for real-time updates)
       const cacheAge = Date.now() - cachedBaseRate.lastUpdated.getTime();
       const isStale = cacheAge > 1000; // Update every second for live rates
-      const isInitial = (oldRate === 169.0 || oldRate === 207.0) && cachedBaseRate.source === 'cache';
+      const isInitial = (oldRate === 169.0 || oldRate === 207.0 || oldRate === 290.0) && cachedBaseRate.source === 'cache';
 
       // Update on ANY price change (threshold is 0) OR if stale OR initial
       // This ensures rates reflect market prices in real-time
@@ -550,8 +550,8 @@ router.get('/base-rate', async (req, res) => {
     if (!liveRate || !liveRate.ratePerGram || liveRate.ratePerGram <= 0) {
       // Fallback to cached rate
       return res.json({
-        baseRatePerGram: cachedBaseRate?.ratePerGram || 207,
-        baseRatePerKg: cachedBaseRate?.ratePerKg || 207000,
+        baseRatePerGram: cachedBaseRate?.ratePerGram || 290,
+        baseRatePerKg: cachedBaseRate?.ratePerKg || 290000,
         source: cachedBaseRate?.source || 'cache',
         lastUpdated: cachedBaseRate?.lastUpdated || new Date()
       });
@@ -785,11 +785,17 @@ router.get('/', async (req, res) => {
           mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
           const STALE_THRESHOLD = 500; // 500ms - trigger update if older than 0.5 seconds for near real-time
           const VERY_STALE_THRESHOLD = 2000; // 2 seconds - if very stale, wait for update before serving
-          const OLD_RATE_THRESHOLD = 100; // If rate is below this, it's likely old cached data (updated for current rates ~207)
+          const OLD_RATE_THRESHOLD = 200; // If rate is below this, it's likely old cached data (updated for current rates ~₹290/gram)
 
-          // Check if ANY 99.9% rate is old cached data (should be ~₹200-210, not below ₹100)
+          // Check if ANY 99.9% rate is old cached data (should be ~₹290, not below ₹200)
           const hasOld99_9Rates = mongoRates.some(rate =>
             rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
+          );
+          
+          // Also check if rates are significantly below current market rate (₹290/gram)
+          // If any 99.9% rate is below ₹250, consider it old and force refresh
+          const hasStaleRates = mongoRates.some(rate =>
+            rate.purity === '99.9%' && rate.ratePerGram < 250
           );
 
           // If skipUpdate is true, skip waiting for updates and return current rates immediately
@@ -1201,12 +1207,12 @@ router.get('/', async (req, res) => {
             }
           }
 
-          // If rates are stale (older than 1 second), trigger update.
+          // If rates are stale (older than 1 second) OR if rates are below current market rate (₹250), trigger update.
           // Since mobile app polls every second, this ensures rates update every second.
           // On Vercel, always trigger non-blocking update (even with skipUpdate) to keep rates fresh
           // This ensures adjustedPrice = normalPrice (current market rate) + manualAdjustment updates every second
-          // ALWAYS trigger update if rates are stale (even slightly stale) to ensure fresh data
-          if (mongoAge > STALE_THRESHOLD) {
+          // ALWAYS trigger update if rates are stale (even slightly stale) OR if rates are old (below ₹250) to ensure fresh data
+          if (mongoAge > STALE_THRESHOLD || hasStaleRates) {
             if (process.env.VERCEL) {
               // On Vercel, ALWAYS trigger non-blocking update when stale (even for admin/skipUpdate)
               // This ensures rates are constantly being updated in the background
@@ -1222,7 +1228,7 @@ router.get('/', async (req, res) => {
               if (!skipUpdate && !isAdmin && mongoRates && Array.isArray(mongoRates) && mongoRates.length > 0) {
                 try {
                   // Get current base rate - ALWAYS fetch fresh for customer requests to ensure accuracy
-                  let currentBaseRate = (cachedBaseRate && cachedBaseRate.ratePerGram) ? cachedBaseRate.ratePerGram : 207.0;
+                  let currentBaseRate = (cachedBaseRate && cachedBaseRate.ratePerGram) ? cachedBaseRate.ratePerGram : 290.0;
                   let fetchSuccess = false;
                   try {
                     const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
@@ -1254,14 +1260,14 @@ router.get('/', async (req, res) => {
                     } else {
                       console.warn('Could not fetch fresh base rate and no valid cache, using MongoDB rates:', errorMsg);
                       // Don't throw - just use MongoDB rates as-is
-                      currentBaseRate = 207.0; // Fallback default
+                      currentBaseRate = 290.0; // Fallback default (current market rate)
                     }
                   }
 
                   // Validate we have a valid base rate
                   if (!currentBaseRate || currentBaseRate <= 0 || isNaN(currentBaseRate)) {
                     console.warn('Invalid base rate for recalculation, using default');
-                    currentBaseRate = 207.0; // Fallback default
+                    currentBaseRate = 290.0; // Fallback default (current market rate)
                   }
 
                   // Fetch all manual adjustments at once (with error handling)
@@ -1531,6 +1537,95 @@ router.get('/', async (req, res) => {
             // Only log occasionally to avoid spam (every 10th request)
             if (Math.random() < 0.1 && latestRate && mongoRates) {
               console.log(`📦 Serving ${mongoRates.length} rates from MongoDB (${Math.round(mongoAge / 1000)}s old, latest: ${latestRate.name} = ₹${latestRate.ratePerGram}/gram)`);
+            }
+
+            // CRITICAL: If MongoDB rates are stale (below ₹250/gram), force recalculation with live rate
+            // This ensures users always see current market rates (₹290/gram) instead of old cached rates
+            if (hasStaleRates && !skipUpdate && !isAdmin) {
+              console.log('⚠️ MongoDB rates are stale (below ₹250/gram), forcing recalculation with live rate...');
+              try {
+                const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
+                const liveRate = await Promise.race([
+                  fetchSilverRatesFromMultipleSources(),
+                  new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Timeout after 3 seconds')), 3000)
+                  )
+                ]);
+                if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0 && liveRate.ratePerGram >= 250) {
+                  // Update cache with fresh rate
+                  cachedBaseRate = {
+                    ...cachedBaseRate,
+                    ratePerGram: liveRate.ratePerGram,
+                    ratePerKg: liveRate.ratePerKg,
+                    lastUpdated: new Date(),
+                    source: liveRate.source || 'live',
+                    usdInrRate: liveRate.usdInrRate || cachedBaseRate.usdInrRate || 89.25
+                  };
+                  console.log(`✅ Updated cache with fresh rate: ₹${liveRate.ratePerGram.toFixed(2)}/gram (was using stale ₹${latestRate?.ratePerGram || 'N/A'}/gram)`);
+                  
+                  // Recalculate rates on-the-fly with fresh base rate
+                  let currentBaseRate = liveRate.ratePerGram;
+                  const rateNames = mongoRates.map(r => r.originalName || r.name).filter(Boolean);
+                  const adjustmentsMap = await fetchManualAdjustments(rateNames);
+                  
+                  const recalculatedRates = mongoRates.map((rate) => {
+                    try {
+                      if (!rate || typeof rate !== 'object') return null;
+                      const rateName = (rate.originalName || rate.name);
+                      if (!rateName) return null;
+                      const manualAdjustment = adjustmentsMap[rateName] || (rate.manualAdjustment || 0) || 0;
+                      
+                      let ratePerGram = currentBaseRate;
+                      if (rate.purity === '92.5%') {
+                        ratePerGram = currentBaseRate * 0.96;
+                      } else if (rate.purity === '99.99%') {
+                        ratePerGram = currentBaseRate * 1.005;
+                      }
+                      ratePerGram = ratePerGram + manualAdjustment;
+                      ratePerGram = Math.max(0, ratePerGram);
+                      
+                      let weightInGrams = (rate.weight && rate.weight.value) ? rate.weight.value : 1;
+                      if (rate.weight && rate.weight.unit === 'kg') {
+                        weightInGrams = rate.weight.value * 1000;
+                      }
+                      const totalRate = ratePerGram * weightInGrams;
+                      
+                      return {
+                        ...rate,
+                        ratePerGram: ratePerGram,
+                        rate: totalRate,
+                        originalRatePerGram: ratePerGram - manualAdjustment,
+                        originalRate: (ratePerGram - manualAdjustment) * weightInGrams,
+                        manualAdjustment: manualAdjustment,
+                        lastUpdated: new Date()
+                      };
+                    } catch (rateError) {
+                      return null;
+                    }
+                  }).filter(rate => rate !== null);
+                  
+                  const visibleRates = recalculatedRates.filter(rate => rate.isVisible !== false);
+                  const finalRates = visibleRates.map(rate => ({
+                    ...rate,
+                    name: rate.displayName || rate.name,
+                    originalName: rate.originalName || rate.name
+                  }));
+                  const ratesWithUSD = finalRates.map(rate => ({
+                    ...rate,
+                    usdInrRate: cachedBaseRate.usdInrRate || 89.25
+                  }));
+                  
+                  console.log(`✅ Recalculated ${finalRates.length} rates with fresh live rate: ₹${currentBaseRate.toFixed(2)}/gram`);
+                  res.set({
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
+                  });
+                  return res.json(ratesWithUSD);
+                }
+              } catch (staleRecalcError) {
+                console.warn('⚠️ Failed to recalculate stale rates, continuing with MongoDB rates:', staleRecalcError.message);
+              }
             }
 
             let finalRates;
@@ -2519,8 +2614,8 @@ router.post('/initialize', async (req, res) => {
           {
             _id: 'fallback_silver_1kg',
             name: 'Silver Bar 1 Kg',
-            rate: cachedBaseRate?.ratePerKg || 207000,
-            ratePerGram: cachedBaseRate?.ratePerGram || 207,
+            rate: cachedBaseRate?.ratePerKg || 290000,
+            ratePerGram: cachedBaseRate?.ratePerGram || 290,
             purity: '99.99%',
             weight: { value: 1, unit: 'kg' },
             type: 'bar',
