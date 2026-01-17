@@ -223,10 +223,8 @@ function AdminDashboardPage() {
             const baseRate = baseRateFromSource.baseRatePerGram;
             if (newRate.purity === '92.5%') {
               originalRatePerGram = baseRate * 0.96;
-            } else if (newRate.purity === '99.99%') {
-              originalRatePerGram = baseRate * 1.005;
             } else {
-              // 99.9% uses base rate as-is
+              // Both 99.9% and 99.99% use base rate as-is (₹290/gram)
               originalRatePerGram = baseRate;
             }
             
@@ -984,10 +982,8 @@ function AdminDashboardPage() {
                           // Apply purity adjustments (same as backend)
                           if (rate.purity === '92.5%') {
                             originalRatePerGram = baseRate * 0.96;
-                          } else if (rate.purity === '99.99%') {
-                            originalRatePerGram = baseRate * 1.005;
                           } else {
-                            // 99.9% uses base rate as-is - MUST be exactly the base rate
+                            // Both 99.9% and 99.99% use base rate as-is (₹290/gram) - MUST be exactly the base rate
                             originalRatePerGram = baseRate;
                           }
                           
