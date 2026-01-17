@@ -526,9 +526,13 @@ const fetchSilverRatesFromMultipleSources = async () => {
     .sort((a, b) => a.priority - b.priority);
 
   if (enabledSources.length === 0) {
-    console.warn('⚠️ No rate sources enabled');
+    console.error('❌ No rate sources enabled - cannot fetch rates');
+    console.error('   Available sources:', Object.keys(RATE_SOURCES));
+    console.error('   ACTIVE_RATE_SOURCE:', ACTIVE_RATE_SOURCE);
     return null;
   }
+
+  console.log(`🔄 Fetching rates from ${enabledSources.length} source(s) in MULTI mode:`, enabledSources.map(s => s.name).join(', '));
 
   // Try sources in parallel - return first successful result (fastest)
   // Create promises for each source
@@ -544,11 +548,14 @@ const fetchSilverRatesFromMultipleSources = async () => {
       }
       
       if (result && result.ratePerGram && result.ratePerGram > 0) {
+        console.log(`✅ ${source.name} succeeded: ₹${result.ratePerGram.toFixed(2)}/gram`);
         return { source: source.name, result, priority: source.priority };
       }
+      console.warn(`⚠️ ${source.name} returned invalid result (ratePerGram: ${result?.ratePerGram || 'N/A'})`);
       return null;
     } catch (error) {
-      // Silently fail - will try other sources
+      console.error(`❌ ${source.name} failed:`, error.message);
+      // Continue to try other sources
       return null;
     }
   });

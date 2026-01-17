@@ -17,7 +17,7 @@ const RATE_SOURCES = {
   VERCEL: {
     name: 'Vercel',
     url: 'https://jainsilverpp1.vercel.app/prices/stream',
-    enabled: false, // DISABLED - Only use RB Goldspot for consistent rates
+    enabled: true, // ENABLED - Use as fallback if RB Goldspot fails
     priority: 2, // Secondary source - fallback if RB Goldspot fails
   },
   
@@ -35,8 +35,8 @@ const RATE_SOURCES = {
 // Options: 'RB_GOLDSPOT', 'VERCEL', 'CUSTOM', or 'MULTI'
 // 'MULTI' will try all enabled sources in priority order (recommended for reliability)
 // Set via RATE_SOURCE environment variable or change default below
-// Default to RB_GOLDSPOT ONLY for consistent live rates (no fallback to avoid rate switching)
-const ACTIVE_RATE_SOURCE = process.env.RATE_SOURCE || 'RB_GOLDSPOT';
+// Default to MULTI for maximum reliability (tries RB Goldspot first, then Vercel as fallback)
+const ACTIVE_RATE_SOURCE = process.env.RATE_SOURCE || 'MULTI';
 
 // If MULTI, it will try all enabled sources in priority order
 // If a specific source name, it will only use that source

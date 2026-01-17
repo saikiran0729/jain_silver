@@ -67,19 +67,35 @@ const updateRates = async (io) => {
     
     // Fetch fresh rate every second from multiple sources (RB Goldspot + Vercel) - NO FALLBACK
     // Use Promise.race with timeout to ensure we don't wait too long
+    console.log(`🔄 [${new Date().toISOString()}] Starting rate fetch...`);
     const fetchPromise = fetchSilverRatesFromMultipleSources();
     const timeoutPromise = new Promise((_, reject) => 
       setTimeout(() => reject(new Error('Rate fetch timeout after 8 seconds')), 8000)
     );
     
-    const liveRate = await Promise.race([fetchPromise, timeoutPromise]);
+    let liveRate;
+    try {
+      liveRate = await Promise.race([fetchPromise, timeoutPromise]);
+    } catch (fetchError) {
+      consecutiveFailures++;
+      const errorMsg = fetchError.message || 'Unknown error';
+      if (consecutiveFailures === 1 || consecutiveFailures % 5 === 0) {
+        console.error(`❌ Rate fetch error (${consecutiveFailures} failures):`, errorMsg);
+      }
+      return; // Exit early, don't update rates
+    }
     
     // Only proceed if we got a valid rate from endpoint - NO FALLBACK
     if (!liveRate || !liveRate.ratePerGram || liveRate.ratePerGram <= 0 || isNaN(liveRate.ratePerGram)) {
       consecutiveFailures++;
-      // Log warning every 5 failures to avoid spam
-      if (consecutiveFailures % 5 === 0) {
+      // Log warning every 5 failures to avoid spam, but always log first failure
+      if (consecutiveFailures === 1 || consecutiveFailures % 5 === 0) {
         console.warn(`⚠️ Failed to fetch rate from endpoint (${consecutiveFailures} consecutive failures)`);
+        if (liveRate) {
+          console.warn(`   Received invalid rate:`, { ratePerGram: liveRate.ratePerGram, source: liveRate.source });
+        } else {
+          console.warn(`   No rate returned from fetchSilverRatesFromMultipleSources()`);
+        }
       }
       return; // Exit early, don't update rates
     }
