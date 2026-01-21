@@ -25,6 +25,28 @@ import colors from '../theme/colors';
 
 const POLLING_INTERVAL = 1000;
 
+// Helper to determine icon type
+const getTypeIcon = (type, name, weight) => {
+  if (type === 'gold' || name?.toLowerCase().includes('gold') || name?.toLowerCase().includes('gold')) return <GoldIcon />; // Use specific Gold icon if available, or fallback
+  if (type === 'coin' || name?.toLowerCase().includes('coin')) return <CoinIcon />;
+  if (type === 'bar' || name?.toLowerCase().includes('bar')) return <BarIcon />;
+  return <JewelryIcon />;
+};
+
+// Helper to calculate price per Kg from total rate and weight
+const getKgPrice = (rate, weight) => {
+  if (!rate || !weight) return 0;
+
+  let weightInGrams = weight.value;
+  if (weight.unit === 'kg') {
+    weightInGrams = weight.value * 1000;
+  }
+
+  // Calculate price per gram then multiply by 1000
+  const pricePerGram = rate / weightInGrams;
+  return pricePerGram * 1000;
+};
+
 function HomePage() {
   const { user } = useContext(AuthContext);
   const [rates, setRates] = useState([]);
