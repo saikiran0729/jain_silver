@@ -448,7 +448,7 @@ function HomePage() {
                             : 'white',
                         }}
                       >
-                        <TableCell sx={{ py: 0.75, pl: 1, pr: 0.5, width: 'auto' }}>
+                        <TableCell sx={{ py: 0.25, pl: 1, pr: 0.5, width: 'auto' }}>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             {productImage ? (
                               <Box
@@ -490,13 +490,13 @@ function HomePage() {
                             </Box>
                           </Box>
                         </TableCell>
-                        <TableCell align="right" sx={{ py: 0.75, pl: 0.5, pr: 1, whiteSpace: 'nowrap', width: 'auto' }}>
+                        <TableCell align="right" sx={{ py: 0.25, pl: 0.5, pr: 1, whiteSpace: 'nowrap', width: 'auto' }}>
                           <Typography
                             variant="body2"
                             sx={{
                               fontWeight: 700,
                               color: rateColor || '#d32f2f',
-                              fontSize: { xs: '0.85rem', sm: '0.95rem' },
+                              fontSize: { xs: '1.2rem', sm: '1.4rem' },
                             }}
                           >
                             {formatPrice((rate.ratePerGram || 0) * 1000)}/kg
