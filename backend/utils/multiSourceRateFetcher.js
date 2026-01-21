@@ -22,7 +22,7 @@ const fetchFromRBGoldspot = async () => {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache'
       },
-      timeout: 5000, // Reduced for serverless (Vercel has 10s limit)
+      timeout: 3500, // Reduced for serverless (Vercel has 10s limit)
       maxRedirects: 5,
       responseType: 'text',
       params: {
@@ -197,7 +197,7 @@ const fetchFromVercel = async () => {
         'Pragma': 'no-cache',
         'Expires': '0'
       },
-      timeout: 5000, // Reduced for serverless (Vercel has 10s limit)
+      timeout: 3500, // Reduced for serverless (Vercel has 10s limit)
       maxRedirects: 5,
       responseType: 'text',
       params: {
@@ -562,46 +562,29 @@ const fetchSilverRatesFromMultipleSources = async () => {
   });
 
   // Use Promise.allSettled to wait for all, then pick best result by priority
-  const results = await Promise.allSettled(fetchPromises);
-  const successfulResults = results
+  // Set a strict overall timeout for the parallel operation to ensure we don't exceed Vercel limits
+  const combinedPromise = Promise.allSettled(fetchPromises);
+  const timeoutPromise = new Promise(resolve => setTimeout(() => resolve([]), 4500)); // 4.5s max total wait
+
+  // Race complete results against timeout
+  const results = await Promise.race([combinedPromise, timeoutPromise]);
+
+  // If timed out results will be [] or incomplete
+  const finalResults = Array.isArray(results) ? results : [];
+
+  const successfulResults = finalResults
     .filter(r => r.status === 'fulfilled' && r.value !== null && r.value.result)
     .map(r => r.value)
     .sort((a, b) => a.priority - b.priority); // Sort by priority (RB Goldspot first)
 
   if (successfulResults.length > 0) {
     const bestResult = successfulResults[0];
+    console.log(`✅ Selected best rate from ${bestResult.source}`);
     return bestResult.result;
   }
 
-  // If parallel failed, try sequential as fallback (RB Goldspot first, then Vercel)
-  // This gives each source a full chance to respond
-  console.log('⚠️ Parallel fetch failed, trying sequential fallback...');
-  for (const source of enabledSources) {
-    try {
-      console.log(`  🔄 Trying ${source.name} sequentially...`);
-      let result = null;
-      if (source.name === 'RB Goldspot') {
-        result = await fetchFromRBGoldspot();
-      } else if (source.name === 'Vercel') {
-        result = await fetchFromVercel();
-      } else if (source.name === 'Custom' && source.url) {
-        result = await fetchFromCustom(source.url);
-      }
-
-      if (result && result.ratePerGram && result.ratePerGram > 0) {
-        console.log(`  ✅ ${source.name} succeeded sequentially: ₹${result.ratePerGram}/gram`);
-        return result;
-      } else {
-        console.log(`  ⚠️ ${source.name} returned invalid result sequentially`);
-      }
-    } catch (error) {
-      console.error(`  ❌ ${source.name} failed sequentially:`, error.message);
-      // Continue to next source
-    }
-  }
-
-  // All sources failed
-  console.error('❌ All rate sources failed (both parallel and sequential)');
+  // If parallel failed, DO NOT try sequential as it will likely cause Vercel timeout (10s limit)
+  console.error('❌ All rate sources failed or timed out');
   return null;
 };
 
