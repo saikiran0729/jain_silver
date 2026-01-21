@@ -1438,7 +1438,8 @@ router.get('/', async (req, res) => {
                   }).filter(rate => rate !== null); // Filter out any null rates
 
                   // Filter visible products for non-admin
-                  const visibleRates = recalculatedRates.filter(rate => rate.isVisible !== false);
+                  // Ensure we don't crash on null/undefined rates
+                  const visibleRates = recalculatedRates ? recalculatedRates.filter(rate => rate && rate.isVisible !== false) : [];
 
                   // Apply display names
                   const finalRates = visibleRates.map(rate => ({
