@@ -9,21 +9,22 @@ router.get('/', async (req, res) => {
   try {
     const { limit = 10, page = 1, category } = req.query;
     const query = { published: true };
-    
+
     if (category) {
       query.category = category;
     }
-    
+
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    
+
     const news = await News.find(query)
       .populate('author', 'name email')
       .sort({ publishedAt: -1, createdAt: -1 })
       .limit(parseInt(limit))
-      .skip(skip);
-    
+      .skip(skip)
+      .lean();
+
     const total = await News.countDocuments(query);
-    
+
     res.json({
       news,
       pagination: {
@@ -44,15 +45,15 @@ router.get('/:id', async (req, res) => {
   try {
     const news = await News.findById(req.params.id)
       .populate('author', 'name email');
-    
+
     if (!news) {
       return res.status(404).json({ message: 'News post not found' });
     }
-    
+
     // Increment views
     news.views = (news.views || 0) + 1;
     await news.save();
-    
+
     res.json(news);
   } catch (error) {
     console.error('Get news by ID error:', error);
@@ -117,32 +118,32 @@ router.get('/admin/all', auth, adminAuth, async (req, res) => {
   try {
     const { limit = 50, page = 1, published, category } = req.query;
     const query = {};
-    
+
     if (published !== undefined) {
       query.published = published === 'true';
     }
-    
+
     if (category) {
       query.category = category;
     }
-    
+
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    
+
     // Check if News model is available
     if (!News) {
       console.error('News model is not available');
       return res.status(500).json({ message: 'News model not initialized', news: [] });
     }
-    
+
     const news = await News.find(query)
       .populate('author', 'name email')
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
       .skip(skip)
       .lean(); // Use lean() for better performance
-    
+
     const total = await News.countDocuments(query);
-    
+
     res.json({
       news: news || [],
       pagination: {
@@ -155,8 +156,8 @@ router.get('/admin/all', auth, adminAuth, async (req, res) => {
   } catch (error) {
     console.error('Get all news error:', error);
     console.error('Error stack:', error.stack);
-    res.status(500).json({ 
-      message: 'Server error', 
+    res.status(500).json({
+      message: 'Server error',
       error: error.message,
       news: [] // Return empty array on error
     });
@@ -223,11 +224,11 @@ router.get('/admin/all', auth, adminAuth, async (req, res) => {
 router.post('/', auth, adminAuth, async (req, res) => {
   try {
     const { title, content, image, published, category, tags } = req.body;
-    
+
     if (!title || !content) {
       return res.status(400).json({ message: 'Title and content are required' });
     }
-    
+
     const news = new News({
       title,
       content,
@@ -238,12 +239,12 @@ router.post('/', auth, adminAuth, async (req, res) => {
       category: category || 'general',
       tags: tags || []
     });
-    
+
     await news.save();
-    
+
     const populatedNews = await News.findById(news._id)
       .populate('author', 'name email');
-    
+
     res.status(201).json({
       message: 'News post created successfully',
       news: populatedNews
@@ -306,20 +307,20 @@ router.post('/', auth, adminAuth, async (req, res) => {
 router.put('/:id', auth, adminAuth, async (req, res) => {
   try {
     const { title, content, image, published, category, tags } = req.body;
-    
+
     const news = await News.findById(req.params.id);
-    
+
     if (!news) {
       return res.status(404).json({ message: 'News post not found' });
     }
-    
+
     // Update fields
     if (title !== undefined) news.title = title;
     if (content !== undefined) news.content = content;
     if (image !== undefined) news.image = image;
     if (category !== undefined) news.category = category;
     if (tags !== undefined) news.tags = tags;
-    
+
     // Handle published status
     if (published !== undefined) {
       news.published = published;
@@ -329,12 +330,12 @@ router.put('/:id', auth, adminAuth, async (req, res) => {
         news.publishedAt = null;
       }
     }
-    
+
     await news.save();
-    
+
     const populatedNews = await News.findById(news._id)
       .populate('author', 'name email');
-    
+
     res.json({
       message: 'News post updated successfully',
       news: populatedNews
@@ -376,13 +377,13 @@ router.put('/:id', auth, adminAuth, async (req, res) => {
 router.delete('/:id', auth, adminAuth, async (req, res) => {
   try {
     const news = await News.findById(req.params.id);
-    
+
     if (!news) {
       return res.status(404).json({ message: 'News post not found' });
     }
-    
+
     await News.findByIdAndDelete(req.params.id);
-    
+
     res.json({ message: 'News post deleted successfully' });
   } catch (error) {
     console.error('Delete news error:', error);

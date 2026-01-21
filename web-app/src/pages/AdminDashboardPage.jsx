@@ -79,12 +79,21 @@ function AdminDashboardPage() {
   const [editProductName, setEditProductName] = useState('');
 
   useEffect(() => {
-    fetchUsers();
-    fetchRates(true); // Use skipUpdate=true by default for admin dashboard to avoid timeouts
+    // Initial fetch of global settings
     fetchShowAsItIsSetting();
-    fetchBaseRate(); // Always fetch base rate to calculate exact Normal Price
-    if (mainTab === 1) fetchNews();
-    if (mainTab === 2) fetchStoreInfo();
+    fetchBaseRate();
+  }, []);
+
+  useEffect(() => {
+    // Fetch tab-specific data
+    if (mainTab === 0) {
+      fetchUsers();
+      fetchRates(true);
+    } else if (mainTab === 1) {
+      fetchNews();
+    } else if (mainTab === 2) {
+      fetchStoreInfo();
+    }
   }, [mainTab]);
 
   const fetchShowAsItIsSetting = async () => {

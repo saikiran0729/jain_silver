@@ -417,8 +417,8 @@ function HomePage() {
           {rates.length === 0 ? (
             <Alert severity="info">No rates available</Alert>
           ) : (
-            <TableContainer component={Paper} sx={{ boxShadow: 2, height: '100%', overflow: 'auto' }}>
-              <Table sx={{ minWidth: { xs: 400, sm: 650 }, width: '100%' }} size="small" stickyHeader>
+            <TableContainer component={Paper} sx={{ boxShadow: 2, height: '100%', overflow: 'auto', display: 'flex', justifyContent: 'center' }}>
+              <Table sx={{ width: 'auto', minWidth: 'auto' }} size="small" stickyHeader>
                 <TableHead>
                   <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
                     <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 1, pl: 1, pr: 0.5 }}>Product</TableCell>

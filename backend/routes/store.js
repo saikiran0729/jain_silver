@@ -38,37 +38,36 @@ router.get('/', async (req, res) => {
       ]
     };
 
-    // Check MongoDB connection
+    // Check MongoDB connection (fast check)
     const mongoose = require('mongoose');
     if (mongoose.connection.readyState !== 1) {
+      // If not connected, try to connect but don't block too long
       try {
-        await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/jain_silver', {
-          useNewUrlParser: true,
-          useUnifiedTopology: true,
-          serverSelectionTimeoutMS: 5000,
-        });
-      } catch (connError) {
-        console.error('MongoDB connection failed, returning default data:', connError.message);
-        return res.json(defaultStoreInfo);
-      }
+        if (!process.env.MONGODB_URI && !process.env.VERCEL) {
+          return res.json(defaultStoreInfo);
+        }
+      } catch (e) { console.error(e); }
     }
-    
-    // Try to get store info from database
+
+    // Try to get store info from database with lean() for performance
     try {
       let storeInfo;
       if (typeof StoreInfo.getStoreInfo === 'function') {
         storeInfo = await StoreInfo.getStoreInfo();
       } else {
-        storeInfo = await StoreInfo.findOne();
+        storeInfo = await StoreInfo.findOne().lean();
         if (!storeInfo) {
-          storeInfo = new StoreInfo(defaultStoreInfo);
-          await storeInfo.save();
-        } else {
-          storeInfo = storeInfo.toObject ? storeInfo.toObject() : storeInfo;
+          // Verify if any exists before creating to avoid race conditions
+          const count = await StoreInfo.countDocuments();
+          if (count === 0) {
+            const newStore = new StoreInfo(defaultStoreInfo);
+            await newStore.save();
+            storeInfo = newStore.toObject();
+          }
         }
       }
-      
-      const mergedInfo = { ...defaultStoreInfo, ...storeInfo };
+
+      const mergedInfo = { ...defaultStoreInfo, ...(storeInfo || {}) };
       res.json(mergedInfo);
     } catch (dbError) {
       console.error('Error fetching store info from database:', dbError.message);
@@ -171,7 +170,7 @@ router.get('/info', async (req, res) => {
         return res.json(defaultStoreInfo);
       }
     }
-    
+
     // Try to get store info from database
     try {
       let storeInfo;
@@ -188,20 +187,20 @@ router.get('/info', async (req, res) => {
           storeInfo = storeInfo.toObject ? storeInfo.toObject() : storeInfo;
         }
       }
-      
+
       // Convert to plain object if needed
       const storeInfoObj = storeInfo.toObject ? storeInfo.toObject() : storeInfo;
-      
+
       // Merge with defaults, but prioritize database values (database values come last in spread)
       // This ensures that if database has empty arrays, they are used instead of defaults
-      const mergedInfo = { 
-        ...defaultStoreInfo, 
+      const mergedInfo = {
+        ...defaultStoreInfo,
         ...storeInfoObj,
         // Explicitly set arrays from database if they exist (even if empty)
         storeTimings: storeInfoObj.storeTimings !== undefined ? storeInfoObj.storeTimings : defaultStoreInfo.storeTimings,
         bankDetails: storeInfoObj.bankDetails !== undefined ? storeInfoObj.bankDetails : defaultStoreInfo.bankDetails
       };
-      
+
       console.log('📖 Returning store info:', JSON.stringify(mergedInfo, null, 2));
       res.json(mergedInfo);
     } catch (dbError) {
@@ -310,18 +309,18 @@ router.put('/info', auth, adminAuth, async (req, res) => {
     // Check MongoDB connection
     const mongoose = require('mongoose');
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ 
+      return res.status(503).json({
         message: 'Database connection not available',
         error: 'Please try again later'
       });
     }
 
     console.log('📝 Updating store info with data:', JSON.stringify(req.body, null, 2));
-    
+
     // Get only the fields that are allowed to be updated
     const allowedFields = ['welcomeMessage', 'address', 'phoneNumber', 'instagram', 'facebook', 'youtube', 'storeTimings', 'bankDetails'];
     const updateData = {};
-    
+
     allowedFields.forEach(field => {
       if (req.body[field] !== undefined) {
         updateData[field] = req.body[field];
@@ -331,14 +330,14 @@ router.put('/info', auth, adminAuth, async (req, res) => {
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ message: 'No valid fields to update' });
     }
-    
+
     // Use findOneAndUpdate with upsert to ensure atomic update
     const updateOptions = {
       new: true, // Return the updated document
       upsert: true, // Create if doesn't exist
       runValidators: true // Run schema validators
     };
-    
+
     // Prepare update object - use $set operator for proper MongoDB update
     const updateObject = {};
     Object.keys(updateData).forEach(key => {
@@ -346,16 +345,16 @@ router.put('/info', auth, adminAuth, async (req, res) => {
         updateObject[key] = updateData[key];
       }
     });
-    
+
     console.log('📝 Update object:', JSON.stringify(updateObject, null, 2));
-    
+
     // Use findOneAndUpdate for atomic operation
     let storeInfo = await StoreInfo.findOneAndUpdate(
       {}, // Empty filter means find any document (since there should only be one)
       { $set: updateObject },
       updateOptions
     );
-    
+
     if (!storeInfo) {
       // If still no document exists, create one with defaults and update data
       const defaultStoreInfo = {
@@ -370,30 +369,30 @@ router.put('/info', auth, adminAuth, async (req, res) => {
         ],
         bankDetails: []
       };
-      
+
       storeInfo = new StoreInfo({
         ...defaultStoreInfo,
         ...updateObject
       });
       await storeInfo.save();
     }
-    
+
     console.log('✅ Store info saved. Verifying:', JSON.stringify(storeInfo.toObject(), null, 2));
-    
+
     // Re-fetch to ensure we have the latest data
     storeInfo = await StoreInfo.findById(storeInfo._id);
-    
+
     if (!storeInfo) {
       console.error('❌ Store info not found after save');
-      return res.status(500).json({ 
+      return res.status(500).json({
         message: 'Store information was saved but could not be retrieved',
         error: 'Please refresh and try again'
       });
     }
-    
+
     const savedInfo = storeInfo.toObject ? storeInfo.toObject() : storeInfo;
     console.log('✅ Store info updated successfully');
-    
+
     res.json({
       message: 'Store information updated successfully',
       storeInfo: savedInfo
@@ -403,24 +402,24 @@ router.put('/info', auth, adminAuth, async (req, res) => {
     console.error('Error name:', error.name);
     console.error('Error message:', error.message);
     console.error('Error stack:', error.stack);
-    
+
     // Handle specific MongoDB errors
     if (error.name === 'ValidationError') {
-      return res.status(400).json({ 
-        message: 'Validation error', 
+      return res.status(400).json({
+        message: 'Validation error',
         error: error.message
       });
     }
-    
+
     if (error.name === 'CastError') {
-      return res.status(400).json({ 
-        message: 'Invalid data format', 
+      return res.status(400).json({
+        message: 'Invalid data format',
         error: error.message
       });
     }
-    
-    res.status(500).json({ 
-      message: 'Server error', 
+
+    res.status(500).json({
+      message: 'Server error',
       error: error.message || 'An unexpected error occurred',
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
