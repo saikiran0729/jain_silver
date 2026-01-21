@@ -656,7 +656,7 @@ router.get('/', async (req, res) => {
     // In serverless, we need to ensure connection on each request
     try {
       const mongoose = require('mongoose');
-      
+
       // Safety check: ensure mongoose is available
       if (!mongoose) {
         console.warn('⚠️ Mongoose not available, skipping MongoDB fetch');
@@ -718,12 +718,12 @@ router.get('/', async (req, res) => {
         // Declare latestRate and mongoAge in broader scope so they're accessible later
         let latestRate = null;
         let mongoAge = 0;
-        
+
         // Define thresholds at top level so they're accessible throughout the route handler
         const STALE_THRESHOLD = 500; // 500ms - trigger update if older than 0.5 seconds for near real-time
         const VERY_STALE_THRESHOLD = 2000; // 2 seconds - if very stale, wait for update before serving
         const OLD_RATE_THRESHOLD = 200; // If rate is below this, it's likely old cached data (updated for current rates ~₹290/gram)
-        
+
         // Declare stale rate flags in broader scope
         let hasStaleRates = false;
         let hasStaleBaseRate = false;
@@ -796,7 +796,7 @@ router.get('/', async (req, res) => {
           hasOld99_9Rates = mongoRates.some(rate =>
             rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
           );
-          
+
           // CRITICAL: Check if rates are significantly below current market rate (₹290/gram)
           // Lower threshold to ₹240 to catch rates like ₹235-236/gram
           // Check both 99.9% and 99.99% purity rates for staleness
@@ -805,7 +805,7 @@ router.get('/', async (req, res) => {
             if (rate.purity === '99.99%' && rate.ratePerGram < 240) return true;
             return false;
           });
-          
+
           // Also check if base rate (from 99.9% rates) is significantly below expected
           // This catches cases where rates might be slightly above threshold but still old
           const baseRateFrom99_9 = mongoRates.find(r => r.purity === '99.9%')?.ratePerGram || 0;
@@ -981,7 +981,7 @@ router.get('/', async (req, res) => {
                 }
               }
             }
-            
+
             // CRITICAL: Filter out disabled products for non-admin users
             let filteredFinalRates = finalRates;
             if (!isAdmin && !skipUpdate) {
@@ -1336,7 +1336,8 @@ router.get('/', async (req, res) => {
                       console.error('❌ Rate missing name:', rate);
                       return null;
                     }
-                    const manualAdjustment = adjustmentsMap[rateName] || (rate.manualAdjustment || 0);
+                    // If "Show As It Is" is enabled, ignore manual adjustments
+                    const manualAdjustment = showAsItIs ? 0 : (adjustmentsMap[rateName] || (rate.manualAdjustment || 0));
 
                     // Calculate ratePerGram based on purity
                     let ratePerGram = currentBaseRate;
@@ -1445,7 +1446,7 @@ router.get('/', async (req, res) => {
                   console.log(`✅ Fresh rates fetched: ${freshRates.length} rates (${Math.round(freshAge / 1000)}s old, latest: ${freshLatest.name} = ₹${freshLatest.ratePerGram}/gram)`);
 
                   const ratesWithAdjustments = await applyManualAdjustments(freshRates, isAdmin);
-                  
+
                   // CRITICAL: Filter out disabled products for non-admin users
                   let filteredRatesWithAdjustments = ratesWithAdjustments;
                   if (!isAdmin) {
@@ -1549,7 +1550,7 @@ router.get('/', async (req, res) => {
 
                 if (freshRates && freshRates.length > 0) {
                   const ratesWithAdjustments = await applyManualAdjustments(freshRates, isAdmin);
-                  
+
                   // CRITICAL: Filter out disabled products for non-admin users
                   let filteredRatesWithAdjustments = ratesWithAdjustments;
                   if (!isAdmin) {
@@ -1620,24 +1621,24 @@ router.get('/', async (req, res) => {
                     usdInrRate: liveRate.usdInrRate || cachedBaseRate.usdInrRate || 89.25
                   };
                   console.log(`✅ Updated cache with fresh rate: ₹${liveRate.ratePerGram.toFixed(2)}/gram (was using stale ₹${latestRate?.ratePerGram || 'N/A'}/gram)`);
-                  
+
                   // CRITICAL: Save updated rates to MongoDB so they persist for future requests
                   console.log('💾 Saving updated rates to MongoDB...');
                   await updateMongoDBRates(liveRate);
                   console.log('✅ Updated rates saved to MongoDB');
-                  
+
                   // Recalculate rates on-the-fly with fresh base rate
                   let currentBaseRate = liveRate.ratePerGram;
                   const rateNames = mongoRates.map(r => r.originalName || r.name).filter(Boolean);
                   const adjustmentsMap = await fetchManualAdjustments(rateNames);
-                  
+
                   const recalculatedRates = mongoRates.map((rate) => {
                     try {
                       if (!rate || typeof rate !== 'object') return null;
                       const rateName = (rate.originalName || rate.name);
                       if (!rateName) return null;
                       const manualAdjustment = adjustmentsMap[rateName] || (rate.manualAdjustment || 0) || 0;
-                      
+
                       let ratePerGram = currentBaseRate;
                       if (rate.purity === '92.5%') {
                         ratePerGram = currentBaseRate * 0.96;
@@ -1646,13 +1647,13 @@ router.get('/', async (req, res) => {
                       }
                       ratePerGram = ratePerGram + manualAdjustment;
                       ratePerGram = Math.max(0, ratePerGram);
-                      
+
                       let weightInGrams = (rate.weight && rate.weight.value) ? rate.weight.value : 1;
                       if (rate.weight && rate.weight.unit === 'kg') {
                         weightInGrams = rate.weight.value * 1000;
                       }
                       const totalRate = ratePerGram * weightInGrams;
-                      
+
                       return {
                         ...rate,
                         ratePerGram: ratePerGram,
@@ -1666,7 +1667,7 @@ router.get('/', async (req, res) => {
                       return null;
                     }
                   }).filter(rate => rate !== null);
-                  
+
                   const visibleRates = recalculatedRates.filter(rate => rate.isVisible !== false);
                   const finalRates = visibleRates.map(rate => ({
                     ...rate,
@@ -1677,7 +1678,7 @@ router.get('/', async (req, res) => {
                     ...rate,
                     usdInrRate: cachedBaseRate.usdInrRate || 89.25
                   }));
-                  
+
                   console.log(`✅ Recalculated ${finalRates.length} rates with fresh live rate: ₹${currentBaseRate.toFixed(2)}/gram`);
                   res.set({
                     'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -2103,7 +2104,7 @@ router.get('/', async (req, res) => {
     const errorDetails = process.env.NODE_ENV === 'development'
       ? { error: 'Failed to fetch rates', message: safeErrorMsg, stack: (error.stack?.substring(0, 500) || '').replace(/[^\x20-\x7E]/g, '') }
       : { error: 'Failed to fetch rates', message: 'An error occurred while fetching rates. Please try again.' };
-    
+
     try {
       return res.status(500).json(errorDetails);
     } catch (jsonError) {

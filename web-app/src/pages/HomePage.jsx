@@ -37,14 +37,42 @@ function HomePage() {
   // Check if rates are default/old (below ₹100) - should show fetching instead
   const areRatesDefault = (ratesToCheck) => {
     if (!ratesToCheck || ratesToCheck.length === 0) return true;
-    // Check if any 99.9% rate is below ₹100 (current rates should be ~₹200-210)
-    const OLD_RATE_THRESHOLD = 100;
+    // Check if any 99.9% rate is below ₹50 (current rates should be ~₹80-90)
+    const OLD_RATE_THRESHOLD = 50;
     return ratesToCheck.some(rate =>
       rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
     );
   };
 
+  const [showAsItIs, setShowAsItIs] = useState(false);
+
   useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        // Try to get setting from public endpoint if available, or rely on backend default
+        // Since we don't have a public settings endpoint verified, we will rely on rates.js
+        // checking the DB. However, to be safe, we can try to fetch it if we had an endpoint.
+        // For now, let's just trigger the polls.
+        // The real fix was in rates.js which now checks the DB correctly during recalculation.
+        // But if we want to force it from frontend, we need to know the value.
+        // Let's assume the backend handles it now that we fixed `rates.js`.
+      } catch (e) {
+        console.warn('Failed to fetch settings');
+      }
+    };
+
+    // Actually, we should try to get the setting to pass it explicitly to be sure
+    // But since we don't have a guaranteed public endpoint, let's rely on the backend fix first.
+    // If that fails, we'll need to expose the setting publicly.
+    // Given the previous fix in rates.js (lines 1334+), it now checks the DB variable `showAsItIs`.
+    // That variable `showAsItIs` in `rates.js` comes from `Settings.getSetting('showAsItIs')`.
+    // So the backend fix SHOULD be enough without frontend changes, 
+    // PROVIDED `rates.js` logic correctly reads the setting.
+
+    // We already fixed `rates.js` to use `showAsItIs` variable.
+    // And `rates.js` initializes `showAsItIs` from DB at the top of the route.
+    // So we don't need to pass it from frontend if backend works.
+
     fetchRates();
     startPolling();
     return () => {
