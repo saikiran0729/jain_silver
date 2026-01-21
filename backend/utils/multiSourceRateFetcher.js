@@ -25,7 +25,7 @@ const fetchFromRBGoldspot = async () => {
       timeout: 5000, // Reduced for serverless (Vercel has 10s limit)
       maxRedirects: 5,
       responseType: 'text',
-      params: { 
+      params: {
         _t: Date.now(),
         _r: Math.random()
       },
@@ -54,15 +54,15 @@ const fetchFromRBGoldspot = async () => {
       // Split by tabs (primary) or multiple spaces (fallback)
       // Format: ID	Name	Bid	Ask	High	Low	Status
       let parts = trimmedLine.split(/\t/);
-      
+
       // If no tabs found, try splitting by multiple spaces
       if (parts.length < 6) {
         parts = trimmedLine.split(/\s{2,}/);
       }
-      
+
       // Filter out empty parts
       parts = parts.map(p => p.trim()).filter(p => p.length > 0);
-      
+
       if (parts.length >= 6) {
         const id = parts[0];
         const name = parts[1];
@@ -79,7 +79,7 @@ const fetchFromRBGoldspot = async () => {
         // Match by ID first (most reliable), then by name
         if ((id === '2966' || (id && id.toString() === '2966')) && name && !name.toLowerCase().includes('mini')) {
           silver999Data = { id, name, bid, ask, high, low, status };
-          
+
           // ALWAYS use Ask price (selling price, most consistent)
           // Format: Ask price is per kg, convert to per gram
           if (ask && ask !== '-' && ask !== '' && ask !== '0' && !isNaN(parseFloat(ask))) {
@@ -116,8 +116,9 @@ const fetchFromRBGoldspot = async () => {
           }
         }
 
-        // Extract Gold 999 rate (ID: 945)
-        if ((id === '945' || (id && id.toString() === '945')) && name && name.toLowerCase().includes('gold 999')) {
+        // Extract Gold 999 rate (ID: 945 or Name match)
+        if ((id === '945' || (id && id.toString() === '945')) || (name && name.toLowerCase().includes('gold') && name.toLowerCase().includes('999'))) {
+          // Exclude "Mini" or others if needed, but Gold 999 is usually clear
           if (ask && ask !== '-' && ask !== '' && ask !== '0' && !isNaN(parseFloat(ask))) {
             gold999Rate = parseFloat(ask);
           } else if (high && high !== '-' && high !== '' && high !== '0' && !isNaN(parseFloat(high))) {
@@ -145,7 +146,7 @@ const fetchFromRBGoldspot = async () => {
       // Keep ratePerKg exactly as received from RB Gold
       const exactRatePerKg = ratePerKg; // Keep original value from source (no rounding)
       const exactRatePerGram = ratePerGram; // Keep exact per gram value (no rounding)
-      
+
       const result = {
         ratePerKg: exactRatePerKg, // Use exact value from source (no rounding)
         ratePerGram: exactRatePerGram, // Use exact value (no rounding)
@@ -161,7 +162,7 @@ const fetchFromRBGoldspot = async () => {
       console.log(`📊 Rate breakdown: Source=${silver999Data?.ask || silver999Data?.high || 'N/A'}, PerKg=${exactRatePerKg} (exact), PerGram=${exactRatePerGram} (exact)`);
       return result;
     }
-    
+
     console.warn('⚠️ Could not extract valid rate from RB Goldspot response');
     console.warn('  Parsed lines:', lines.length);
     console.warn('  Silver 999 data:', silver999Data);
@@ -222,11 +223,11 @@ const fetchFromVercel = async () => {
       console.log('⚠️ Not JSON, trying SSE format...');
       const lines = response.data.split('\n');
       let lastDataLine = null;
-      
+
       for (let i = lines.length - 1; i >= 0; i--) {
         const line = lines[i].trim();
         if (!line) continue;
-        
+
         if (line.startsWith('data: ')) {
           const jsonStr = line.substring(6);
           try {
@@ -274,12 +275,12 @@ const fetchFromVercel = async () => {
     if (rateData.prices && Array.isArray(rateData.prices)) {
       // Format: { prices: [...] }
       console.log('📋 Found prices array with', rateData.prices.length, 'items');
-      
+
       // Extract ALL rates from prices array
       rateData.prices.forEach((item, index) => {
         const itemId = item.id || item._id || index.toString();
         const itemName = (item.name || '').toLowerCase();
-        
+
         // Store all rates
         allRates[itemId] = {
           id: itemId,
@@ -354,7 +355,7 @@ const fetchFromVercel = async () => {
       // Log all extracted rates
       console.log(`📊 Extracted rates: Silver 999=${ratePerKg || 'N/A'}, USD-INR=${usdInrRate || 'N/A'}, Gold 999=${gold999Rate || 'N/A'}, Silver Mini 999=${silverMini999Rate || 'N/A'}`);
       console.log(`📊 Total rates found: ${Object.keys(allRates).length}`);
-      
+
     } else if (rateData.ratePerGram) {
       // Direct format: { ratePerGram: 168.39, ... }
       console.log('✅ Found ratePerGram directly:', rateData.ratePerGram);
@@ -381,7 +382,7 @@ const fetchFromVercel = async () => {
       // Use EXACT values from source - NO rounding to preserve accuracy
       const exactRatePerKg = ratePerKg; // Keep original value from source (no rounding)
       const exactRatePerGram = ratePerGram; // Keep exact per gram value (no rounding)
-      
+
       const result = {
         ratePerKg: exactRatePerKg, // Use exact value from source (no rounding)
         ratePerGram: exactRatePerGram, // Use exact value (no rounding)
@@ -397,7 +398,7 @@ const fetchFromVercel = async () => {
       console.log(`📊 Rate breakdown: PerKg=${exactRatePerKg} (exact), PerGram=${exactRatePerGram} (exact)`);
       return result;
     }
-    
+
     console.warn('⚠️ Could not extract valid rate from Vercel response');
     console.warn('  ratePerGram:', ratePerGram, 'ratePerKg:', ratePerKg);
     console.warn('  All rates found:', Object.keys(allRates).length);
@@ -506,11 +507,11 @@ const fetchSilverRatesFromMultipleSources = async () => {
   if (ACTIVE_RATE_SOURCE === 'RB_GOLDSPOT') {
     return await fetchFromRBGoldspot();
   }
-  
+
   if (ACTIVE_RATE_SOURCE === 'VERCEL') {
     return await fetchFromVercel();
   }
-  
+
   if (ACTIVE_RATE_SOURCE === 'CUSTOM') {
     const customSource = RATE_SOURCES.CUSTOM;
     if (!customSource.enabled || !customSource.url) {
@@ -546,7 +547,7 @@ const fetchSilverRatesFromMultipleSources = async () => {
       } else if (source.name === 'Custom' && source.url) {
         result = await fetchFromCustom(source.url);
       }
-      
+
       if (result && result.ratePerGram && result.ratePerGram > 0) {
         console.log(`✅ ${source.name} succeeded: ₹${result.ratePerGram.toFixed(2)}/gram`);
         return { source: source.name, result, priority: source.priority };
@@ -586,7 +587,7 @@ const fetchSilverRatesFromMultipleSources = async () => {
       } else if (source.name === 'Custom' && source.url) {
         result = await fetchFromCustom(source.url);
       }
-      
+
       if (result && result.ratePerGram && result.ratePerGram > 0) {
         console.log(`  ✅ ${source.name} succeeded sequentially: ₹${result.ratePerGram}/gram`);
         return result;

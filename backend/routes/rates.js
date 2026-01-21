@@ -45,13 +45,11 @@ const getOriginalRates = async (baseRatePerGram, goldRatePerGram = null) => {
     { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
   ];
 
-  // Add Gold products if goldRatePerGram is available
-  if (goldRatePerGram && goldRatePerGram > 0) {
-    rateDefinitions.push(
-      { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' } // Tola/10g
-    );
-  }
+  // Always include Gold products (default to 0 if rate not available)
+  rateDefinitions.push(
+    { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' } // Tola/10g
+  );
 
   return rateDefinitions.map(rateDef => {
     let ratePerGram;
@@ -472,12 +470,11 @@ const updateMongoDBRates = async (baseRatePerGram, source, goldRatePerGram = nul
       { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
     ];
 
-    if (goldRatePerGram && goldRatePerGram > 0) {
-      rateDefinitions.push(
-        { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
-        { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
-      );
-    }
+    // Always add Gold products to ensure they exist in DB (default to 0 if rate not available)
+    rateDefinitions.push(
+      { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
+    );
 
 
     // Fetch manual adjustments from MongoDB
