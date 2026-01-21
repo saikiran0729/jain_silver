@@ -53,19 +53,32 @@ function Layout() {
             justifyContent: 'space-between',
           }}
         >
-          <Box
-            component="img"
-            src="/1764232687647-removebg-preview.png"
-            alt="Jain Silver Plaza"
-            sx={{
-              height: { xs: 60, sm: 70, md: 80 },
-              width: 'auto',
-              mr: 2,
-              cursor: 'pointer',
-              objectFit: 'contain',
-            }}
-            onClick={() => navigate('/')}
-          />
+          <Box sx={{ display: 'flex', alignItems: 'center', mr: 2, cursor: 'pointer' }} onClick={() => navigate('/')}>
+            <Box
+              component="img"
+              src="/1764232687647-removebg-preview.png"
+              alt="Jain Silver Plaza"
+              sx={{
+                height: { xs: 70, sm: 80, md: 90 }, // Increased size
+                width: 'auto',
+                mr: 2,
+                objectFit: 'contain',
+              }}
+            />
+            <Typography
+              variant="h6"
+              component="div"
+              sx={{
+                fontWeight: 700,
+                color: colors.primary, // Using theme color (Red)
+                display: { xs: 'none', sm: 'block' }, // Hide on very small screens if needed, or show
+                fontSize: { xs: '1rem', sm: '1.2rem', md: '1.4rem' },
+                lineHeight: 1.2,
+              }}
+            >
+              JAIN SILVER PLAZA
+            </Typography>
+          </Box>
           {/* Desktop Navigation */}
           <Box sx={{ display: { xs: 'none', md: 'flex' }, gap: 0, alignItems: 'center', flex: 1, justifyContent: 'center' }}>
             <Button

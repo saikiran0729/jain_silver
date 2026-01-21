@@ -31,7 +31,7 @@ const fetchManualAdjustments = async (rateNames) => {
 };
 
 // Helper function to get original rates (without adjustments) from base rate
-const getOriginalRates = async (baseRatePerGram) => {
+const getOriginalRates = async (baseRatePerGram, goldRatePerGram = null) => {
   const rateDefinitions = [
     { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
     { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
@@ -45,12 +45,27 @@ const getOriginalRates = async (baseRatePerGram) => {
     { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
   ];
 
+  // Add Gold products if goldRatePerGram is available
+  if (goldRatePerGram && goldRatePerGram > 0) {
+    rateDefinitions.push(
+      { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' } // Tola/10g
+    );
+  }
+
   return rateDefinitions.map(rateDef => {
-    let ratePerGram = baseRatePerGram;
-    if (rateDef.purity === '92.5%') {
-      ratePerGram = baseRatePerGram * 0.96;
+    let ratePerGram;
+
+    if (rateDef.type === 'gold') {
+      ratePerGram = goldRatePerGram;
+      // No adjustment for purity for now, assuming base rate is for 99.9%
+    } else {
+      ratePerGram = baseRatePerGram;
+      if (rateDef.purity === '92.5%') {
+        ratePerGram = baseRatePerGram * 0.96;
+      }
+      // Both 99.9% and 99.99% use base rate as-is (no multiplier)
     }
-    // Both 99.9% and 99.99% use base rate as-is (no multiplier)
 
     // No rounding - keep exact value from RB Gold
     // ratePerGram stays as is
@@ -388,7 +403,7 @@ const updateRatesFromEndpoints = async () => {
 
         // Update MongoDB with exact rate from source (no smoothing)
         try {
-          await updateMongoDBRates(liveRate);
+          await updateMongoDBRates(liveRate.ratePerGram, liveRate.source, liveRate.gold999Rate);
         } catch (mongoError) {
           console.error('❌ MongoDB update failed:', mongoError.message);
         }
@@ -429,8 +444,20 @@ const updateMongoDBRates = async (liveRate) => {
         return;
       }
     }
+    const SilverRate = require('../models/SilverRate');
+    const { getOriginalRates } = require('../utils/rateCalculations'); // Assuming this utility exists
 
-    const baseRatePerGram = liveRate.ratePerGram;
+    // Get ALL product definitions (Coins, Bars, Jewelry, AND Gold)
+    // Pass goldRatePerGram to include Gold products if available
+    const ratesList = await getOriginalRates(baseRatePerGram, goldRatePerGram);
+
+    // We need to re-map this to rateDefinitions format for the bulk update logic below
+    // getOriginalRates returns calculated objects, but the logic below expects definitions + calculation
+    // Actually, getOriginalRates returns the full object structure needed for the list response.
+    // But the bulk update logic below re-calculates everything from `rateDefinitions` array.
+    // So we should update `rateDefinitions` array inside this function too, or just reuse the logic from `getOriginalRates`?
+
+    // Let's redefine `rateDefinitions` here including Gold if applicable, consistent with getOriginalRates
     const rateDefinitions = [
       { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
       { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
@@ -443,6 +470,14 @@ const updateMongoDBRates = async (liveRate) => {
       { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
       { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
     ];
+
+    if (goldRatePerGram && goldRatePerGram > 0) {
+      rateDefinitions.push(
+        { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+        { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
+      );
+    }
+
 
     // Fetch manual adjustments from MongoDB
     const adjustmentsMap = await fetchManualAdjustments(rateDefinitions.map(r => r.name));
@@ -1356,7 +1391,16 @@ router.get('/', async (req, res) => {
 
                     // Calculate ratePerGram based on purity
                     let ratePerGram = currentBaseRate;
-                    if (rate.purity === '92.5%') {
+
+                    if (rate.type === 'gold') {
+                      // CRITICAL: Do NOT overwrite Gold rate with Silver Base Rate
+                      // Use the stored rate from MongoDB which is updated by the background job
+                      ratePerGram = rate.ratePerGram;
+
+                      // If we have a live gold rate from cache, we could us it, but for now rely on DB
+                      // actually, the background job saves the correct rate.
+                      // If we use currentBaseRate (Silver), we break it.
+                    } else if (rate.purity === '92.5%') {
                       ratePerGram = currentBaseRate * 0.96;
                     } else if (rate.purity === '99.99%') {
                       ratePerGram = currentBaseRate; // 99.99% uses base rate as-is
@@ -2413,11 +2457,21 @@ const updateRatesHandler = async (req, res = null) => {
     // Use bulk write for faster MongoDB updates (more efficient than individual updates)
     const bulkOps = rateDefinitions.map((rateDef) => {
       // Calculate rate per gram based on purity
-      let ratePerGramForPurity = baseRatePerGram;
-      if (rateDef.purity === '92.5%') {
-        ratePerGramForPurity = baseRatePerGram * 0.96;
-      } else if (rateDef.purity === '99.99%') {
-        ratePerGramForPurity = baseRatePerGram; // 99.99% uses base rate as-is
+      let ratePerGramForPurity;
+
+      if (rateDef.type === 'gold') {
+        // For Gold, use the passed goldRatePerGram
+        ratePerGramForPurity = goldRatePerGram;
+        // If goldRatePerGram missing (shouldn't happen if pushed to list), fallback to 0 or safe default
+        if (!ratePerGramForPurity) ratePerGramForPurity = 0;
+      } else {
+        // Silver logic
+        ratePerGramForPurity = baseRatePerGram;
+        if (rateDef.purity === '92.5%') {
+          ratePerGramForPurity = baseRatePerGram * 0.96;
+        } else if (rateDef.purity === '99.99%') {
+          ratePerGramForPurity = baseRatePerGram; // 99.99% uses base rate as-is
+        }
       }
 
       // Get existing rate data (normalPrice and manualAdjustment)

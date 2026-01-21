@@ -420,12 +420,12 @@ function HomePage() {
           {rates.length === 0 ? (
             <Alert severity="info">No rates available</Alert>
           ) : (
-            <TableContainer component={Paper} sx={{ boxShadow: 2, height: '100%', overflow: 'auto', display: 'flex', justifyContent: 'center' }}>
-              <Table sx={{ width: 'auto', minWidth: 'auto' }} size="small" stickyHeader>
+            <TableContainer component={Paper} sx={{ boxShadow: '0 4px 12px rgba(0,0,0,0.08)', borderRadius: 2, overflow: 'hidden' }}>
+              <Table sx={{ width: '100%' }} size="medium">
                 <TableHead>
-                  <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
-                    <TableCell sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 1, pl: 1, pr: 0.5 }}>Product</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700, fontSize: { xs: '0.75rem', sm: '0.85rem' }, py: 1, pl: 0.5, pr: 1, whiteSpace: 'nowrap' }}>Sell Price</TableCell>
+                  <TableRow sx={{ backgroundColor: '#f8f9fa' }}>
+                    <TableCell sx={{ fontWeight: 700, fontSize: '0.9rem', py: 2, px: 2, color: colors.textSecondary }}>PRODUCT</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700, fontSize: '0.9rem', py: 2, px: 2, color: colors.textSecondary }}>LIVE PRICE</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -451,17 +451,17 @@ function HomePage() {
                             : 'white',
                         }}
                       >
-                        <TableCell sx={{ py: 0.25, pl: 1, pr: 0.5, width: 'auto' }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <TableCell sx={{ py: 0.5, px: 2, width: '60%' }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                             {productImage ? (
                               <Box
                                 component="img"
                                 src={productImage}
                                 alt={rate.name}
                                 sx={{
-                                  width: 40,
-                                  height: 40,
-                                  borderRadius: 0.5,
+                                  width: 48,
+                                  height: 48,
+                                  borderRadius: 1,
                                   objectFit: 'cover',
                                   border: `1px solid ${colors.border}`,
                                   flexShrink: 0,
@@ -473,37 +473,42 @@ function HomePage() {
                             ) : (
                               <Avatar
                                 sx={{
-                                  width: 40,
-                                  height: 40,
+                                  width: 48,
+                                  height: 48,
                                   backgroundColor: colors.primaryVeryLight,
-                                  fontSize: 16,
+                                  fontSize: 20,
                                   flexShrink: 0,
                                 }}
                               >
                                 {iconType}
                               </Avatar>
                             )}
-                            <Box sx={{ minWidth: 0 }}>
-                              <Typography variant="body2" sx={{ fontWeight: 700, fontSize: { xs: '0.9rem', sm: '1rem' }, lineHeight: 1.2 }}>
+                            <Box sx={{ minWidth: 0, flex: 1 }}>
+                              <Typography variant="body1" sx={{ fontWeight: 700, fontSize: { xs: '0.95rem', sm: '1.05rem' }, lineHeight: 1.2, color: '#333' }}>
                                 {rate.name}
                               </Typography>
-                              <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.75rem' }}>
+                              <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.8rem', display: 'block', mt: 0.5 }}>
                                 {rate.purity}
                               </Typography>
                             </Box>
                           </Box>
                         </TableCell>
-                        <TableCell align="right" sx={{ py: 0.25, pl: 0.5, pr: 1, whiteSpace: 'nowrap', width: 'auto' }}>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              fontWeight: 700,
-                              color: rateColor || '#d32f2f',
-                              fontSize: { xs: '1.2rem', sm: '1.4rem' },
-                            }}
-                          >
-                            {formatPrice((rate.ratePerGram || 0) * 1000)}/kg
-                          </Typography>
+                        <TableCell align="right" sx={{ py: 0.5, px: 2, verticalAlign: 'middle', width: '40%' }}>
+                          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                            <Typography
+                              variant="body1"
+                              sx={{
+                                fontWeight: 800,
+                                fontSize: { xs: '1.2rem', sm: '1.5rem' },
+                                color: rateColor,
+                                transition: 'color 0.3s ease',
+                                letterSpacing: '-0.5px'
+                              }}
+                            >
+                              {formatPrice(getKgPrice(rate.rate, rate.weight))}
+                              <Typography component="span" sx={{ fontSize: '0.8em', color: colors.textSecondary, fontWeight: 500, ml: 0.5 }}>/kg</Typography>
+                            </Typography>
+                          </Box>
                         </TableCell>
                       </TableRow>
                     );
