@@ -624,7 +624,7 @@ router.get('/base-rate', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     // Check for skipUpdate query parameter (for admin dashboard to avoid waiting for slow external updates)
-    const skipUpdate = req.query.skipUpdate === 'true' || req.query.skipUpdate === true;
+    let skipUpdate = req.query.skipUpdate === 'true' || req.query.skipUpdate === true;
 
     // Check for explicit admin parameter (for admin dashboard)
     // This allows admin dashboard to see all products including disabled ones
@@ -839,6 +839,14 @@ router.get('/', async (req, res) => {
 
           mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
           // Thresholds are defined at top level above
+
+          // CRITICAL: Check if Gold rates are present. If not, force an update to create them.
+          const hasGold = mongoRates.some(r => r.type === 'gold' || (r.name && r.name.toLowerCase().includes('gold') && r.name.toLowerCase().includes('999')));
+          if (!hasGold && skipUpdate) {
+            console.log('⚠️ Gold rates missing from DB - Forcing update/insert despite skipUpdate parameter');
+            skipUpdate = false;
+          }
+
 
           // Check if ANY 99.9% rate is old cached data (should be ~₹290, not below ₹200)
           hasOld99_9Rates = mongoRates.some(rate =>
