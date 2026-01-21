@@ -1189,40 +1189,16 @@ function AdminDashboardPage() {
                               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
                                 {originalPriceChanged && (
                                   originalPriceIsUp ? (
-                                    <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
-                                  ) : (
-                                    <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
-                                  )
-                                )}
-                                <Typography
-                                  variant="body2"
-                                  sx={{
-                                    color: originalPriceChanged
-                                      ? (originalPriceIsUp ? colors.success : colors.error)
-                                      : colors.textSecondary,
-                                    transition: 'color 0.3s ease-in-out',
-                                    fontWeight: originalPriceChanged ? 600 : 400
-                                  }}
-                                >
-                                  ₹{Number(originalTotalPrice || 0).toFixed(2)}
-                                </Typography>
-                              </Box>
-                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
-                                {originalPriceChanged && (
-                                  originalPriceIsUp ? (
                                     <TrendingUp sx={{ fontSize: 12, color: colors.success }} />
                                   ) : (
                                     <TrendingDown sx={{ fontSize: 12, color: colors.error }} />
                                   )
                                 )}
                                 <Typography
-                                  variant="caption"
+                                  variant="body2"
                                   sx={{
-                                    color: originalPriceChanged
-                                      ? (originalPriceIsUp ? colors.success : colors.error)
-                                      : colors.textSecondary,
-                                    transition: 'color 0.3s ease-in-out',
-                                    display: 'block'
+                                    fontWeight: 600,
+                                    color: colors.textPrimary,
                                   }}
                                 >
                                   ₹{Number((originalRatePerGram || 0) * 1000).toFixed(2)}/kg
@@ -1233,25 +1209,19 @@ function AdminDashboardPage() {
                               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
                                 {adjustedPriceChanged && (
                                   adjustedPriceIsUp ? (
-                                    <TrendingUp sx={{ fontSize: 16, color: colors.success }} />
+                                    <TrendingUp sx={{ fontSize: 12, color: colors.success }} />
                                   ) : (
-                                    <TrendingDown sx={{ fontSize: 16, color: colors.error }} />
+                                    <TrendingDown sx={{ fontSize: 12, color: colors.error }} />
                                   )
                                 )}
                                 <Typography
                                   variant="body2"
                                   sx={{
                                     fontWeight: hasAdjustment ? 600 : 400,
-                                    color: finalAdjustedPrice === 0
-                                      ? colors.error
-                                      : adjustedPriceChanged
-                                        ? (adjustedPriceIsUp ? colors.success : colors.error)
-                                        : (hasAdjustment ? (displayedAdjustment > 0 ? colors.success : colors.error) : colors.textPrimary),
-                                    transition: 'color 0.3s ease-in-out, transform 0.2s ease-in-out',
-                                    transform: adjustedPriceChanged ? 'scale(1.05)' : 'scale(1)'
+                                    color: hasAdjustment ? (displayedAdjustment > 0 ? colors.success : colors.error) : colors.textPrimary,
                                   }}
                                 >
-                                  ₹{Number(finalAdjustedPrice || 0).toFixed(2)}
+                                  ₹{Number((finalAdjustedRatePerGram || 0) * 1000).toFixed(2)}/kg
                                 </Typography>
                               </Box>
                               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
@@ -1274,7 +1244,7 @@ function AdminDashboardPage() {
                                     display: 'block'
                                   }}
                                 >
-                                  ₹{Number((finalAdjustedRatePerGram || 0) * 1000).toFixed(2)}/kg
+                                  ₹{Number(finalAdjustedPrice || 0).toFixed(2)}
                                 </Typography>
                               </Box>
                             </TableCell>
@@ -1555,144 +1525,149 @@ function AdminDashboardPage() {
             </DialogActions>
           </Dialog>
         </>
-      )}
+      )
+      }
 
       {/* News Tab Content */}
-      {mainTab === 1 && (
-        <Card>
-          <CardContent>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6" sx={{ fontWeight: 700 }}>News Posts</Typography>
-              <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreateNews}>
-                New Post
-              </Button>
-            </Box>
-            {loadingNews ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-                <CircularProgress />
+      {
+        mainTab === 1 && (
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700 }}>News Posts</Typography>
+                <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreateNews}>
+                  New Post
+                </Button>
               </Box>
-            ) : newsPosts.length === 0 ? (
-              <Alert severity="info">No news posts found. Create your first post!</Alert>
-            ) : (
-              <TableContainer>
-                <Table>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell sx={{ fontWeight: 700 }}>Title</TableCell>
-                      <TableCell sx={{ fontWeight: 700 }}>Category</TableCell>
-                      <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
-                      <TableCell sx={{ fontWeight: 700 }}>Views</TableCell>
-                      <TableCell sx={{ fontWeight: 700 }}>Created</TableCell>
-                      <TableCell sx={{ fontWeight: 700 }}>Actions</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {newsPosts.map((post) => (
-                      <TableRow key={post._id}>
-                        <TableCell>{post.title}</TableCell>
-                        <TableCell>
-                          <Chip label={post.category} size="small" />
-                        </TableCell>
-                        <TableCell>
-                          <Chip
-                            label={post.published ? 'Published' : 'Draft'}
-                            color={post.published ? 'success' : 'default'}
-                            size="small"
-                          />
-                        </TableCell>
-                        <TableCell>{post.views || 0}</TableCell>
-                        <TableCell>{new Date(post.createdAt).toLocaleDateString()}</TableCell>
-                        <TableCell>
-                          <IconButton size="small" onClick={() => handleEditNews(post)}>
-                            <Edit />
-                          </IconButton>
-                          <IconButton size="small" color="error" onClick={() => handleDeleteNews(post._id)}>
-                            <Delete />
-                          </IconButton>
-                        </TableCell>
+              {loadingNews ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : newsPosts.length === 0 ? (
+                <Alert severity="info">No news posts found. Create your first post!</Alert>
+              ) : (
+                <TableContainer>
+                  <Table>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: 700 }}>Title</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Category</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Views</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Created</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Actions</TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-          </CardContent>
-        </Card>
-      )}
+                    </TableHead>
+                    <TableBody>
+                      {newsPosts.map((post) => (
+                        <TableRow key={post._id}>
+                          <TableCell>{post.title}</TableCell>
+                          <TableCell>
+                            <Chip label={post.category} size="small" />
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={post.published ? 'Published' : 'Draft'}
+                              color={post.published ? 'success' : 'default'}
+                              size="small"
+                            />
+                          </TableCell>
+                          <TableCell>{post.views || 0}</TableCell>
+                          <TableCell>{new Date(post.createdAt).toLocaleDateString()}</TableCell>
+                          <TableCell>
+                            <IconButton size="small" onClick={() => handleEditNews(post)}>
+                              <Edit />
+                            </IconButton>
+                            <IconButton size="small" color="error" onClick={() => handleDeleteNews(post._id)}>
+                              <Delete />
+                            </IconButton>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+            </CardContent>
+          </Card>
+        )
+      }
 
       {/* Profile/Store Tab Content */}
-      {mainTab === 2 && (
-        <Card>
-          <CardContent>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6" sx={{ fontWeight: 700 }}>Store Information</Typography>
-              <Button variant="contained" onClick={() => setStoreDialogOpen(true)}>
-                Edit Store Info
-              </Button>
-            </Box>
-            {loadingStore ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-                <CircularProgress />
+      {
+        mainTab === 2 && (
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700 }}>Store Information</Typography>
+                <Button variant="contained" onClick={() => setStoreDialogOpen(true)}>
+                  Edit Store Info
+                </Button>
               </Box>
-            ) : storeInfo ? (
-              <Grid container spacing={2}>
-                <Grid item xs={12} md={6}>
-                  <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Welcome Message</Typography>
-                  <Typography variant="body1" sx={{ mb: 2 }}>{storeInfo.welcomeMessage || 'N/A'}</Typography>
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Phone Number</Typography>
-                  <Typography variant="body1" sx={{ mb: 2 }}>{storeInfo.phoneNumber || 'N/A'}</Typography>
-                </Grid>
-                <Grid item xs={12}>
-                  <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Address</Typography>
-                  <Typography variant="body1" sx={{ mb: 2 }}>{storeInfo.address || 'N/A'}</Typography>
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Instagram</Typography>
-                  <Typography variant="body2" sx={{ mb: 2, wordBreak: 'break-all' }}>{storeInfo.instagram || 'N/A'}</Typography>
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Facebook</Typography>
-                  <Typography variant="body2" sx={{ mb: 2, wordBreak: 'break-all' }}>{storeInfo.facebook || 'N/A'}</Typography>
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>YouTube</Typography>
-                  <Typography variant="body2" sx={{ mb: 2, wordBreak: 'break-all' }}>{storeInfo.youtube || 'N/A'}</Typography>
-                </Grid>
-                {storeInfo.storeTimings && storeInfo.storeTimings.length > 0 && (
-                  <Grid item xs={12}>
-                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary, mb: 1 }}>Store Timings</Typography>
-                    {storeInfo.storeTimings.map((timing, index) => (
-                      <Box key={index} sx={{ mb: 1, p: 1, backgroundColor: colors.primaryVeryLight, borderRadius: 1 }}>
-                        <Typography variant="body2">
-                          <strong>{timing.day}:</strong> {timing.isClosed ? 'Closed' : `${timing.openTime} - ${timing.closeTime}`}
-                        </Typography>
-                      </Box>
-                    ))}
+              {loadingStore ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : storeInfo ? (
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Welcome Message</Typography>
+                    <Typography variant="body1" sx={{ mb: 2 }}>{storeInfo.welcomeMessage || 'N/A'}</Typography>
                   </Grid>
-                )}
-                {storeInfo.bankDetails && storeInfo.bankDetails.length > 0 && (
-                  <Grid item xs={12}>
-                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary, mb: 1 }}>Bank Details</Typography>
-                    {storeInfo.bankDetails.map((bank, index) => (
-                      <Box key={index} sx={{ mb: 2, p: 2, backgroundColor: colors.primaryVeryLight, borderRadius: 1 }}>
-                        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>{bank.bankName}</Typography>
-                        <Typography variant="body2">Account: {bank.accountNumber}</Typography>
-                        <Typography variant="body2">IFSC: {bank.ifscCode}</Typography>
-                        <Typography variant="body2">Holder: {bank.accountHolderName}</Typography>
-                        <Typography variant="body2">Branch: {bank.branch}</Typography>
-                      </Box>
-                    ))}
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Phone Number</Typography>
+                    <Typography variant="body1" sx={{ mb: 2 }}>{storeInfo.phoneNumber || 'N/A'}</Typography>
                   </Grid>
-                )}
-              </Grid>
-            ) : (
-              <Alert severity="info">No store information available</Alert>
-            )}
-          </CardContent>
-        </Card>
-      )}
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Address</Typography>
+                    <Typography variant="body1" sx={{ mb: 2 }}>{storeInfo.address || 'N/A'}</Typography>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Instagram</Typography>
+                    <Typography variant="body2" sx={{ mb: 2, wordBreak: 'break-all' }}>{storeInfo.instagram || 'N/A'}</Typography>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Facebook</Typography>
+                    <Typography variant="body2" sx={{ mb: 2, wordBreak: 'break-all' }}>{storeInfo.facebook || 'N/A'}</Typography>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>YouTube</Typography>
+                    <Typography variant="body2" sx={{ mb: 2, wordBreak: 'break-all' }}>{storeInfo.youtube || 'N/A'}</Typography>
+                  </Grid>
+                  {storeInfo.storeTimings && storeInfo.storeTimings.length > 0 && (
+                    <Grid item xs={12}>
+                      <Typography variant="subtitle2" sx={{ color: colors.textSecondary, mb: 1 }}>Store Timings</Typography>
+                      {storeInfo.storeTimings.map((timing, index) => (
+                        <Box key={index} sx={{ mb: 1, p: 1, backgroundColor: colors.primaryVeryLight, borderRadius: 1 }}>
+                          <Typography variant="body2">
+                            <strong>{timing.day}:</strong> {timing.isClosed ? 'Closed' : `${timing.openTime} - ${timing.closeTime}`}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Grid>
+                  )}
+                  {storeInfo.bankDetails && storeInfo.bankDetails.length > 0 && (
+                    <Grid item xs={12}>
+                      <Typography variant="subtitle2" sx={{ color: colors.textSecondary, mb: 1 }}>Bank Details</Typography>
+                      {storeInfo.bankDetails.map((bank, index) => (
+                        <Box key={index} sx={{ mb: 2, p: 2, backgroundColor: colors.primaryVeryLight, borderRadius: 1 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>{bank.bankName}</Typography>
+                          <Typography variant="body2">Account: {bank.accountNumber}</Typography>
+                          <Typography variant="body2">IFSC: {bank.ifscCode}</Typography>
+                          <Typography variant="body2">Holder: {bank.accountHolderName}</Typography>
+                          <Typography variant="body2">Branch: {bank.branch}</Typography>
+                        </Box>
+                      ))}
+                    </Grid>
+                  )}
+                </Grid>
+              ) : (
+                <Alert severity="info">No store information available</Alert>
+              )}
+            </CardContent>
+          </Card>
+        )
+      }
 
       {/* News Dialog */}
       <Dialog
@@ -2032,7 +2007,7 @@ function AdminDashboardPage() {
           </Button>
         </DialogActions>
       </Dialog>
-    </Box>
+    </Box >
   );
 }
 

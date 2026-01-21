@@ -499,17 +499,7 @@ function HomePage() {
                               fontSize: { xs: '0.85rem', sm: '0.95rem' },
                             }}
                           >
-                            {formatPrice(rate.rate)}
-                          </Typography>
-                          <Typography
-                            variant="caption"
-                            sx={{
-                              color: colors.textSecondary,
-                              fontSize: { xs: '0.65rem', sm: '0.7rem' },
-                              display: 'block',
-                            }}
-                          >
-                            ₹{Number((rate.ratePerGram || 0) * 1000).toFixed(2)}/kg
+                            {formatPrice((rate.ratePerGram || 0) * 1000)}/kg
                           </Typography>
                         </TableCell>
                       </TableRow>
