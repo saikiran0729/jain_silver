@@ -115,8 +115,11 @@ function HomePage() {
 
       // Add cache-busting timestamp to ensure fresh data every second
       const response = await api.get('/rates', {
-        timeout: 10000, // 10 seconds - backend may wait for fresh rates
-        params: { _t: Date.now() }, // Cache busting - ensures fresh data (timestamp in URL)
+        timeout: 10000,
+        params: {
+          _t: Date.now(),
+          skipUpdate: true // POLL-OPTIMIZATION: ask for cached data, let backend update in background
+        },
         cancelToken: source.token
       });
 
