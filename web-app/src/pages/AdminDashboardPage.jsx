@@ -227,7 +227,7 @@ function AdminDashboardPage() {
               // Both 99.9% and 99.99% use base rate as-is (₹290/gram)
               originalRatePerGram = baseRate;
             }
-            
+
             // Validate calculated rate
             if (!originalRatePerGram || originalRatePerGram <= 0 || isNaN(originalRatePerGram)) {
               originalRatePerGram = newRate.ratePerGram || 290;
@@ -236,7 +236,7 @@ function AdminDashboardPage() {
             // Fallback if baseRateFromSource not available
             originalRatePerGram = newRate.ratePerGram || 290;
           }
-          
+
           // Final validation
           if (!originalRatePerGram || originalRatePerGram <= 0 || isNaN(originalRatePerGram) || !isFinite(originalRatePerGram)) {
             originalRatePerGram = 290; // Default fallback
@@ -939,7 +939,7 @@ function AdminDashboardPage() {
                         {showOriginalRates ? (
                           <>
                             <TableCell align="right" sx={{ fontWeight: 700 }}>Original Price</TableCell>
-                            <TableCell align="right" sx={{ fontWeight: 700 }}>Price per Gram</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>Price per Kg</TableCell>
                           </>
                         ) : (
                           <>
@@ -986,7 +986,7 @@ function AdminDashboardPage() {
                             // Both 99.9% and 99.99% use base rate as-is (₹290/gram) - MUST be exactly the base rate
                             originalRatePerGram = baseRate;
                           }
-                          
+
                           // Validate calculated rate
                           if (!originalRatePerGram || originalRatePerGram <= 0 || isNaN(originalRatePerGram)) {
                             console.warn(`⚠️ [${rate.name}] Invalid calculated rate from base (${baseRate}), using fallback`);
@@ -997,7 +997,7 @@ function AdminDashboardPage() {
                           // CRITICAL: Don't use currentRatePerGram directly as it may include adjustments or be stale
                           // Instead, try to get the original rate from backend data first
                           const manualAdjustment = rate.manualAdjustment || 0;
-                          
+
                           // Try stored originalRatePerGram first (most accurate fallback)
                           if (rate.originalRatePerGram && rate.originalRatePerGram > 0) {
                             originalRatePerGram = rate.originalRatePerGram;
@@ -1008,7 +1008,7 @@ function AdminDashboardPage() {
                           } else {
                             // Last resort: calculate from current rate - manual adjustment
                             originalRatePerGram = currentRatePerGram - manualAdjustment;
-                            
+
                             // Validate the calculated value
                             if (originalRatePerGram <= 0 || isNaN(originalRatePerGram)) {
                               // Final fallback to default market rate
@@ -1019,13 +1019,13 @@ function AdminDashboardPage() {
                             }
                           }
                         }
-                        
+
                         // Final validation to ensure we have a valid number
                         if (!originalRatePerGram || originalRatePerGram <= 0 || isNaN(originalRatePerGram) || !isFinite(originalRatePerGram)) {
                           originalRatePerGram = 290; // Default fallback
                           console.warn(`⚠️ [${rate.name}] Final validation failed, using default: ₹${originalRatePerGram}`);
                         }
-                        
+
                         // Debug logging for 99.9% items to verify base rate is used correctly
                         if (rate.purity === '99.9%' && baseRateFromSource?.baseRatePerGram) {
                           const expectedRate = baseRateFromSource.baseRatePerGram;
@@ -1140,7 +1140,7 @@ function AdminDashboardPage() {
                                       transform: originalPriceChanged ? 'scale(1.05)' : 'scale(1)'
                                     }}
                                   >
-                                    ₹{Number(originalRatePerGram || 0).toFixed(2)}/gram
+                                    ₹{Number((originalRatePerGram || 0) * 1000).toFixed(2)}/kg
                                   </Typography>
                                 </Box>
                               </TableCell>
@@ -1225,7 +1225,7 @@ function AdminDashboardPage() {
                                     display: 'block'
                                   }}
                                 >
-                                  ₹{Number(originalRatePerGram || 0).toFixed(2)}/gram
+                                  ₹{Number((originalRatePerGram || 0) * 1000).toFixed(2)}/kg
                                 </Typography>
                               </Box>
                             </TableCell>
@@ -1274,14 +1274,14 @@ function AdminDashboardPage() {
                                     display: 'block'
                                   }}
                                 >
-                                  ₹{Number(finalAdjustedRatePerGram || 0).toFixed(2)}/gram
+                                  ₹{Number((finalAdjustedRatePerGram || 0) * 1000).toFixed(2)}/kg
                                 </Typography>
                               </Box>
                             </TableCell>
                             <TableCell align="right">
                               {hasAdjustment ? (
                                 <Chip
-                                  label={`${displayedAdjustment > 0 ? '+' : ''}₹${Number(Math.abs(displayedAdjustment) || 0).toFixed(2)}/gram`}
+                                  label={`${displayedAdjustment > 0 ? '+' : ''}₹${Number((Math.abs(displayedAdjustment) || 0) * 1000).toFixed(2)}/kg`}
                                   size="small"
                                   sx={{
                                     backgroundColor: displayedAdjustment > 0 ? colors.success : colors.error,

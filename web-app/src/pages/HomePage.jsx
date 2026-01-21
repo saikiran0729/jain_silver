@@ -39,7 +39,7 @@ function HomePage() {
     if (!ratesToCheck || ratesToCheck.length === 0) return true;
     // Check if any 99.9% rate is below ₹100 (current rates should be ~₹200-210)
     const OLD_RATE_THRESHOLD = 100;
-    return ratesToCheck.some(rate => 
+    return ratesToCheck.some(rate =>
       rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
     );
   };
@@ -86,12 +86,12 @@ function HomePage() {
       currentRequestRef.current = source;
 
       // Add cache-busting timestamp to ensure fresh data every second
-      const response = await api.get('/rates', { 
+      const response = await api.get('/rates', {
         timeout: 10000, // 10 seconds - backend may wait for fresh rates
         params: { _t: Date.now() }, // Cache busting - ensures fresh data (timestamp in URL)
         cancelToken: source.token
       });
-      
+
       currentRequestRef.current = null; // Clear after success
       const newRates = response.data;
       const updateTime = new Date();
@@ -103,7 +103,7 @@ function HomePage() {
           setLoading(true); // Keep loading state
           return; // Don't update rates yet
         }
-        
+
         setLastUpdateTime(updateTime);
         setLoading(false); // Rates are fresh, stop loading
 
@@ -129,7 +129,7 @@ function HomePage() {
               if (rateChanged) {
                 const isUp = newPrice > oldPrice;
                 const changeAmount = Math.abs(newPrice - oldPrice);
-                
+
                 setPreviousRates((prev) => ({
                   ...prev,
                   [rateKey]: {
@@ -177,7 +177,7 @@ function HomePage() {
               lastUpdated: updateTime, // Always use current time, not server time
             };
           });
-          
+
           // Filter and sort rates - CRITICAL: Only show enabled products
           return sortRates(updatedRates);
         });
@@ -189,7 +189,7 @@ function HomePage() {
       if (axios.isCancel(error)) {
         return; // Silently ignore canceled requests
       }
-      
+
       // Only log timeout errors occasionally to avoid spam
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
         if (Math.random() < 0.05) { // Log only 5% of timeout errors
@@ -210,7 +210,7 @@ function HomePage() {
 
   const fetchRates = async () => {
     try {
-      const response = await api.get('/rates', { 
+      const response = await api.get('/rates', {
         timeout: 10000, // 10 seconds - backend may wait for fresh rates
         params: { _t: Date.now() } // Cache busting
       });
@@ -235,14 +235,14 @@ function HomePage() {
     } catch (error) {
       const errorMsg = error.response?.data?.message || error.message || 'Network Error';
       const statusCode = error.response?.status;
-      
+
       console.error('❌ Error fetching rates:', {
         message: errorMsg,
         status: statusCode,
         code: error.code,
         url: error.config?.url
       });
-      
+
       // Don't show error to user, just keep loading state
       // Rates will be fetched by polling
     } finally {
@@ -263,26 +263,26 @@ function HomePage() {
   // Filter and sort rates - CRITICAL: Only show enabled products to customers
   const sortRates = (ratesArray) => {
     if (!Array.isArray(ratesArray)) return [];
-    
+
     // CRITICAL: Filter out disabled products (isVisible === false)
     // Only show products where isVisible is true or undefined (default to visible)
     const visibleRates = ratesArray.filter(rate => {
       const isVisible = rate.isVisible !== undefined ? rate.isVisible : true;
       return isVisible !== false;
     });
-    
+
     // Sort to put "Silver 1 kg" first
     return [...visibleRates].sort((a, b) => {
       // Check if rate is "Silver 1 kg" (by name or weight)
       const aIs1Kg = (a.name?.toLowerCase().includes('1 kg') || a.name?.toLowerCase().includes('1kg')) &&
-                     (a.weight?.value === 1 && a.weight?.unit === 'kg');
+        (a.weight?.value === 1 && a.weight?.unit === 'kg');
       const bIs1Kg = (b.name?.toLowerCase().includes('1 kg') || b.name?.toLowerCase().includes('1kg')) &&
-                     (b.weight?.value === 1 && b.weight?.unit === 'kg');
-      
+        (b.weight?.value === 1 && b.weight?.unit === 'kg');
+
       // Put 1 kg first
       if (aIs1Kg && !bIs1Kg) return -1;
       if (!aIs1Kg && bIs1Kg) return 1;
-      
+
       // Otherwise maintain original order
       return 0;
     });
@@ -313,9 +313,9 @@ function HomePage() {
       // Fallback to name check (for backward compatibility)
       if (name) {
         const nameLower = name.toLowerCase();
-        if (nameLower.includes('1 kg') || nameLower.includes('1kg') || 
-            nameLower.includes('100 grams') || nameLower.includes('100g') ||
-            nameLower.includes('500 grams') || nameLower.includes('500g')) {
+        if (nameLower.includes('1 kg') || nameLower.includes('1kg') ||
+          nameLower.includes('100 grams') || nameLower.includes('100g') ||
+          nameLower.includes('500 grams') || nameLower.includes('500g')) {
           return 'bar-image';
         }
       }
@@ -481,7 +481,7 @@ function HomePage() {
                               display: 'block',
                             }}
                           >
-                            ₹{Number(rate.ratePerGram || 0).toFixed(2)}/gram
+                            ₹{Number((rate.ratePerGram || 0) * 1000).toFixed(2)}/kg
                           </Typography>
                         </TableCell>
                       </TableRow>
