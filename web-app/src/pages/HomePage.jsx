@@ -481,11 +481,11 @@ function HomePage() {
                               </Avatar>
                             )}
                             <Box sx={{ minWidth: 0 }}>
-                              <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', lineHeight: 1.2 }}>
+                              <Typography variant="body2" sx={{ fontWeight: 700, fontSize: { xs: '0.9rem', sm: '1rem' }, lineHeight: 1.2 }}>
                                 {rate.name}
                               </Typography>
-                              <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.7rem' }}>
-                                {rate.purity} • {formatWeight(rate.weight)}
+                              <Typography variant="caption" sx={{ color: colors.textSecondary, fontSize: '0.75rem' }}>
+                                {rate.purity}
                               </Typography>
                             </Box>
                           </Box>
