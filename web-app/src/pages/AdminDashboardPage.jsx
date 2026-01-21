@@ -275,7 +275,7 @@ function AdminDashboardPage() {
 
           // Always update the calculated values in previousRates
           updatedPrevRates[rateKey] = {
-            adjustedPrice: adjustedPrice,
+            adjustedPrice: finalAdjustedPrice,
             adjustedRatePerGram: adjustedRatePerGram,
             originalTotalPrice: originalTotalPrice,
             originalRatePerGram: originalRatePerGram
@@ -284,7 +284,7 @@ function AdminDashboardPage() {
           // Check if prices changed (compare calculated values)
           const priceChanged = (
             Math.abs(prevOriginalTotalPrice - originalTotalPrice) > 0.01 ||
-            Math.abs(prevAdjustedPrice - adjustedPrice) > 0.01
+            Math.abs(prevAdjustedPrice - finalAdjustedPrice) > 0.01
           );
 
           if (priceChanged && prevCalculated.originalTotalPrice !== undefined) {
