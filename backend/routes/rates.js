@@ -1348,7 +1348,9 @@ router.get('/', async (req, res) => {
                     }
 
                     // Apply manual adjustment
+                    // Use Math.round to avoid floating point errors (1 rupee difference)
                     ratePerGram = ratePerGram + manualAdjustment;
+                    ratePerGram = Math.round((ratePerGram + Number.EPSILON) * 100) / 100; // Precise rounding to 2 decimals
                     ratePerGram = Math.max(0, ratePerGram);
 
                     // Calculate total rate
@@ -1356,7 +1358,8 @@ router.get('/', async (req, res) => {
                     if (rate.weight && rate.weight.unit === 'kg') {
                       weightInGrams = rate.weight.value * 1000;
                     }
-                    const totalRate = ratePerGram * weightInGrams;
+                    // Round the total rate as well to be safe
+                    const totalRate = Math.round((ratePerGram * weightInGrams + Number.EPSILON) * 100) / 100;
 
                     return {
                       ...rate,

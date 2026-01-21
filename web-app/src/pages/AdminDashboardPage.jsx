@@ -244,9 +244,13 @@ function AdminDashboardPage() {
           const originalTotalPrice = originalRatePerGram * weightInGrams;
 
           // Calculate adjusted price in real-time: Normal Price + Manual Adjustment
+          // Use roundToTwo to fix floating point errors (e.g., 0.1 + 0.2 != 0.3)
           const manualAdjustment = newRate.manualAdjustment || 0;
-          const adjustedRatePerGram = originalRatePerGram + manualAdjustment;
-          const adjustedPrice = Math.max(0, adjustedRatePerGram * weightInGrams);
+          const adjustedRatePerGram = roundToTwo(originalRatePerGram + manualAdjustment);
+          // Calculate weight in grams for total price (for Kg display, weightInGrams is 1000)
+          // Displaying per Kg means we multiply the *per gram* rate by 1000
+          // For consistency, we calculate the total price based on the precise per-gram rate
+          const finalAdjustedPrice = Math.max(0, roundToTwo(adjustedRatePerGram * weightInGrams));
 
           // Get previous calculated values from previousRates state
           const prevCalculated = previousRates[rateKey] || {};
