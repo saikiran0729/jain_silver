@@ -6,6 +6,11 @@ import { AuthContext } from '../context/AuthContext';
 import api from '../config/api';
 import colors from '../theme/colors';
 
+// Helper to prevent floating point errors
+const roundToTwo = (num) => {
+  return Math.round((num + Number.EPSILON) * 100) / 100;
+};
+
 function AdminDashboardPage() {
   const navigate = useNavigate();
   const { user, logout } = useContext(AuthContext);
@@ -155,6 +160,8 @@ function AdminDashboardPage() {
       return null;
     }
   };
+
+
 
   const fetchRates = async (skipUpdate = true, isPolling = false) => {
     try {

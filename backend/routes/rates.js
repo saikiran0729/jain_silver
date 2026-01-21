@@ -562,12 +562,27 @@ router.get('/base-rate', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching base rate:', error.message);
-    // Return cached rate as fallback
-    res.json({
-      baseRatePerGram: cachedBaseRate?.ratePerGram || 207,
-      baseRatePerKg: cachedBaseRate?.ratePerKg || 207000,
-      source: cachedBaseRate?.source || 'cache',
-      lastUpdated: cachedBaseRate?.lastUpdated || new Date()
+    // Return cached base rate instantly
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    });
+
+    if (cachedBaseRate && cachedBaseRate.ratePerGram > 0) {
+      return res.json({
+        baseRatePerGram: cachedBaseRate.ratePerGram,
+        baseRatePerKg: cachedBaseRate.ratePerKg,
+        source: cachedBaseRate.source,
+        lastUpdated: cachedBaseRate.lastUpdated,
+        usdInrRate: cachedBaseRate.usdInrRate
+      });
+    }
+
+    // Fallback if no cache
+    return res.json({
+      baseRatePerGram: 290.0, // Default fallback
+      source: 'fallback'
     });
   }
 });
@@ -1276,7 +1291,7 @@ router.get('/', async (req, res) => {
                     const liveRate = await Promise.race([
                       fetchSilverRatesFromMultipleSources(),
                       new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('Timeout after 2 seconds')), 2000)
+                        setTimeout(() => reject(new Error('Timeout after 5 seconds')), 5000)
                       )
                     ]);
                     if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0) {
