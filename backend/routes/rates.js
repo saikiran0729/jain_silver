@@ -1812,180 +1812,180 @@ router.get('/', async (req, res) => {
       } else {
         console.warn('⚠️ MongoDB not connected, falling back to cache');
       }
-    }
+
     } catch (mongoErr) {
-    console.error('❌ MongoDB read failed:', mongoErr.message);
-    console.warn('⚠️ Falling back to cache');
-  }
-
-  // Fallback: Calculate rates from cache
-  const baseRatePerGram = cachedBaseRate.ratePerGram;
-  const currentTime = new Date();
-
-  const rateDefinitions = [
-    { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
-    { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
-    { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
-    { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
-    { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
-    { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
-    { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
-    { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
-    { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
-    { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
-  ];
-
-  // Check if "Show As It Is" is enabled (variable already declared at top of function)
-  // Re-fetch setting in case it changed, but don't redeclare the variable
-  try {
-    if (Settings && typeof Settings.getSetting === 'function') {
-      const showAsItIsSetting = await Settings.getSetting('showAsItIs');
-      if (showAsItIsSetting && showAsItIsSetting.value !== undefined) {
-        showAsItIs = showAsItIsSetting.value;
-      }
+      console.error('❌ MongoDB read failed:', mongoErr.message);
+      console.warn('⚠️ Falling back to cache');
     }
-  } catch (settingsError) {
-    console.warn('Could not fetch showAsItIs setting in fallback, using previous value:', settingsError.message);
-    // Keep existing showAsItIs value from top of function
-  }
 
-  let allRates;
-  if (showAsItIs) {
-    // If "Show As It Is" is enabled, return original rates without adjustments
-    // But still filter by visibility for non-admin users
-    const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
+    // Fallback: Calculate rates from cache
+    const baseRatePerGram = cachedBaseRate.ratePerGram;
+    const currentTime = new Date();
 
-    // In fallback mode, we don't have MongoDB rates, so we can't filter by visibility
-    // Default all to visible, but this is fallback only
-    // CRITICAL: Try to get visibility from MongoDB even in fallback mode
-    let visibilityMap = {};
+    const rateDefinitions = [
+      { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
+      { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
+      { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
+      { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
+      { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
+    ];
+
+    // Check if "Show As It Is" is enabled (variable already declared at top of function)
+    // Re-fetch setting in case it changed, but don't redeclare the variable
     try {
-      const mongoose = require('mongoose');
-      if (mongoose.connection.readyState === 1) {
-        const mongoRatesForVisibility = await SilverRate.find({ location: 'Andhra Pradesh' })
-          .select('name isVisible')
-          .lean();
-        mongoRatesForVisibility.forEach(rate => {
-          visibilityMap[rate.name] = rate.isVisible !== undefined ? rate.isVisible : true;
-        });
+      if (Settings && typeof Settings.getSetting === 'function') {
+        const showAsItIsSetting = await Settings.getSetting('showAsItIs');
+        if (showAsItIsSetting && showAsItIsSetting.value !== undefined) {
+          showAsItIs = showAsItIsSetting.value;
+        }
       }
-    } catch (visError) {
-      console.warn('Could not fetch visibility in fallback:', visError.message);
+    } catch (settingsError) {
+      console.warn('Could not fetch showAsItIs setting in fallback, using previous value:', settingsError.message);
+      // Keep existing showAsItIs value from top of function
     }
 
-    allRates = calculatedOriginalRates.map(rate => ({
-      ...rate,
-      isVisible: visibilityMap[rate.name] !== undefined ? visibilityMap[rate.name] : true, // Use MongoDB visibility if available
-      displayName: null,
-      originalName: rate.name
-    }));
+    let allRates;
+    if (showAsItIs) {
+      // If "Show As It Is" is enabled, return original rates without adjustments
+      // But still filter by visibility for non-admin users
+      const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
 
-    // For non-admin users, filter by visibility even in fallback mode
+      // In fallback mode, we don't have MongoDB rates, so we can't filter by visibility
+      // Default all to visible, but this is fallback only
+      // CRITICAL: Try to get visibility from MongoDB even in fallback mode
+      let visibilityMap = {};
+      try {
+        const mongoose = require('mongoose');
+        if (mongoose.connection.readyState === 1) {
+          const mongoRatesForVisibility = await SilverRate.find({ location: 'Andhra Pradesh' })
+            .select('name isVisible')
+            .lean();
+          mongoRatesForVisibility.forEach(rate => {
+            visibilityMap[rate.name] = rate.isVisible !== undefined ? rate.isVisible : true;
+          });
+        }
+      } catch (visError) {
+        console.warn('Could not fetch visibility in fallback:', visError.message);
+      }
+
+      allRates = calculatedOriginalRates.map(rate => ({
+        ...rate,
+        isVisible: visibilityMap[rate.name] !== undefined ? visibilityMap[rate.name] : true, // Use MongoDB visibility if available
+        displayName: null,
+        originalName: rate.name
+      }));
+
+      // For non-admin users, filter by visibility even in fallback mode
+      if (!isAdmin) {
+        allRates = allRates.filter(rate => rate.isVisible !== false);
+        console.log(`🔒 Fallback mode: Filtered to ${allRates.length} visible products for non-admin`);
+      }
+
+      console.log(`✅ "Show As It Is" enabled - returning original rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
+    } else {
+      // Fetch manual adjustments from MongoDB
+      const adjustmentsMap = await fetchManualAdjustments(rateDefinitions.map(r => r.name));
+
+      allRates = rateDefinitions.map(rateDef => {
+        let ratePerGram = baseRatePerGram;
+        if (rateDef.purity === '92.5%') {
+          ratePerGram = baseRatePerGram * 0.96;
+        }
+        // Both 99.9% and 99.99% use base rate as-is (no multiplier)
+
+        const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
+        ratePerGram = ratePerGram + manualAdjustment;
+        ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
+
+        let weightInGrams = rateDef.weight.value;
+        if (rateDef.weight.unit === 'kg') {
+          weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
+        }
+
+        // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
+        // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
+        const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
+        const id = Buffer.from(rateDef.name).toString('base64').substring(0, 24);
+
+        // Store original rate before adjustment
+        const originalRatePerGram = ratePerGram - manualAdjustment;
+        let originalWeightInGrams = rateDef.weight.value;
+        if (rateDef.weight.unit === 'kg') {
+          originalWeightInGrams = rateDef.weight.value * 1000;
+        }
+        const originalTotalRate = originalRatePerGram * originalWeightInGrams; // No rounding - keep exact value
+
+        return {
+          _id: id,
+          name: rateDef.name,
+          type: rateDef.type,
+          weight: rateDef.weight,
+          purity: rateDef.purity,
+          ratePerGram: ratePerGram,
+          rate: totalRate,
+          originalRatePerGram: originalRatePerGram,
+          originalRate: originalTotalRate,
+          lastUpdated: currentTime,
+          usdInrRate: cachedBaseRate.usdInrRate,
+          source: cachedBaseRate.source,
+          location: 'Andhra Pradesh',
+          unit: 'INR',
+          manualAdjustment: manualAdjustment
+        };
+      });
+    }
+
+    // CRITICAL: Filter out disabled products for non-admin users
+    let filteredAllRates = allRates;
     if (!isAdmin) {
-      allRates = allRates.filter(rate => rate.isVisible !== false);
-      console.log(`🔒 Fallback mode: Filtered to ${allRates.length} visible products for non-admin`);
+      filteredAllRates = allRates.filter(rate => rate.isVisible !== false);
+      console.log(`🔒 Cache fallback: Filtered ${allRates.length} → ${filteredAllRates.length} products for non-admin`);
     }
 
-    console.log(`✅ "Show As It Is" enabled - returning original rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
-  } else {
-    // Fetch manual adjustments from MongoDB
-    const adjustmentsMap = await fetchManualAdjustments(rateDefinitions.map(r => r.name));
+    console.log(`📦 Serving ${filteredAllRates.length} rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
 
-    allRates = rateDefinitions.map(rateDef => {
-      let ratePerGram = baseRatePerGram;
-      if (rateDef.purity === '92.5%') {
-        ratePerGram = baseRatePerGram * 0.96;
-      }
-      // Both 99.9% and 99.99% use base rate as-is (no multiplier)
-
-      const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
-      ratePerGram = ratePerGram + manualAdjustment;
-      ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
-
-      let weightInGrams = rateDef.weight.value;
-      if (rateDef.weight.unit === 'kg') {
-        weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
-      }
-
-      // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
-      // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
-      const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
-      const id = Buffer.from(rateDef.name).toString('base64').substring(0, 24);
-
-      // Store original rate before adjustment
-      const originalRatePerGram = ratePerGram - manualAdjustment;
-      let originalWeightInGrams = rateDef.weight.value;
-      if (rateDef.weight.unit === 'kg') {
-        originalWeightInGrams = rateDef.weight.value * 1000;
-      }
-      const originalTotalRate = originalRatePerGram * originalWeightInGrams; // No rounding - keep exact value
-
-      return {
-        _id: id,
-        name: rateDef.name,
-        type: rateDef.type,
-        weight: rateDef.weight,
-        purity: rateDef.purity,
-        ratePerGram: ratePerGram,
-        rate: totalRate,
-        originalRatePerGram: originalRatePerGram,
-        originalRate: originalTotalRate,
-        lastUpdated: currentTime,
-        usdInrRate: cachedBaseRate.usdInrRate,
-        source: cachedBaseRate.source,
-        location: 'Andhra Pradesh',
-        unit: 'INR',
-        manualAdjustment: manualAdjustment
-      };
+    // Set headers to prevent caching
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
     });
+
+    return res.json(filteredAllRates);
+
+  } catch (error) {
+    const errorMsg = error?.message || 'Unknown error';
+    console.error('❌ Get rates error:', errorMsg);
+    if (error.stack) {
+      console.error('Error stack:', error.stack.substring(0, 500));
+    }
+
+    // Ensure we haven't already sent a response
+    if (res.headersSent) {
+      console.error('❌ Response already sent, cannot send error response');
+      return;
+    }
+
+    // Return a more detailed error in development, generic in production
+    // Ensure error message is safe for JSON (no special characters that break parsing)
+    const safeErrorMsg = String(errorMsg).replace(/[^\x20-\x7E]/g, ''); // Remove non-printable characters
+    const errorDetails = process.env.NODE_ENV === 'development'
+      ? { error: 'Failed to fetch rates', message: safeErrorMsg, stack: (error.stack?.substring(0, 500) || '').replace(/[^\x20-\x7E]/g, '') }
+      : { error: 'Failed to fetch rates', message: 'An error occurred while fetching rates. Please try again.' };
+
+    try {
+      return res.status(500).json(errorDetails);
+    } catch (jsonError) {
+      // If JSON.stringify fails, send a simple text response
+      console.error('❌ Failed to send JSON error response:', jsonError.message);
+      return res.status(500).send('Internal Server Error');
+    }
   }
-
-  // CRITICAL: Filter out disabled products for non-admin users
-  let filteredAllRates = allRates;
-  if (!isAdmin) {
-    filteredAllRates = allRates.filter(rate => rate.isVisible !== false);
-    console.log(`🔒 Cache fallback: Filtered ${allRates.length} → ${filteredAllRates.length} products for non-admin`);
-  }
-
-  console.log(`📦 Serving ${filteredAllRates.length} rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
-
-  // Set headers to prevent caching
-  res.set({
-    'Cache-Control': 'no-cache, no-store, must-revalidate',
-    'Pragma': 'no-cache',
-    'Expires': '0'
-  });
-
-  return res.json(filteredAllRates);
-
-} catch (error) {
-  const errorMsg = error?.message || 'Unknown error';
-  console.error('❌ Get rates error:', errorMsg);
-  if (error.stack) {
-    console.error('Error stack:', error.stack.substring(0, 500));
-  }
-
-  // Ensure we haven't already sent a response
-  if (res.headersSent) {
-    console.error('❌ Response already sent, cannot send error response');
-    return;
-  }
-
-  // Return a more detailed error in development, generic in production
-  // Ensure error message is safe for JSON (no special characters that break parsing)
-  const safeErrorMsg = String(errorMsg).replace(/[^\x20-\x7E]/g, ''); // Remove non-printable characters
-  const errorDetails = process.env.NODE_ENV === 'development'
-    ? { error: 'Failed to fetch rates', message: safeErrorMsg, stack: (error.stack?.substring(0, 500) || '').replace(/[^\x20-\x7E]/g, '') }
-    : { error: 'Failed to fetch rates', message: 'An error occurred while fetching rates. Please try again.' };
-
-  try {
-    return res.status(500).json(errorDetails);
-  } catch (jsonError) {
-    // If JSON.stringify fails, send a simple text response
-    console.error('❌ Failed to send JSON error response:', jsonError.message);
-    return res.status(500).send('Internal Server Error');
-  }
-}
 });
 
 // Update silver rate (admin only) - Now saves to MongoDB
