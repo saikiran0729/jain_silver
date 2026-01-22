@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
   console.log('📡 GET /api/auth - Auth stats request');
   try {
     const mongoose = require('mongoose');
-    
+
     // Check MongoDB connection
     let isConnected = false;
     if (mongoose.connection.readyState === 1) {
@@ -156,10 +156,10 @@ router.post('/register',
     // Set CORS headers on every request (for React Native)
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-    res.header('Access-Control-Allow-Headers', 
+    res.header('Access-Control-Allow-Headers',
       'Content-Type, Authorization, X-Requested-With, Accept, Content-Length, Origin'
     );
-    
+
     // Log immediately when request arrives
     console.log('🔔 POST /api/auth/register - Request received at:', new Date().toISOString());
     console.log('📥 Raw request info:', {
@@ -173,11 +173,11 @@ router.post('/register',
         'origin': req.headers['origin']
       }
     });
-    
+
     console.log('✅ POST /api/auth/register - Registration request received');
     const contentLength = req.headers['content-length'];
     const contentType = req.headers['content-type'] || '';
-    
+
     console.log('📋 Request details:', {
       method: req.method,
       path: req.path,
@@ -189,7 +189,7 @@ router.post('/register',
       host: req.headers['host'],
       timestamp: new Date().toISOString()
     });
-    
+
     // Check content type
     if (!contentType.includes('multipart/form-data')) {
       console.error('❌ Invalid Content-Type for file upload:', contentType);
@@ -199,7 +199,7 @@ router.post('/register',
         received: contentType
       });
     }
-    
+
     // Check request size
     if (contentLength && parseInt(contentLength) > 4.5 * 1024 * 1024) {
       console.error('❌ Request too large:', `${(parseInt(contentLength) / 1024 / 1024).toFixed(2)}MB`);
@@ -210,12 +210,12 @@ router.post('/register',
         receivedSize: `${(parseInt(contentLength) / 1024 / 1024).toFixed(2)}MB`
       });
     }
-    
+
     console.log('📦 Request body keys:', Object.keys(req.body || {}));
     console.log('📎 Request files:', req.files ? Object.keys(req.files) : 'No files yet');
-    
+
     next();
-  }, 
+  },
   (req, res, next) => {
     console.log('📦 Multer middleware - Processing file uploads...');
     console.log('Content-Type:', req.headers['content-type']);
@@ -223,7 +223,7 @@ router.post('/register',
     console.log('Request body type:', typeof req.body);
     console.log('Request body keys:', req.body ? Object.keys(req.body) : 'No body');
     console.log('Request has files before multer:', !!req.files);
-    
+
     // Handle multer errors with timeout
     const uploadMiddleware = upload.fields([
       { name: 'aadharFront', maxCount: 1 },
@@ -231,18 +231,18 @@ router.post('/register',
       { name: 'panImage', maxCount: 1 },
       { name: 'selfie', maxCount: 1 }
     ]);
-    
+
     // Add timeout to multer processing (increased for large files)
     const timeout = setTimeout(() => {
       console.error('❌ Multer processing timeout after 60 seconds');
       if (!res.headersSent) {
-        return res.status(408).json({ 
+        return res.status(408).json({
           message: 'Request timeout - file upload took too long',
           error: 'Please try again with smaller files or check your connection'
         });
       }
     }, 60000); // 60 second timeout for multer (increased from 20s)
-    
+
     uploadMiddleware(req, res, (err) => {
       clearTimeout(timeout);
       if (err) {
@@ -260,13 +260,13 @@ router.post('/register',
           return res.status(400).json({ message: 'Only image files (JPEG, PNG) are allowed.' });
         }
         if (err.code === 'ECONNRESET' || err.message?.includes('ECONNRESET')) {
-          return res.status(408).json({ 
-            message: 'Connection reset during file upload', 
+          return res.status(408).json({
+            message: 'Connection reset during file upload',
             error: 'Please try again. The connection was interrupted during upload.'
           });
         }
-        return res.status(400).json({ 
-          message: 'File upload error', 
+        return res.status(400).json({
+          message: 'File upload error',
           error: err.message,
           code: err.code
         });
@@ -293,7 +293,7 @@ router.post('/register',
       if (multerS3.uploadToS3Middleware && req.files) {
         console.log('📤 Uploading files to S3...');
         console.log('Files to upload:', Object.keys(req.files));
-        
+
         // Use the middleware function with timeout
         const s3UploadTimeout = setTimeout(() => {
           console.error('❌ S3 upload timeout after 60 seconds');
@@ -315,8 +315,8 @@ router.post('/register',
         console.log('⚠️ S3 middleware not available or no files, skipping S3 upload');
         if (!req.files) {
           console.error('❌ No files in request - multer may have failed');
-          return res.status(400).json({ 
-            message: 'No files received', 
+          return res.status(400).json({
+            message: 'No files received',
             error: 'Please ensure all document images are uploaded'
           });
         }
@@ -326,8 +326,8 @@ router.post('/register',
       console.error('❌ S3 upload middleware error:', s3Error.message);
       console.error('Error stack:', s3Error.stack);
       // Return error - S3 is required for document storage
-      return res.status(500).json({ 
-        message: 'File upload service unavailable', 
+      return res.status(500).json({
+        message: 'File upload service unavailable',
         error: 'Unable to upload documents. Please check S3 configuration and AWS credentials.',
         details: process.env.NODE_ENV === 'development' ? s3Error.message : undefined
       });
@@ -357,7 +357,7 @@ router.post('/register',
       console.log('📝 Registration request received');
       console.log('Request body:', { ...req.body, password: '***' }); // Don't log password
       console.log('Request files:', req.files ? Object.keys(req.files) : 'No files');
-      
+
       // Check MongoDB connection first
       const mongoose = require('mongoose');
       if (mongoose.connection.readyState !== 1) {
@@ -371,13 +371,13 @@ router.post('/register',
           console.log('✅ MongoDB connected for registration');
         } catch (connError) {
           console.error('❌ MongoDB connection failed:', connError.message);
-          return res.status(503).json({ 
-            message: 'Database connection failed', 
-            error: 'Please try again later. Check MongoDB connection.' 
+          return res.status(503).json({
+            message: 'Database connection failed',
+            error: 'Please try again later. Check MongoDB connection.'
           });
         }
       }
-      
+
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         console.log('❌ Validation errors:', errors.array());
@@ -398,24 +398,24 @@ router.post('/register',
       }
 
       // Check if user already exists
-      const existingUser = await User.findOne({ 
+      const existingUser = await User.findOne({
         $or: [
-          { email: normalizedEmail }, 
+          { email: normalizedEmail },
           { phone: normalizedPhone }
-        ] 
+        ]
       });
 
       if (existingUser) {
-        return res.status(400).json({ 
-          message: 'User with this email or phone already exists' 
+        return res.status(400).json({
+          message: 'User with this email or phone already exists'
         });
       }
 
       // Generate OTP
-      const otp = otpGenerator.generate(6, { 
-        upperCaseAlphabets: false, 
-        lowerCaseAlphabets: false, 
-        specialChars: false 
+      const otp = otpGenerator.generate(6, {
+        upperCaseAlphabets: false,
+        lowerCaseAlphabets: false,
+        specialChars: false
       });
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
@@ -428,7 +428,7 @@ router.post('/register',
           selfie: !!req.files?.selfie,
           allFiles: req.files ? Object.keys(req.files) : 'No files object'
         });
-        return res.status(400).json({ 
+        return res.status(400).json({
           message: 'All document images are required (Aadhar Front, Aadhar Back, PAN Image, Selfie)',
           received: req.files ? Object.keys(req.files) : []
         });
@@ -493,8 +493,8 @@ router.post('/register',
             panImage: !!panImageUrl,
             selfie: !!selfieUrl
           });
-          return res.status(500).json({ 
-            message: 'Failed to process document uploads', 
+          return res.status(500).json({
+            message: 'Failed to process document uploads',
             error: 'Document files were not properly uploaded. Please try again.'
           });
         }
@@ -521,9 +521,9 @@ router.post('/register',
       } catch (docError) {
         console.error('❌ Error processing document URLs:', docError);
         console.error('Error stack:', docError.stack);
-        return res.status(500).json({ 
-          message: 'Error processing document files', 
-          error: docError.message 
+        return res.status(500).json({
+          message: 'Error processing document files',
+          error: docError.message
         });
       }
 
@@ -599,37 +599,37 @@ router.post('/register',
       if (error.stack) {
         console.error('🔍 Error stack (first 300 chars):', error.stack.substring(0, 300));
       }
-      
+
       // Handle specific MongoDB errors
       if (error.code === 11000) {
         const field = Object.keys(error.keyPattern)[0];
-        return res.status(400).json({ 
-          message: `User with this ${field} already exists` 
+        return res.status(400).json({
+          message: `User with this ${field} already exists`
         });
       }
-      
+
       // Handle validation errors
       if (error.name === 'ValidationError') {
         const errors = Object.values(error.errors).map(err => ({
           field: err.path,
           message: err.message
         }));
-        return res.status(400).json({ 
-          message: 'Validation error', 
-          errors 
+        return res.status(400).json({
+          message: 'Validation error',
+          errors
         });
       }
-      
-      res.status(500).json({ 
-        message: 'Server error', 
-        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error' 
+
+      res.status(500).json({
+        message: 'Server error',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
       });
     }
   }
 );
 
 // Verify OTP
-router.post('/verify-otp', 
+router.post('/verify-otp',
   [
     body('userId').notEmpty().withMessage('User ID is required'),
     body('otp').isLength({ min: 6, max: 6 }).withMessage('OTP must be 6 digits')
@@ -678,15 +678,15 @@ router.post('/resend-otp',
     try {
       const { userId } = req.body;
       const user = await User.findById(userId);
-      
+
       if (!user) {
         return res.status(404).json({ message: 'User not found' });
       }
 
-      const otp = otpGenerator.generate(6, { 
-        upperCaseAlphabets: false, 
-        lowerCaseAlphabets: false, 
-        specialChars: false 
+      const otp = otpGenerator.generate(6, {
+        upperCaseAlphabets: false,
+        lowerCaseAlphabets: false,
+        specialChars: false
       });
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -734,9 +734,9 @@ router.post('/signin',
           console.log('✅ MongoDB connected for signin');
         } catch (connError) {
           console.error('❌ MongoDB connection failed:', connError.message);
-          return res.status(503).json({ 
-            message: 'Database connection failed', 
-            error: 'Please try again later' 
+          return res.status(503).json({
+            message: 'Database connection failed',
+            error: 'Please try again later'
           });
         }
       }
@@ -747,15 +747,15 @@ router.post('/signin',
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         console.error('❌ Validation errors:', errors.array());
-        return res.status(400).json({ 
+        return res.status(400).json({
           message: 'Validation failed',
-          errors: errors.array() 
+          errors: errors.array()
         });
       }
 
       // Validate that at least one identifier is provided
       if (!email && !phone) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           message: 'Email or phone is required',
           errors: [{ msg: 'Either email or phone must be provided', param: 'email' }]
         });
@@ -765,7 +765,7 @@ router.post('/signin',
       if (email) {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
-          return res.status(400).json({ 
+          return res.status(400).json({
             message: 'Valid email is required',
             errors: [{ msg: 'Invalid email format', param: 'email' }]
           });
@@ -778,7 +778,7 @@ router.post('/signin',
         const phoneRegex = /^[6-9]\d{9}$/;
         const cleanPhone = phone.replace(/\D/g, ''); // Remove non-digits
         if (!phoneRegex.test(cleanPhone)) {
-          return res.status(400).json({ 
+          return res.status(400).json({
             message: 'Valid phone number is required (10 digits starting with 6-9)',
             errors: [{ msg: 'Invalid phone format', param: 'phone' }]
           });
@@ -794,7 +794,7 @@ router.post('/signin',
 
       if (!user) {
         console.error('❌ User not found:', { email: email || undefined, phone: phone || undefined });
-        return res.status(401).json({ message: 'Invalid credentials' });
+        return res.status(404).json({ message: 'User not found. Please check your credentials or register.' });
       }
 
       console.log('✅ User found:', { id: user._id, email: user.email, status: user.status, isVerified: user.isVerified });
@@ -803,17 +803,17 @@ router.post('/signin',
       const isPasswordValid = await user.comparePassword(password);
       if (!isPasswordValid) {
         console.error('❌ Invalid password for user:', user.email);
-        return res.status(401).json({ message: 'Invalid credentials' });
+        return res.status(401).json({ message: 'Incorrect password. Please try again.' });
       }
 
       // Check if user is approved - ONLY approved users can sign in
       if (user.status !== 'approved') {
-        console.warn('❌ Login attempt by unapproved user:', { 
-          email: user.email, 
+        console.warn('❌ Login attempt by unapproved user:', {
+          email: user.email,
           status: user.status,
-          isVerified: user.isVerified 
+          isVerified: user.isVerified
         });
-        
+
         if (user.status === 'rejected') {
           // Get store phone number for contact info
           let adminPhone = '+91 98480 34323'; // Default phone number
@@ -826,8 +826,8 @@ router.post('/signin',
           } catch (storeError) {
             console.warn('Could not fetch store info for admin contact:', storeError.message);
           }
-          
-          return res.status(403).json({ 
+
+          return res.status(403).json({
             message: `Your account has been rejected. Please contact admin for assistance.\n\nAdmin Contact: ${adminPhone}`,
             status: user.status,
             userStatus: 'rejected',
@@ -845,15 +845,15 @@ router.post('/signin',
           } catch (storeError) {
             console.warn('Could not fetch store info for admin contact:', storeError.message);
           }
-          
-          return res.status(403).json({ 
+
+          return res.status(403).json({
             message: `Your account is pending admin approval. Please wait for approval before signing in.\n\nAdmin Contact: ${adminPhone}`,
             status: user.status,
             userStatus: 'pending',
             adminPhone: adminPhone
           });
         } else {
-          return res.status(403).json({ 
+          return res.status(403).json({
             message: 'Your account is not approved. Please contact admin.',
             status: user.status,
             userStatus: user.status
@@ -882,8 +882,8 @@ router.post('/signin',
     } catch (error) {
       console.error('❌ Sign in error:', error);
       console.error('Error stack:', error.stack);
-      res.status(500).json({ 
-        message: 'Server error', 
+      res.status(500).json({
+        message: 'Server error',
         error: error.message,
         ...(process.env.NODE_ENV === 'development' ? { stack: error.stack } : {})
       });
@@ -900,7 +900,7 @@ router.post('/admin/signin',
   async (req, res) => {
     try {
       console.log('🔐 Admin login attempt:', { email: req.body.email });
-      
+
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         console.error('❌ Validation errors:', errors.array());
@@ -923,16 +923,16 @@ router.post('/admin/signin',
           console.log('✅ MongoDB connected for admin login');
         } catch (connError) {
           console.error('❌ MongoDB connection failed:', connError.message);
-          return res.status(503).json({ 
-            message: 'Database connection failed', 
-            error: 'Please try again later' 
+          return res.status(503).json({
+            message: 'Database connection failed',
+            error: 'Please try again later'
           });
         }
       }
 
       // Find admin user
       console.log('🔍 Searching for admin user with email:', normalizedEmail);
-      const user = await User.findOne({ 
+      const user = await User.findOne({
         email: normalizedEmail,
         role: 'admin'
       });
@@ -945,7 +945,7 @@ router.post('/admin/signin',
         if (adminCount === 0) {
           console.log('⚠️ No admin users found. Admin will be created on next server restart.');
         }
-        return res.status(401).json({ message: 'Invalid admin credentials' });
+        return res.status(404).json({ message: 'User not found' });
       }
 
       console.log('✅ Admin user found:', { id: user._id, email: user.email, name: user.name });
@@ -954,7 +954,7 @@ router.post('/admin/signin',
       const isPasswordValid = await user.comparePassword(password);
       if (!isPasswordValid) {
         console.error('❌ Invalid password for admin:', normalizedEmail);
-        return res.status(401).json({ message: 'Invalid admin credentials' });
+        return res.status(401).json({ message: 'Incorrect password' });
       }
 
       console.log('✅ Password verified successfully');
@@ -976,8 +976,8 @@ router.post('/admin/signin',
     } catch (error) {
       console.error('❌ Admin sign in error:', error);
       console.error('Error stack:', error.stack);
-      res.status(500).json({ 
-        message: 'Server error', 
+      res.status(500).json({
+        message: 'Server error',
         error: error.message,
         ...(process.env.NODE_ENV === 'development' ? { stack: error.stack } : {})
       });
@@ -1010,16 +1010,16 @@ router.post('/forgot-password',
 
       if (!user) {
         // Don't reveal if user exists for security
-        return res.json({ 
-          message: 'If the account exists, an OTP has been sent to your registered phone/email' 
+        return res.json({
+          message: 'If the account exists, an OTP has been sent to your registered phone/email'
         });
       }
 
       // Generate OTP for password reset
-      const resetOtp = otpGenerator.generate(6, { 
-        upperCaseAlphabets: false, 
-        lowerCaseAlphabets: false, 
-        specialChars: false 
+      const resetOtp = otpGenerator.generate(6, {
+        upperCaseAlphabets: false,
+        lowerCaseAlphabets: false,
+        specialChars: false
       });
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
@@ -1148,7 +1148,7 @@ router.post('/reset-password',
 
       // Verify password was actually updated
       const passwordUpdated = user.password !== oldPasswordHash;
-      
+
       console.log(`✅ Password reset successful for user: ${user.email || user.phone}`);
       console.log(`   Password updated: ${passwordUpdated ? 'YES' : 'NO'}`);
       console.log(`   User can now login with new password`);
