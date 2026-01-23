@@ -820,24 +820,24 @@ router.get('/', async (req, res) => {
             rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
           );
 
-          // CRITICAL: Check if rates are significantly below current market rate (₹290/gram)
-          // Lower threshold to ₹240 to catch rates like ₹235-236/gram
-          // Check both 99.9% and 99.99% purity rates for staleness
+          // CRITICAL: Check if rates are significantly below current market rate (₹93/gram) or anomalously high (₹300+)
+          // Valid range for Silver is approx ₹80-120. Set wide bounds ₹50-200.
+          // This ensures we catch both "too low" and "too high (3.5kg unit)" errors.
           hasStaleRates = mongoRates.some(rate => {
-            if (rate.purity === '99.9%' && rate.ratePerGram < 240) return true;
-            if (rate.purity === '99.99%' && rate.ratePerGram < 240) return true;
+            if (rate.purity === '99.9%' && (rate.ratePerGram < 50 || rate.ratePerGram > 200)) return true;
+            if (rate.purity === '99.99%' && (rate.ratePerGram < 50 || rate.ratePerGram > 200)) return true;
             return false;
           });
 
-          // Also check if base rate (from 99.9% rates) is significantly below expected
-          // This catches cases where rates might be slightly above threshold but still old
+          // Also check if base rate (from 99.9% rates) is significantly outside expected range
+          // This catches cases where rates might be slightly above threshold but still wrong
           const baseRateFrom99_9 = mongoRates.find(r => r.purity === '99.9%')?.ratePerGram || 0;
           const baseRateFrom99_99 = mongoRates.find(r => r.purity === '99.99%')?.ratePerGram || 0;
           // 99.99% uses base rate as-is (no multiplier), so base = 99.99% rate directly
           const estimatedBaseFrom99_99 = baseRateFrom99_99 > 0 ? baseRateFrom99_99 : 0;
           const estimatedBase = Math.max(baseRateFrom99_9, estimatedBaseFrom99_99);
-          // If estimated base rate is below ₹240, consider all rates stale
-          hasStaleBaseRate = estimatedBase > 0 && estimatedBase < 240;
+          // If estimated base rate is outside ₹50-200, consider all rates stale
+          hasStaleBaseRate = estimatedBase > 0 && (estimatedBase < 50 || estimatedBase > 200);
 
           // If skipUpdate is true, skip waiting for updates and return current rates immediately
           if (skipUpdate) {
@@ -1425,9 +1425,9 @@ router.get('/', async (req, res) => {
           // CRITICAL: If MongoDB rates are stale (below ₹240/gram), force recalculation with live rate
           // This ensures users always see current market rates (₹290/gram) instead of old cached rates
           // Check both hasStaleRates and hasStaleBaseRate to catch all stale cases
-          if ((hasStaleRates || hasStaleBaseRate || cachedBaseRate.ratePerGram > 10000) && !skipUpdate && !isAdmin) {
-            const staleReason = hasStaleRates ? 'rates below ₹240/gram' : 'base rate below ₹240/gram';
-            const anomalyReason = cachedBaseRate.ratePerGram > 10000 ? 'rate anomaly detected (>₹10,000/g)' : null;
+          if ((hasStaleRates || hasStaleBaseRate || cachedBaseRate.ratePerGram > 200) && !skipUpdate && !isAdmin) {
+            const staleReason = hasStaleRates ? 'rates below ₹50/gram' : 'base rate below ₹50/gram';
+            const anomalyReason = cachedBaseRate.ratePerGram > 200 ? 'rate anomaly detected (>₹200/g)' : null;
 
             if (anomalyReason) {
               console.log(`⚠️ ${anomalyReason}, forcing recalculation with live rate...`);
@@ -1442,7 +1442,7 @@ router.get('/', async (req, res) => {
                   setTimeout(() => reject(new Error('Timeout after 3 seconds')), 3000)
                 )
               ]);
-              if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0 && liveRate.ratePerGram >= 240) {
+              if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0 && liveRate.ratePerGram >= 50) {
                 // Update cache with fresh rate
                 cachedBaseRate = {
                   ...cachedBaseRate,
