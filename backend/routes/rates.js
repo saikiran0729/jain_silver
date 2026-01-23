@@ -493,9 +493,17 @@ const updateMongoDBRates = async (baseRatePerGram, source, goldRatePerGram = nul
     let updatedCount = 0;
     const updatePromises = rateDefinitions.map(async (rateDef) => {
       try {
-        let ratePerGram = baseRatePerGram;
-        if (rateDef.purity === '92.5%') {
-          ratePerGram = baseRatePerGram * 0.96;
+        let ratePerGram;
+        if (rateDef.type === 'gold') {
+          // CRITICAL FIX: Use Gold rate for Gold products
+          // Pass 0 if undefined to avoid NaN
+          ratePerGram = goldRatePerGram || 0;
+        } else {
+          // Use Silver rate for other products
+          ratePerGram = baseRatePerGram;
+          if (rateDef.purity === '92.5%') {
+            ratePerGram = baseRatePerGram * 0.96;
+          }
         }
         // Both 99.9% and 99.99% use base rate as-is (no multiplier)
 
