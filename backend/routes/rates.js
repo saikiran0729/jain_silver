@@ -125,7 +125,9 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null, skipU
     { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
     { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
     { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
-    { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
+    { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
   ];
 
   const existingNames = new Set();
@@ -170,6 +172,14 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null, skipU
         // Both 99.9% and 99.99% use base rate as-is (no multiplier)
         // No rounding - keep exact value
         // ratePerGram stays as is
+      }
+
+      if (def.type === 'gold') {
+        // If baseRatePerGram (which is Silver) is passed, we can't use it for Gold
+        // Unless we pass a separate Gold rate, default to 0 or leave as is if undefined
+        // For now, let's look for goldRatePerGram in args or default to 0
+        ratePerGram = 0;
+        // TODO: Pass goldRatePerGram to this function to support Gold estimation
       }
 
       let weightInGrams = def.weight.value;
@@ -2004,7 +2014,9 @@ router.put('/:id', auth, async (req, res) => {
       { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
       { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
       { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
-      { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
+      { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
     ];
 
     const rateDef = rateDefinitions.find(r => {
@@ -2210,6 +2222,25 @@ const updateRatesHandler = async (req, res = null) => {
     const baseRatePerGram = liveRate.ratePerGram;
     const baseRatePerKg = liveRate.ratePerKg; // Use exact value from source
 
+    // Extract Gold 999 rate with fallback defaults
+    // Usually Gold is ~75,000 per 10g. Need to normalize to per gram.
+    let goldRatePerGram = 0;
+    if (liveRate.gold999Rate && liveRate.gold999Rate > 0) {
+      if (liveRate.gold999Rate > 500000) {
+        // Assume per kg (e.g. 75,00,000)
+        goldRatePerGram = liveRate.gold999Rate / 1000;
+      } else if (liveRate.gold999Rate > 5000) {
+        // Assume per 10g (e.g. 75,000) - Standard Indian Tola/10g price
+        goldRatePerGram = liveRate.gold999Rate / 10;
+      } else {
+        // Assume per gram (e.g. 7,500)
+        goldRatePerGram = liveRate.gold999Rate;
+      }
+      console.log(`✨ Gold Rate: ₹${liveRate.gold999Rate} (Calculated: ₹${goldRatePerGram.toFixed(2)}/gram)`);
+    } else {
+      console.warn('⚠️ No Gold rate found in live data, defaulting to 0');
+    }
+
     // Get or set baseSilverPrice using SilverPriceTracker collection
     const SilverPriceTracker = require('../models/SilverPriceTracker');
     let baseSilverPrice = null;
@@ -2243,7 +2274,9 @@ const updateRatesHandler = async (req, res = null) => {
       { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
       { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
       { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
-      { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
+      { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
     ];
 
     // Fetch existing rates from MongoDB to get normalPrice and manualAdjustment
