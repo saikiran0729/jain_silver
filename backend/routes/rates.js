@@ -1787,7 +1787,7 @@ router.get('/', async (req, res) => {
           console.warn('⚠️ No rates found in MongoDB, triggering update...');
           // If no rates exist, try to update immediately
           try {
-            await updateRatesHandler(req, res);
+            await updateRatesHandler(req, null);
             // After update, fetch again
             const updatedRates = await SilverRate.find({ location: 'Andhra Pradesh' })
               .sort({ name: 1 })

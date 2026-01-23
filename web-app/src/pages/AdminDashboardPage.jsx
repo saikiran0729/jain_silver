@@ -200,12 +200,24 @@ function AdminDashboardPage() {
       // Update rates only if data actually changed to prevent unnecessary re-renders and UI flickering
       setRates(prevRates => {
         const newRates = response.data || [];
+
+        // CRITICAL FIX: Ensure newRates is an array before iterating
+        // Use empty array if response.data is not an array (e.g. error object)
+        const safeRates = Array.isArray(newRates) ? newRates : [];
+
+        if (!Array.isArray(newRates)) {
+          console.error('❌ Expected array of rates but got:', typeof newRates, newRates);
+          // If polling, just return previous rates to avoid UI disruption
+          if (isPolling) return prevRates;
+          // If manual fetch, keep previous rates but log error
+        }
+
         // Compare all rates to detect any changes in adjustedPrice or ratePerGram
         // This ensures we only update state when prices actually change
-        if (prevRates.length === 0 || prevRates.length !== newRates.length) {
+        if (prevRates.length === 0 || prevRates.length !== safeRates.length) {
           // Initialize previous rates tracking
           const initialPrevRates = {};
-          newRates.forEach(rate => {
+          safeRates.forEach(rate => {
             const rateKey = rate._id?.toString() || rate.name;
             initialPrevRates[rateKey] = {
               adjustedPrice: rate.adjustedPrice || rate.rate || 0,
@@ -215,14 +227,14 @@ function AdminDashboardPage() {
             };
           });
           setPreviousRates(initialPrevRates);
-          return newRates;
+          return safeRates;
         }
 
         // Track price changes for smooth animations
         const updatedPrevRates = { ...previousRates };
         let hasChanges = false;
 
-        newRates.forEach((newRate, index) => {
+        safeRates.forEach((newRate, index) => {
           const rateKey = newRate._id?.toString() || newRate.name;
           const prevRate = prevRates.find(r => (r._id?.toString() || r.name) === rateKey);
 

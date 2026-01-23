@@ -1,0 +1,66 @@
+﻿node : Γ¥î Error 
+loading 
+routes/rates.js: D:\j
+ain_silver\backend\ro
+utes\rates.js:1815
+At line:1 char:1
++ node backend/check-
+syntax-2.js > 
+syntax_error.txt 2>&1
++ ~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~
+    + CategoryInfo   
+           : NotSpe  
+  cified: (Γ¥î Err   
+ or loadi...s\rat    
+es.js:1815:Strin    
+g) [], RemoteExc    
+eption
+    + FullyQualified 
+   ErrorId : Native  
+  CommandError
+ 
+    }
+    ^
+
+SyntaxError: Missing 
+catch or finally 
+after try
+    at wrapSafe (node
+:internal/modules/cjs
+/loader:1662:18)
+    at 
+Module._compile (node
+:internal/modules/cjs
+/loader:1704:20)
+    at Object..js (no
+de:internal/modules/c
+js/loader:1895:10)
+    at Module.load (n
+ode:internal/modules/
+cjs/loader:1465:32)
+    at 
+Function._load (node:
+internal/modules/cjs/
+loader:1282:12)
+    at TracingChannel
+.traceSync (node:diag
+nostics_channel:322:1
+4)
+    at 
+wrapModuleLoad (node:
+internal/modules/cjs/
+loader:235:24)
+    at 
+Module.require (node:
+internal/modules/cjs/
+loader:1487:12)
+    at require (node:
+internal/modules/help
+ers:135:16)
+    at 
+Object.<anonymous> (D
+:\jain_silver\backend
+\check-syntax-2.js:3:
+5)
