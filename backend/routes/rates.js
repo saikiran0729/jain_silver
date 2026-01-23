@@ -367,11 +367,11 @@ const updateRatesFromEndpoints = async () => {
     const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
 
     // Fetch with timeout (reduced for serverless - Vercel has 10s limit)
-    // Use 3 seconds to leave room for other processing
+    // Use 4 seconds to leave room for other processing
     const liveRate = await Promise.race([
       fetchSilverRatesFromMultipleSources(),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Timeout after 3 seconds')), 3000)
+        setTimeout(() => reject(new Error('Timeout after 4 seconds')), 4000)
       )
     ]);
 

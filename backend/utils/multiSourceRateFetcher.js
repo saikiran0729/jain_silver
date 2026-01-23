@@ -77,8 +77,10 @@ const fetchFromRBGoldspot = async () => {
 
         // Extract Silver 999 (ID: 2966) - Primary rate
         // Match by ID first (most reliable), then by name
-        if ((id === '2966' || (id && id.toString() === '2966')) && name && !name.toLowerCase().includes('mini')) {
+        if ((id === '2966' || (id && id.toString() === '2966'))) {
           silver999Data = { id, name, bid, ask, high, low, status };
+
+          console.log(`🔍 Found Silver 999 (ID: 2966): Ask=${ask}, Bid=${bid}, High=${high}`);
 
           // ALWAYS use Ask price (selling price, most consistent)
           // Format: Ask price is per kg, convert to per gram
