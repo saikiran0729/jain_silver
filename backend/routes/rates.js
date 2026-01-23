@@ -1521,7 +1521,7 @@ router.get('/', async (req, res) => {
 
                 // CRITICAL: Save updated rates to MongoDB so they persist for future requests
                 console.log('💾 Saving updated rates to MongoDB...');
-                await updateMongoDBRates(liveRate);
+                await updateMongoDBRates(liveRate.ratePerGram, liveRate.source, liveRate.gold999Rate);
                 console.log('✅ Updated rates saved to MongoDB');
 
                 // Recalculate rates on-the-fly with fresh base rate
