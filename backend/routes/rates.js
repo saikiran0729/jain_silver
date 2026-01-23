@@ -587,8 +587,8 @@ const updateMongoDBRates = async (baseRatePerGram, source, goldRatePerGram = nul
 router.get('/base-rate', async (req, res) => {
   try {
     // STALE-WHILE-REVALIDATE PATTERN
-    // 1. Return cached data immediately if available
-    if (cachedBaseRate && cachedBaseRate.ratePerGram > 0) {
+    // 1. Return cached data immediately if available AND VALID (not anomalous)
+    if (cachedBaseRate && cachedBaseRate.ratePerGram > 0 && cachedBaseRate.ratePerGram < 10000) {
       const now = Date.now();
       const lastUpdate = cachedBaseRate.lastUpdated.getTime();
       const age = now - lastUpdate;
