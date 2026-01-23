@@ -1490,9 +1490,15 @@ router.get('/', async (req, res) => {
           // CRITICAL: If MongoDB rates are stale (below ₹240/gram), force recalculation with live rate
           // This ensures users always see current market rates (₹290/gram) instead of old cached rates
           // Check both hasStaleRates and hasStaleBaseRate to catch all stale cases
-          if ((hasStaleRates || hasStaleBaseRate) && !skipUpdate && !isAdmin) {
+          if ((hasStaleRates || hasStaleBaseRate || cachedBaseRate.ratePerGram > 10000) && !skipUpdate && !isAdmin) {
             const staleReason = hasStaleRates ? 'rates below ₹240/gram' : 'base rate below ₹240/gram';
-            console.log(`⚠️ MongoDB rates are stale (${staleReason}), forcing recalculation with live rate...`);
+            const anomalyReason = cachedBaseRate.ratePerGram > 10000 ? 'rate anomaly detected (>₹10,000/g)' : null;
+
+            if (anomalyReason) {
+              console.log(`⚠️ ${anomalyReason}, forcing recalculation with live rate...`);
+            } else {
+              console.log(`⚠️ MongoDB rates are stale (${staleReason}), forcing recalculation with live rate...`);
+            }
             try {
               const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
               const liveRate = await Promise.race([
