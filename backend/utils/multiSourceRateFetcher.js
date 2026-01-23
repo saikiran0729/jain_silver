@@ -11,6 +11,44 @@ const { RATE_SOURCES, ACTIVE_RATE_SOURCE } = require('../config/rateSource');
 // Format: ID	Name	Bid	Ask	High	Low	Status
 // Live data example: 2966	Silver 999 	-	176845	176845	176845	InStock
 // Ask price is the selling price in INR per KG
+// HELPER: Normalize rate if it's anomalously high
+// RB Goldspot returns ~317k for Silver (3.5kg unit) -> needs /3.5
+// Some sources might return other weird units
+const normalizeSafeRate = (ratePerKg) => {
+  if (!ratePerKg || isNaN(ratePerKg)) return null;
+
+  let normalizedRate = ratePerKg;
+
+  // Check for Silver anomaly (> 250,000/kg)
+  if (ratePerKg > 250000) {
+    console.log(`⚠️ DETECTED HIGH SILVER RATE (${ratePerKg}). Applying 3.5kg normalization.`);
+    normalizedRate = ratePerKg / 3.5;
+  }
+
+  // Double safety: If still > 200,000, it might be something else, but strictly capping or warning
+  // For now, the 3.5 divisor is the known fix.
+
+  return normalizedRate;
+};
+
+const normalizeSafeGoldRate = (ratePerGram) => {
+  if (!ratePerGram || isNaN(ratePerGram)) return null;
+
+  let normalizedRate = ratePerGram;
+
+  // Check for Gold anomaly (> 100,000/g is impossible, > 10,000/g is high but possible in future)
+  // RB Goldspot returns ~160,000 for 20g -> ~8000/g
+  if (ratePerGram > 50000) {
+    console.log(`⚠️ DETECTED HIGH GOLD RATE (${ratePerGram}). Applying 20g normalization.`);
+    normalizedRate = ratePerGram / 20;
+  }
+  return normalizedRate;
+};
+
+// Fetch from RB Goldspot (tab-separated format)
+// Format: ID	Name	Bid	Ask	High	Low	Status
+// Live data example: 2966	Silver 999 	-	176845	176845	176845	InStock
+// Ask price is the selling price in INR per KG
 const fetchFromRBGoldspot = async () => {
   try {
     console.log('📡 Fetching from RB Goldspot...');
@@ -149,30 +187,20 @@ const fetchFromRBGoldspot = async () => {
       // - Silver ~320,000 (likely for 3.5kg block) -> ~91-93k/kg
       // - Gold ~160,000 (likely for 20g) -> ~8000/g
 
-      let normalizedRatePerKg = ratePerKg;
-      let normalizedRatePerGram = ratePerGram;
+      let normalizedRatePerKg = normalizeSafeRate(ratePerKg);
+      let normalizedRatePerGram = normalizedRatePerKg / 1000;
 
-      // Check for Silver anomaly (if rate > 250,000/kg which is impossible for 1kg)
-      if (ratePerKg > 250000) {
-        console.log(`⚠️ DETECTED HIGH SILVER RATE (${ratePerKg}). Applying 3.5kg normalization.`);
-        // Assume price is for 3.5kg
-        const pricePer3Point5Kg = ratePerKg;
-        normalizedRatePerKg = pricePer3Point5Kg / 3.5;
-        normalizedRatePerGram = normalizedRatePerKg / 1000;
-
-        console.log(`📉 Normalized Silver: ₹${ratePerKg} (3.5kg) -> ₹${normalizedRatePerKg.toFixed(2)}/kg (₹${normalizedRatePerGram.toFixed(2)}/g)`);
-      } else {
-        // Assume price is per Kg normal
-        // No change
+      if (normalizedRatePerKg !== ratePerKg) {
+        console.log(`📉 Normalized Silver: ₹${ratePerKg} -> ₹${normalizedRatePerKg.toFixed(2)}/kg`);
       }
 
       // Fix Gold Rate
-      if (gold999Rate && gold999Rate > 100000) {
-        console.log(`⚠️ DETECTED HIGH GOLD RATE (${gold999Rate}). Applying 20g normalization.`);
-        // Assume price is for 20g
-        const pricePer20g = gold999Rate;
-        gold999Rate = pricePer20g / 20; // Per gram
-        console.log(`📉 Normalized Gold: ₹${pricePer20g} (20g) -> ₹${gold999Rate.toFixed(2)}/g`);
+      if (gold999Rate) {
+        const originalGold = gold999Rate;
+        gold999Rate = normalizeSafeGoldRate(gold999Rate);
+        if (gold999Rate !== originalGold) {
+          console.log(`📉 Normalized Gold: ₹${originalGold} -> ₹${gold999Rate.toFixed(2)}/g`);
+        }
       }
 
       const result = {
@@ -406,9 +434,24 @@ const fetchFromVercel = async () => {
     }
 
     if (ratePerGram && ratePerGram > 0 && !isNaN(ratePerGram)) {
-      // Use EXACT values from source - NO rounding to preserve accuracy
-      const exactRatePerKg = ratePerKg; // Keep original value from source (no rounding)
-      const exactRatePerGram = ratePerGram; // Keep exact per gram value (no rounding)
+      // RATE NORMALIZATION FIX FOR VERCEL SOURCE
+      // Vercel source might also be returning high rates if it fetched from RB Goldspot previously without normalization
+      // So we apply the SAME normalization logic here
+
+      // Use helper to normalize
+      let exactRatePerKg = ratePerKg;
+      let exactRatePerGram = ratePerGram;
+
+      const normalizedKg = normalizeSafeRate(exactRatePerKg);
+      if (normalizedKg !== exactRatePerKg) {
+        console.log(`⚠️ DETECTED HIGH SILVER RATE IN VERCEL SOURCE (${exactRatePerKg}). Normalizing...`);
+        exactRatePerKg = normalizedKg;
+        exactRatePerGram = exactRatePerKg / 1000;
+      }
+
+      if (gold999Rate) {
+        gold999Rate = normalizeSafeGoldRate(gold999Rate);
+      }
 
       const result = {
         ratePerKg: exactRatePerKg, // Use exact value from source (no rounding)
@@ -509,6 +552,15 @@ const fetchFromCustom = async (url) => {
     }
 
     if (ratePerGram && ratePerGram > 0 && !isNaN(ratePerGram)) {
+
+      // Normalize Custom Source too
+      const normalizedKg = normalizeSafeRate(ratePerKg);
+      if (normalizedKg !== ratePerKg) {
+        ratePerKg = normalizedKg;
+        ratePerGram = ratePerKg / 1000;
+        console.log(`⚠️ Normalized Custom Source Rate`);
+      }
+
       return {
         ratePerKg: Math.round(ratePerKg),
         ratePerGram: Math.round(ratePerGram * 100) / 100,
