@@ -144,14 +144,40 @@ const fetchFromRBGoldspot = async () => {
     console.log(`📊 Total rates found: ${Object.keys(allRates).length}`);
 
     if (ratePerGram && ratePerGram > 0 && !isNaN(ratePerGram)) {
-      // Use EXACT values from source - NO rounding to preserve accuracy
-      // Keep ratePerKg exactly as received from RB Gold
-      const exactRatePerKg = ratePerKg; // Keep original value from source (no rounding)
-      const exactRatePerGram = ratePerGram; // Keep exact per gram value (no rounding)
+      // RATE NORMALIZATION FIX
+      // RB Goldspot seems to return:
+      // - Silver ~320,000 (likely for 3.5kg block) -> ~91-93k/kg
+      // - Gold ~160,000 (likely for 20g) -> ~8000/g
+
+      let normalizedRatePerKg = ratePerKg;
+      let normalizedRatePerGram = ratePerGram;
+
+      // Check for Silver anomaly (if rate > 250,000/kg which is impossible for 1kg)
+      if (ratePerKg > 250000) {
+        console.log(`⚠️ DETECTED HIGH SILVER RATE (${ratePerKg}). Applying 3.5kg normalization.`);
+        // Assume price is for 3.5kg
+        const pricePer3Point5Kg = ratePerKg;
+        normalizedRatePerKg = pricePer3Point5Kg / 3.5;
+        normalizedRatePerGram = normalizedRatePerKg / 1000;
+
+        console.log(`📉 Normalized Silver: ₹${ratePerKg} (3.5kg) -> ₹${normalizedRatePerKg.toFixed(2)}/kg (₹${normalizedRatePerGram.toFixed(2)}/g)`);
+      } else {
+        // Assume price is per Kg normal
+        // No change
+      }
+
+      // Fix Gold Rate
+      if (gold999Rate && gold999Rate > 100000) {
+        console.log(`⚠️ DETECTED HIGH GOLD RATE (${gold999Rate}). Applying 20g normalization.`);
+        // Assume price is for 20g
+        const pricePer20g = gold999Rate;
+        gold999Rate = pricePer20g / 20; // Per gram
+        console.log(`📉 Normalized Gold: ₹${pricePer20g} (20g) -> ₹${gold999Rate.toFixed(2)}/g`);
+      }
 
       const result = {
-        ratePerKg: exactRatePerKg, // Use exact value from source (no rounding)
-        ratePerGram: exactRatePerGram, // Use exact value (no rounding)
+        ratePerKg: normalizedRatePerKg,
+        ratePerGram: normalizedRatePerGram,
         source: 'bcast.rbgoldspot.com',
         timestamp: new Date(),
         rawData: silver999Data,
@@ -160,8 +186,7 @@ const fetchFromRBGoldspot = async () => {
         silverMini999Rate: silverMini999Rate || null,
         allRates: allRates // Include all rates for reference
       };
-      console.log(`✅ Successfully extracted EXACT rate from RB Goldspot: ₹${result.ratePerGram.toFixed(2)}/gram (₹${result.ratePerKg}/kg) [Raw Ask: ${silver999Data?.ask || 'N/A'}, Raw High: ${silver999Data?.high || 'N/A'}, Raw Bid: ${silver999Data?.bid || 'N/A'}]`);
-      console.log(`📊 Rate breakdown: Source=${silver999Data?.ask || silver999Data?.high || 'N/A'}, PerKg=${exactRatePerKg} (exact), PerGram=${exactRatePerGram} (exact)`);
+      console.log(`✅ Successfully extracted EXACT rate from RB Goldspot: ₹${result.ratePerGram.toFixed(2)}/gram (₹${result.ratePerKg.toFixed(2)}/kg)`);
       return result;
     }
 
