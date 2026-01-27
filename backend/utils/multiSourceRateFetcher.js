@@ -102,24 +102,27 @@ const fetchFromRBGoldspot = async () => {
       }
     }
 
-    // CRITICAL: Calculate Live Rates from Retail IDs as per user clarification
-    // User confirmed: ₹3,50,000 is for 1kg Silver (ID 2966) 
-    // Gold ID 945 (163,820) matches ₹81,910/10g (20g unit)
+    // CRITICAL: Use Retail IDs directly as per user clarification
+    // User confirmed: 
+    // - Silver: ₹3,50,000 per 1kg (ID 2966)
+    // - Gold: ₹1,63,820 per 10g (ID 945) -> store as ₹16,382 per gram
 
+    const effectiveUsdInr = usdInrRate || 91.675;
+
+    // GOLD Calculation (Retail ID 945 is per 10g)
     if (gold999Rate) {
-      // ID 945 is for 20g (2 Tola) in this feed
-      const goldPerGram = gold999Rate / 20;
-      console.log(`💎 RB Goldspot: Gold 999 -> ₹${(goldPerGram * 10).toFixed(2)}/10g (ID 945: ${gold999Rate})`);
+      // ID 945 = 163820 is the price for 10g, so per gram = 163820 / 10 = 16382
+      const goldPerGram = gold999Rate / 10;
+      console.log(`💎 RB Goldspot: Gold 999 -> ₹${gold999Rate.toFixed(2)}/10g (Retail ID 945: ${gold999Rate})`);
       gold999Rate = goldPerGram;
     }
 
+    // SILVER Calculation (Retail ID 2966 is per kg)
     if (ratePerKg) {
-      // ID 2966 is for 1kg as confirmed by user
+      // ID 2966 = 350000 is the price for 1kg, so per gram = 350000 / 1000 = 350
       ratePerGram = ratePerKg / 1000;
-      console.log(`💎 RB Goldspot: Silver 999 -> ₹${ratePerKg.toFixed(2)}/kg (ID 2966: ${ratePerKg})`);
+      console.log(`💎 RB Goldspot: Silver 999 -> ₹${ratePerKg.toFixed(2)}/kg (Retail ID 2966: ${ratePerKg})`);
     }
-
-    const effectiveUsdInr = usdInrRate || 91.675;
 
     if (ratePerGram) {
       return {
@@ -149,5 +152,3 @@ const fetchSilverRatesFromMultipleSources = async () => {
 };
 
 module.exports = { fetchSilverRatesFromMultipleSources };
-
-
