@@ -35,7 +35,6 @@ const normalizeSafeGoldRate = (ratePerGram) => {
 const fetchFromRBGoldspot = async () => {
   try {
     // console.log('📡 Fetching from RB Goldspot (Direct)...'); 
-    // Reduced logging to avoid attempting to log every second if not needed
 
     const response = await axios.get('https://bcast.rbgoldspot.com:7768/VOTSBroadcastStreaming/Services/xml/GetLiveRateByTemplateID/rbgold', {
       headers: {
@@ -43,11 +42,16 @@ const fetchFromRBGoldspot = async () => {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache'
       },
-      timeout: 3500,
+      timeout: 5000,
       params: { _t: Date.now(), _r: Math.random() } // Anti-cache
     });
 
-    // Parse Response
+    if (!response.data) {
+      console.warn('⚠️ RB Goldspot: Empty response received');
+      return null;
+    }
+
+    // Parse Response - Robust splitting
     const lines = response.data.split('\n').filter(line => line.trim());
     let ratePerKg = null;
     let ratePerGram = null;
@@ -55,26 +59,39 @@ const fetchFromRBGoldspot = async () => {
     let usdInrRate = null;
 
     for (const line of lines) {
-      const parts = line.split(/\t/);
+      // Split by tab OR multiple spaces, and filter out empty strings
+      const parts = line.trim().split(/\t|\s{2,}/).map(p => p.trim()).filter(p => p);
       if (parts.length < 4) continue;
 
       const id = parts[0];
-      const ask = parseFloat(parts[3]); // Column 4 is Ask
+      const name = parts[1] || '';
 
-      if (isNaN(ask) || ask <= 0) continue;
+      // Try to find the numeric rate column (usually parts[2] or parts[3])
+      // Index 2 is often Bid, Index 3 is Ask. We prefer Ask (price to buy).
+      let bidValue = parseFloat(parts[2]);
+      let askValue = parseFloat(parts[3]);
+
+      // Handle cases where parts[2] or parts[3] might be "-"
+      if (isNaN(askValue) || askValue <= 0) {
+        askValue = isNaN(bidValue) ? null : bidValue;
+      }
+
+      if (!askValue || askValue <= 0) continue;
 
       // Silver 999 (ID: 2966)
-      if (id === '2966') {
-        ratePerKg = ask;
-        ratePerGram = ask / 1000;
+      if (id === '2966' || name.includes('Silver 999')) {
+        ratePerKg = askValue;
+        ratePerGram = askValue / 1000;
+        // console.log(`💎 RB Goldspot: Found Silver 999 -> ₹${ratePerKg}/kg`);
       }
       // Gold 999 (ID: 945)
-      else if (id === '945') {
-        gold999Rate = ask;
+      else if (id === '945' || name.includes('Gold 999')) {
+        gold999Rate = askValue;
+        // console.log(`💎 RB Goldspot: Found Gold 999 -> ₹${gold999Rate}/gram`);
       }
       // USD-INR (ID: 3103)
-      else if (id === '3103') {
-        usdInrRate = ask;
+      else if (id === '3103' || name.includes('USD-INR')) {
+        usdInrRate = askValue;
       }
     }
 
@@ -83,7 +100,7 @@ const fetchFromRBGoldspot = async () => {
       const normalizedKg = normalizeSafeRate(ratePerKg);
       const normalizedGram = normalizedKg / 1000;
 
-      // Normalize Gold
+      // Normalize Gold if it's exceptionally high (e.g. 100g or 1kg unit)
       if (gold999Rate) {
         gold999Rate = normalizeSafeGoldRate(gold999Rate);
       }
@@ -97,6 +114,8 @@ const fetchFromRBGoldspot = async () => {
         timestamp: new Date()
       };
     }
+
+    console.warn('⚠️ RB Goldspot: Could not find Silver 999 rate (ID 2966) in response');
     return null;
 
   } catch (error) {
