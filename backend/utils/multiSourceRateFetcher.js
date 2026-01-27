@@ -1,5 +1,4 @@
 const axios = require('axios');
-const { RATE_SOURCES, ACTIVE_RATE_SOURCE } = require('../config/rateSource');
 
 /**
  * Fetches live silver rates from RB Goldspot ONLY.

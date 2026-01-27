@@ -295,8 +295,8 @@ const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false
 // Cache for live base rate (updated on every request)
 // This cache is updated frequently to ensure fresh rates
 let cachedBaseRate = {
-  ratePerGram: 290.0, // Default fallback rate (updated for current market rate ~₹290,000/kg)
-  ratePerKg: 290000,
+  ratePerGram: 350.0, // Default fallback rate (updated for current market rate ~₹350,000/kg)
+  ratePerKg: 350000,
   source: 'cache',
   lastUpdated: new Date(),
   usdInrRate: 89.25
@@ -564,7 +564,7 @@ router.get('/base-rate', async (req, res) => {
 
     // Fallback if update failed
     return res.json({
-      baseRatePerGram: 290.0,
+      baseRatePerGram: 350.0,
       source: 'fallback'
     });
   } catch (error) {
@@ -581,7 +581,7 @@ router.get('/base-rate', async (req, res) => {
 
     // Fallback if no cache
     return res.json({
-      baseRatePerGram: 290.0, // Default fallback
+      baseRatePerGram: 350.0, // Default fallback
       source: 'fallback'
     });
   }
