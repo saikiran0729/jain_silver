@@ -102,31 +102,24 @@ const fetchFromRBGoldspot = async () => {
       }
     }
 
-    // CRITICAL: Calculate Live Rates from Spot if possible (User request: "fetch only lve price")
-    // Spot prices are much more stable and reflect true market prices without retail markups.
-    const effectiveUsdInr = usdInrRate || 91.675; // 91.675 is the specific bullion-market rate from the feed
+    // CRITICAL: Calculate Live Rates from Retail IDs as per user clarification
+    // User confirmed: ₹3,50,000 is for 1kg Silver (ID 2966) 
+    // Gold ID 945 (163,820) matches ₹81,910/10g (20g unit)
 
-    if (spotGoldUsd) {
-      // Calculation: (Spot / 2 units) * USDINR / 31.1035 grams-per-ounce
-      const spotGoldPerGram = (spotGoldUsd / 2) * effectiveUsdInr / 31.1035;
-      console.log(`💎 RB Goldspot: Calculated Live Gold Spot -> ₹${spotGoldPerGram.toFixed(2)}/g (Spot: $${spotGoldUsd}, USDINR: ${effectiveUsdInr})`);
-      gold999Rate = spotGoldPerGram;
-    } else if (gold999Rate) {
-      // Fallback: Normalize legacy Retail ID 945 (often 20g unit or high premium)
-      gold999Rate = normalizeSafeGoldRate(gold999Rate);
+    if (gold999Rate) {
+      // ID 945 is for 20g (2 Tola) in this feed
+      const goldPerGram = gold999Rate / 20;
+      console.log(`💎 RB Goldspot: Gold 999 -> ₹${(goldPerGram * 10).toFixed(2)}/10g (ID 945: ${gold999Rate})`);
+      gold999Rate = goldPerGram;
     }
 
-    if (spotSilverUsd) {
-      // Calculation: (Spot / 3.5 units) * USDINR / 31.1035 grams-per-ounce
-      const spotSilverPerGram = (spotSilverUsd / 3.5) * effectiveUsdInr / 31.1035;
-      ratePerGram = spotSilverPerGram;
-      ratePerKg = spotSilverPerGram * 1000;
-      console.log(`💎 RB Goldspot: Calculated Live Silver Spot -> ₹${ratePerKg.toFixed(2)}/kg (Spot: $${spotSilverUsd}, USDINR: ${effectiveUsdInr})`);
-    } else if (ratePerKg) {
-      // Fallback: Normalize legacy Retail ID 2966
-      ratePerKg = normalizeSafeRate(ratePerKg);
+    if (ratePerKg) {
+      // ID 2966 is for 1kg as confirmed by user
       ratePerGram = ratePerKg / 1000;
+      console.log(`💎 RB Goldspot: Silver 999 -> ₹${ratePerKg.toFixed(2)}/kg (ID 2966: ${ratePerKg})`);
     }
+
+    const effectiveUsdInr = usdInrRate || 91.675;
 
     if (ratePerGram) {
       return {
