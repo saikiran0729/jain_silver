@@ -342,11 +342,12 @@ const updateRatesFromEndpoints = async () => {
   try {
     const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
 
-    // Fetch with timeout
+    // Fetch with SHORT timeout to prevent hanging the API request
+    // Backend fetch should be faster than frontend timeout (15s)
     const liveRate = await Promise.race([
       fetchSilverRatesFromMultipleSources(),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Timeout after 4 seconds')), 4000)
+        setTimeout(() => reject(new Error('RB Goldspot Timeout')), 3500)
       )
     ]);
 
@@ -592,9 +593,34 @@ router.get('/', async (req, res) => {
     let skipUpdate = req.query.skipUpdate === 'true' || req.query.skipUpdate === true;
 
     // Check for explicit admin parameter (for admin dashboard)
-    // This allows admin dashboard to see all products including disabled ones
     const adminParam = req.query.admin === 'true' || req.query.admin === true;
 
+    // CRITICAL OPTIMIZATION: If skipUpdate is true, NEVER attempt external fetch
+    // This resolves the 15s timeout issue during polling.
+    if (skipUpdate) {
+      console.log('⚡ Fast path: skipUpdate=true, fetching from MongoDB only');
+      try {
+        const mongoose = require('mongoose');
+        if (mongoose.connection.readyState === 1) {
+          const SilverRate = require('../models/SilverRate');
+          let mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' }).sort({ name: 1 }).lean();
+
+          // Trigger background update but don't wait for it
+          updateRatesFromEndpoints().catch(e => console.error('Background update failed:', e.message));
+
+          if (mongoRates.length > 0) {
+            // Apply adjustments and visibility (admin vs regular)
+            const isAdmin = isAdminUser(req) || adminParam;
+            const finalRates = await applyManualAdjustments(mongoRates, isAdmin, true);
+            return res.json(finalRates);
+          }
+        }
+      } catch (fastErr) {
+        console.warn('⚠️ Fast path failed, falling back to standard logic:', fastErr.message);
+      }
+    }
+
+    // Standard logic (for manual refresh or if fast path fails)
     // Check if user is admin from token
     const isAdminFromToken = isAdminUser(req);
 
