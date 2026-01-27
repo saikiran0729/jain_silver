@@ -52,20 +52,18 @@ function AdminDashboardPage() {
     fetchRates(true); // Use skipUpdate=true for fast initial load (backend will update in background)
 
     // Set up interval to fetch base rate every second for live Normal Price updates
-    // CRITICAL: Reduce frequency to prevent UI disruption
     baseRateIntervalRef.current = setInterval(() => {
       fetchBaseRate();
-    }, 2000); // Update every 2 seconds to reduce load
+    }, 1000); // Updated to 1 second per user request
 
     // Set up interval to fetch rates every second for live Adjusted Price updates
     // Use skipUpdate=true for fast polling (backend triggers updates in background on Vercel)
     // Optimized to update smoothly without causing UI flickering
-    // CRITICAL: Use skipUpdate=true during polling to prevent timeouts and UI disruption
     ratesIntervalRef.current = setInterval(() => {
       // Use skipUpdate=true for fast polling (backend triggers updates in background on Vercel)
       // Pass isPolling=true to suppress error alerts and prevent loading state changes
       fetchRates(true, true);
-    }, 2000); // Update every 2 seconds to reduce load and prevent UI disruption
+    }, 1000); // Updated to 1 second per user request
 
     // Cleanup on unmount
     return () => {

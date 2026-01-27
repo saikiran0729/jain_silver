@@ -11,8 +11,9 @@ const normalizeSafeRate = (ratePerKg) => {
   if (!ratePerKg || isNaN(ratePerKg)) return null;
   let normalizedRate = ratePerKg;
 
-  // Check for Silver anomaly (> 250,000/kg)
-  if (ratePerKg > 250000) {
+  // Check for Silver anomaly (> 1,000,000/kg)
+  // Current silver price is ~3.5-3.7L/kg. Old 250k threshold was too low.
+  if (ratePerKg > 1000000) {
     console.log(`⚠️ DETECTED HIGH SILVER RATE (${ratePerKg}). Applying 3.5kg normalization.`);
     normalizedRate = ratePerKg / 3.5;
   }
@@ -23,8 +24,8 @@ const normalizeSafeGoldRate = (ratePerGram) => {
   if (!ratePerGram || isNaN(ratePerGram)) return null;
   let normalizedRate = ratePerGram;
 
-  // Check for Gold anomaly (> 50,000/g)
-  if (ratePerGram > 50000) {
+  // Check for Gold anomaly (> 100,000/g)
+  if (ratePerGram > 100000) {
     console.log(`⚠️ DETECTED HIGH GOLD RATE (${ratePerGram}). Applying 20g normalization.`);
     normalizedRate = ratePerGram / 20;
   }
