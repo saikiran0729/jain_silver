@@ -975,6 +975,10 @@ function AdminDashboardPage() {
                         // Formula: base rate + adjustment (done by backend)
 
                         // Show ONLY live prices as requested
+                        const isGold = rate.name && rate.name.toLowerCase().includes('gold');
+                        const displayUnit = isGold ? '/10g' : '/kg';
+                        const displayMultiplier = isGold ? 10 : 1000;
+
                         return (
                           <TableRow
                             key={rate._id || rate.name}
@@ -1009,7 +1013,7 @@ function AdminDashboardPage() {
                                     color: colors.textPrimary,
                                   }}
                                 >
-                                  ₹{Number((finalAdjustedRatePerGram || 0) * 1000).toFixed(2)}/kg
+                                  ₹{Number((finalAdjustedRatePerGram || 0) * displayMultiplier).toFixed(2)}{displayUnit}
                                 </Typography>
                               </Box>
                               <Typography

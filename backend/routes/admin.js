@@ -62,7 +62,7 @@ router.get('/', auth, adminAuth, async (req, res) => {
     const rejectedUsers = await User.countDocuments({ status: 'rejected' });
     const verifiedUsers = await User.countDocuments({ isVerified: true });
     const totalRates = await SilverRate.countDocuments();
-    
+
     const recentUsers = await User.find()
       .select('-password -otp -resetPasswordOTP')
       .sort({ createdAt: -1 })
@@ -128,13 +128,13 @@ router.get('/pending-users', auth, adminAuth, async (req, res) => {
     // Check MongoDB connection
     const mongoose = require('mongoose');
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ 
+      return res.status(503).json({
         message: 'Database connection not available',
         users: []
       });
     }
 
-    const users = await User.find({ 
+    const users = await User.find({
       status: 'pending',
       isVerified: true
     })
@@ -143,24 +143,25 @@ router.get('/pending-users', auth, adminAuth, async (req, res) => {
       .limit(100) // Limit to 100 users to prevent timeout
       .lean(); // Use lean() for better performance - returns plain objects instead of Mongoose documents
 
-    // Format document URLs with CloudFront
-    let formattedUsers = [];
-    try {
-      const { formatUserDocuments } = require('../utils/documentHelper');
-      formattedUsers = users.map(user => {
-        try {
-          return formatUserDocuments(user);
-        } catch (userFormatError) {
-          console.error('Error formatting individual user:', userFormatError);
-          // Return user without formatting if helper fails for this user
-          return user;
-        }
-      });
-    } catch (formatError) {
-      console.error('Error formatting user documents:', formatError);
-      console.error('Format error stack:', formatError.stack);
-      // Return users without formatting if helper fails
-      formattedUsers = users;
+    // Format document URLs only if requested (heavy operation, causes timeouts on Vercel)
+    const includeDocuments = req.query.includeDocuments === 'true';
+    let formattedUsers = users;
+
+    if (includeDocuments) {
+      try {
+        const { formatUserDocuments } = require('../utils/documentHelper');
+        formattedUsers = users.map(user => {
+          try {
+            return formatUserDocuments(user);
+          } catch (userFormatError) {
+            console.error('Error formatting individual user:', userFormatError);
+            return user;
+          }
+        });
+      } catch (formatError) {
+        console.error('Error formatting user documents:', formatError);
+        formattedUsers = users;
+      }
     }
 
     // Ensure we always return an array
@@ -173,8 +174,8 @@ router.get('/pending-users', auth, adminAuth, async (req, res) => {
   } catch (error) {
     console.error('Get pending users error:', error);
     console.error('Error stack:', error.stack);
-    res.status(500).json({ 
-      message: 'Server error', 
+    res.status(500).json({
+      message: 'Server error',
       error: error.message,
       users: [] // Return empty array on error
     });
@@ -230,7 +231,7 @@ router.get('/users', auth, adminAuth, async (req, res) => {
     // Check MongoDB connection
     const mongoose = require('mongoose');
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ 
+      return res.status(503).json({
         message: 'Database connection not available',
         users: []
       });
@@ -238,7 +239,7 @@ router.get('/users', auth, adminAuth, async (req, res) => {
 
     const { status } = req.query;
     const query = status ? { status } : {};
-    
+
     const { limit = 100, skip = 0 } = req.query;
     const users = await User.find(query)
       .select('-password -otp -resetPasswordOTP')
@@ -247,24 +248,25 @@ router.get('/users', auth, adminAuth, async (req, res) => {
       .skip(parseInt(skip))
       .lean(); // Use lean() for better performance - returns plain objects instead of Mongoose documents
 
-    // Format document URLs with CloudFront
-    let formattedUsers = [];
-    try {
-      const { formatUserDocuments } = require('../utils/documentHelper');
-      formattedUsers = users.map(user => {
-        try {
-          return formatUserDocuments(user);
-        } catch (userFormatError) {
-          console.error('Error formatting individual user:', userFormatError);
-          // Return user without formatting if helper fails for this user
-          return user;
-        }
-      });
-    } catch (formatError) {
-      console.error('Error formatting user documents:', formatError);
-      console.error('Format error stack:', formatError.stack);
-      // Return users without formatting if helper fails
-      formattedUsers = users;
+    // Format document URLs only if requested
+    const includeDocuments = req.query.includeDocuments === 'true';
+    let formattedUsers = users;
+
+    if (includeDocuments) {
+      try {
+        const { formatUserDocuments } = require('../utils/documentHelper');
+        formattedUsers = users.map(user => {
+          try {
+            return formatUserDocuments(user);
+          } catch (userFormatError) {
+            console.error('Error formatting individual user:', userFormatError);
+            return user;
+          }
+        });
+      } catch (formatError) {
+        console.error('Error formatting user documents:', formatError);
+        formattedUsers = users;
+      }
     }
 
     // Ensure we always return an array
@@ -277,8 +279,8 @@ router.get('/users', auth, adminAuth, async (req, res) => {
   } catch (error) {
     console.error('Get users error:', error);
     console.error('Error stack:', error.stack);
-    res.status(500).json({ 
-      message: 'Server error', 
+    res.status(500).json({
+      message: 'Server error',
       error: error.message,
       users: [] // Return empty array on error
     });
@@ -415,31 +417,31 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
   try {
     console.log('📝 Rate adjustment request:', JSON.stringify(req.body, null, 2));
     console.log('📝 Received itemName:', req.body.itemName);
-    
+
     const { value, adjustmentType, itemName } = req.body;
-    
+
     // Support both old format (amount) and new format (value + adjustmentType)
     let amount = value;
     let isPercentage = adjustmentType === 'percentage';
-    
+
     // Backward compatibility: if 'amount' is provided, use it
     if (req.body.amount !== undefined && value === undefined) {
       amount = req.body.amount;
       isPercentage = false;
     }
-    
+
     // Ensure amount is a number
     if (amount !== undefined && amount !== null) {
       amount = parseFloat(amount);
     }
-    
+
     if (typeof amount !== 'number' || isNaN(amount)) {
       console.error('❌ Invalid amount value:', amount, typeof amount);
       return res.status(400).json({ message: 'Valid numeric value is required' });
     }
-    
+
     console.log(`📊 Processing adjustment: ${amount} (${isPercentage ? 'percentage' : 'amount'}) for ${itemName || 'all items'}`);
-    
+
     if (isPercentage && (amount < -100 || amount > 100)) {
       return res.status(400).json({ message: 'Percentage must be between -100% and 100%' });
     }
@@ -479,7 +481,7 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
     // If itemName is provided, adjust only that item; otherwise adjust all
     // itemName could be either the original name or displayName, so we need to find by both
     const itemsToAdjust = itemName ? [itemName] : rateDefinitions;
-    
+
     console.log(`🔍 Adjusting rates for: ${itemName ? `"${itemName}"` : 'all items'}`);
     console.log(`📊 Total rates in database: ${currentRates.length}`);
 
@@ -488,7 +490,7 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       // Try to find rate by original name first (most reliable)
       let currentRate = currentRates.find(r => r.name === itemIdentifier);
       let rateName = null;
-      
+
       if (currentRate) {
         // Found by name - use it
         rateName = currentRate.name;
@@ -508,20 +510,20 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
           }
         }
       }
-      
+
       // If still not found, try case-insensitive search by name
       if (!rateName) {
-        currentRate = currentRates.find(r => 
+        currentRate = currentRates.find(r =>
           r.name.toLowerCase() === itemIdentifier.toLowerCase()
         );
         if (currentRate) {
           rateName = currentRate.name;
         }
       }
-      
+
       // If still not found, try case-insensitive search by displayName
       if (!rateName) {
-        currentRate = currentRates.find(r => 
+        currentRate = currentRates.find(r =>
           r.displayName && r.displayName.toLowerCase() === itemIdentifier.toLowerCase()
         );
         if (currentRate) {
@@ -529,10 +531,10 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
           console.log(`✅ Found rate by displayName (case-insensitive): "${itemIdentifier}" → "${rateName}"`);
         }
       }
-      
+
       // If still not found, try partial match on displayName (handles typos)
       if (!rateName) {
-        currentRate = currentRates.find(r => 
+        currentRate = currentRates.find(r =>
           r.displayName && r.displayName.toLowerCase().includes(itemIdentifier.toLowerCase())
         );
         if (currentRate) {
@@ -540,7 +542,7 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
           console.log(`✅ Found rate by displayName (partial match): "${itemIdentifier}" → "${rateName}"`);
         }
       }
-      
+
       // If still not found, try direct MongoDB query as last resort
       if (!rateName) {
         try {
@@ -561,13 +563,13 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
           console.warn(`⚠️ Direct MongoDB query failed:`, dbError.message);
         }
       }
-      
+
       // If still not found and itemIdentifier is in rateDefinitions, use it as the name
       if (!rateName && rateDefinitions.includes(itemIdentifier)) {
         rateName = itemIdentifier;
         currentRate = currentRates.find(r => r.name === rateName);
       }
-      
+
       // CRITICAL FIX: If we found a rate by displayName, don't require it to be in rateDefinitions
       // This allows custom displayNames like "old silver" to work
       if (!rateName || (!rateDefinitions.includes(rateName) && !currentRate)) {
@@ -575,25 +577,25 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
         console.error(`   Available rates: ${currentRates.map(r => `"${r.name}"${r.displayName ? ` (display: "${r.displayName}")` : ''}`).join(', ')}`);
         continue;
       }
-      
+
       // If we found a rate but it's not in rateDefinitions, that's OK - we found it by displayName
       if (currentRate && !rateDefinitions.includes(rateName)) {
         console.log(`⚠️ Rate "${rateName}" found by displayName "${itemIdentifier}" but not in standard rateDefinitions - proceeding anyway`);
       }
-      
+
       if (!currentRate) {
         console.warn(`❌ Rate "${rateName}" not found in database after lookup, skipping adjustment`);
         continue;
       }
-      
+
       console.log(`✅ Found rate for adjustment: "${itemIdentifier}" → "${rateName}" (displayName: "${currentRate.displayName || 'none'}")`);
-      
+
       // CRITICAL: Use normalPrice directly (immutable base price)
       // The manual adjustment is applied relative to normalPrice, not the current adjusted price
       // This ensures: adjustedPrice = normalPrice + silverDiff + manualAdjustment
       let normalPrice = currentRate.normalPrice;
       const currentAdjustment = currentRate.manualAdjustment || 0;
-      
+
       // If normalPrice is not set, we need to calculate it from current rate
       // But ideally, normalPrice should already be set by the rate updater
       if (normalPrice === null || normalPrice === undefined || normalPrice <= 0) {
@@ -626,10 +628,10 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
           console.warn(`⚠️ Could not fetch live rate, using fallback normalPrice for ${rateName}: ₹${normalPrice.toFixed(2)}/gram`);
         }
       }
-      
+
       let adjustmentAmount = 0;
       let actualPercentageChange = 0;
-      
+
       if (isPercentage) {
         // Calculate amount based on percentage of normalPrice
         adjustmentAmount = (normalPrice * amount) / 100;
@@ -647,7 +649,7 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       // This is the absolute value to store in the database
       // When rate updater runs: adjustedPrice = normalPrice + silverDiff + adjustmentAmount
       const newAdjustment = adjustmentAmount;
-      
+
       // CRITICAL: Log replacement logic to verify it's working
       console.log(`\n🔧🔧🔧 ADJUSTMENT REPLACEMENT LOGIC 🔧🔧🔧`);
       console.log(`Product: ${rateName}`);
@@ -672,7 +674,7 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       // The rate updater runs every second and will recalculate correctly with: normalPrice + silverDiff + manualAdjustment
       let adjustedPrice = normalPrice + newAdjustment; // Simplified for immediate update
       let ratePerGram = Math.max(0, adjustedPrice);
-      
+
       // Log the immediate update (rate updater will recalculate with silverDiff every second)
       if (modified === 0) { // Log only for first rate to avoid spam
         console.log(`💰 Immediate update: Normal ₹${normalPrice.toFixed(2)} + Adjustment ₹${newAdjustment.toFixed(2)} = Adjusted ₹${adjustedPrice.toFixed(2)} (rate updater will add silverDiff every second)`);
@@ -738,19 +740,19 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       ? (adjustments.reduce((sum, adj) => sum + adj.percentageChange, 0) / adjustments.length).toFixed(2)
       : 0;
 
-    const adjustmentDescription = isPercentage 
+    const adjustmentDescription = isPercentage
       ? `${amount > 0 ? '+' : ''}${Math.abs(amount)}%`
       : `₹${Math.abs(amount)}/gram`;
-    
+
     console.log(`✅ Admin adjusted rates: ${adjustmentDescription} applied to ${modified} rate(s)`);
-    
+
     const message = isPercentage
       ? `Rates ${amount > 0 ? 'increased' : 'decreased'} by ${adjustmentDescription}`
       : `Rates ${amount > 0 ? 'increased' : 'decreased'} by ${adjustmentDescription} (${amount > 0 ? '+' : ''}${avgPercentage}%)`;
 
-    res.json({ 
+    res.json({
       message,
-      modifiedCount: modified, 
+      modifiedCount: modified,
       value: amount,
       adjustmentType: isPercentage ? 'percentage' : 'amount',
       percentageChange: parseFloat(avgPercentage),
@@ -769,24 +771,24 @@ router.get('/show-as-it-is', auth, adminAuth, async (req, res) => {
   try {
     // Ensure Settings model is available
     if (!Settings) {
-      return res.status(500).json({ 
+      return res.status(500).json({
         message: 'Settings model not available',
-        showAsItIs: false 
+        showAsItIs: false
       });
     }
-    
+
     const setting = await Settings.getSetting('showAsItIs');
-    res.json({ 
+    res.json({
       showAsItIs: setting.value || false,
       lastUpdated: setting.lastUpdated || new Date()
     });
   } catch (error) {
     console.error('Get showAsItIs setting error:', error);
     // Return default value on error instead of 500
-    res.json({ 
+    res.json({
       showAsItIs: false,
       lastUpdated: new Date(),
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -796,20 +798,20 @@ router.post('/toggle-show-as-it-is', auth, adminAuth, async (req, res) => {
   try {
     // Ensure Settings model is available
     if (!Settings) {
-      return res.status(500).json({ 
+      return res.status(500).json({
         message: 'Settings model not available',
         error: 'Settings model not loaded'
       });
     }
-    
+
     const currentSetting = await Settings.getSetting('showAsItIs');
     const newValue = !currentSetting.value;
-    
+
     await Settings.setSetting('showAsItIs', newValue, req.user.userId);
-    
+
     console.log(`✅ Admin toggled "Show As It Is": ${newValue ? 'ENABLED' : 'DISABLED'}`);
-    
-    res.json({ 
+
+    res.json({
       message: `"Show As It Is" ${newValue ? 'enabled' : 'disabled'} successfully`,
       showAsItIs: newValue,
       lastUpdated: new Date()
@@ -817,8 +819,8 @@ router.post('/toggle-show-as-it-is', auth, adminAuth, async (req, res) => {
   } catch (error) {
     console.error('Toggle showAsItIs setting error:', error);
     console.error('Error stack:', error.stack);
-    res.status(500).json({ 
-      message: 'Server error', 
+    res.status(500).json({
+      message: 'Server error',
       error: error.message,
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -839,31 +841,31 @@ router.put('/product', auth, adminAuth, async (req, res) => {
     let rate = null;
     if (productName.match(/^[0-9a-fA-F]{24}$/)) {
       // It's an ObjectId - try with location first, then without
-      rate = await SilverRate.findOne({ 
-        _id: productName, 
-        location: 'Andhra Pradesh' 
+      rate = await SilverRate.findOne({
+        _id: productName,
+        location: 'Andhra Pradesh'
       });
       if (!rate) {
         rate = await SilverRate.findById(productName);
       }
     }
-    
+
     // If not found by _id, try by name (with location, then without)
     if (!rate) {
-      rate = await SilverRate.findOne({ 
-        name: productName, 
-        location: 'Andhra Pradesh' 
+      rate = await SilverRate.findOne({
+        name: productName,
+        location: 'Andhra Pradesh'
       });
       if (!rate) {
         rate = await SilverRate.findOne({ name: productName });
       }
     }
-    
+
     // If still not found, try by displayName (with location, then without)
     if (!rate) {
-      rate = await SilverRate.findOne({ 
-        displayName: productName, 
-        location: 'Andhra Pradesh' 
+      rate = await SilverRate.findOne({
+        displayName: productName,
+        location: 'Andhra Pradesh'
       });
       if (!rate) {
         rate = await SilverRate.findOne({ displayName: productName });
@@ -920,7 +922,7 @@ router.put('/product', auth, adminAuth, async (req, res) => {
 router.post('/reset-display-names', auth, adminAuth, async (req, res) => {
   try {
     console.log('🔄 Resetting all displayNames to null...');
-    
+
     // Find all rates
     const rates = await SilverRate.find({ location: 'Andhra Pradesh' });
     console.log(`📊 Found ${rates.length} rates in database`);
@@ -951,11 +953,11 @@ router.post('/reset-display-names', auth, adminAuth, async (req, res) => {
     if (bulkOps.length > 0) {
       const result = await SilverRate.bulkWrite(bulkOps);
       console.log(`✅ Reset ${result.modifiedCount} displayNames to null`);
-      
+
       // Verify the reset
       const verifyRates = await SilverRate.find({ location: 'Andhra Pradesh' });
       const stillWithDisplayName = verifyRates.filter(r => r.displayName);
-      
+
       res.json({
         message: `Successfully reset ${result.modifiedCount} displayNames to null`,
         modifiedCount: result.modifiedCount,
@@ -973,13 +975,11 @@ router.post('/reset-display-names', auth, adminAuth, async (req, res) => {
     }
   } catch (error) {
     console.error('❌ Error resetting displayNames:', error);
-    res.status(500).json({ 
-      message: 'Failed to reset displayNames', 
-      error: error.message 
+    res.status(500).json({
+      message: 'Failed to reset displayNames',
+      error: error.message
     });
   }
 });
 
 module.exports = router;
-
-
