@@ -176,10 +176,8 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null, skipU
 
       if (def.type === 'gold') {
         // If baseRatePerGram (which is Silver) is passed, we can't use it for Gold
-        // Unless we pass a separate Gold rate, default to 0 or leave as is if undefined
-        // For now, let's look for goldRatePerGram in args or default to 0
-        ratePerGram = 0;
-        // TODO: Pass goldRatePerGram to this function to support Gold estimation
+        // Use a reasonable gold fallback (~₹6500) if not provided
+        ratePerGram = 6500;
       }
 
       let weightInGrams = def.weight.value;

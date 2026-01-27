@@ -16,7 +16,7 @@ const updateRates = async (io) => {
   const startTime = Date.now();
   try {
     let rates = await SilverRate.find({ location: 'Andhra Pradesh' });
-    
+
     if (rates.length === 0) {
       // Initialize rates if they don't exist
       console.log('⚠️ No rates found in MongoDB, initializing rates...');
@@ -32,7 +32,7 @@ const updateRates = async (io) => {
         { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
         { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
       ];
-      
+
       // Create initial rates with default values (will be updated immediately after)
       const initPromises = rateDefinitions.map(async (rateDef) => {
         try {
@@ -52,27 +52,27 @@ const updateRates = async (io) => {
           console.error(`❌ Failed to initialize ${rateDef.name}:`, err.message);
         }
       });
-      
+
       await Promise.all(initPromises);
       console.log('✅ Initialized rates in MongoDB');
-      
+
       // Fetch the newly created rates
       rates = await SilverRate.find({ location: 'Andhra Pradesh' });
-      
+
       if (rates.length === 0) {
         console.warn('⚠️ Still no rates after initialization, skipping update');
         return;
       }
     }
-    
+
     // Fetch fresh rate every second from multiple sources (RB Goldspot + Vercel) - NO FALLBACK
     // Use Promise.race with timeout to ensure we don't wait too long
     console.log(`🔄 [${new Date().toISOString()}] Starting rate fetch...`);
     const fetchPromise = fetchSilverRatesFromMultipleSources();
-    const timeoutPromise = new Promise((_, reject) => 
+    const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Rate fetch timeout after 8 seconds')), 8000)
     );
-    
+
     let liveRate;
     try {
       liveRate = await Promise.race([fetchPromise, timeoutPromise]);
@@ -84,7 +84,7 @@ const updateRates = async (io) => {
       }
       return; // Exit early, don't update rates
     }
-    
+
     // Only proceed if we got a valid rate from endpoint - NO FALLBACK
     if (!liveRate || !liveRate.ratePerGram || liveRate.ratePerGram <= 0 || isNaN(liveRate.ratePerGram)) {
       consecutiveFailures++;
@@ -99,15 +99,15 @@ const updateRates = async (io) => {
       }
       return; // Exit early, don't update rates
     }
-    
+
     // Reset failure counter on success
     consecutiveFailures = 0;
     lastSuccessfulUpdate = Date.now();
-    
+
     // Use EXACT rate from source - no smoothing, no rounding of ratePerKg
     const baseRatePerGram = liveRate.ratePerGram;
     const baseRatePerKg = liveRate.ratePerKg; // Use exact value from source
-    
+
     // Get or set baseSilverPrice using SilverPriceTracker collection
     let baseSilverPrice = null;
     try {
@@ -115,7 +115,7 @@ const updateRates = async (io) => {
     } catch (err) {
       console.warn('Could not fetch baseSilverPrice from tracker:', err.message);
     }
-    
+
     if (baseSilverPrice === null) {
       // Set baseSilverPrice to current baseRatePerGram (stored once only)
       try {
@@ -127,17 +127,17 @@ const updateRates = async (io) => {
         return; // Cannot proceed without base price
       }
     }
-    
+
     // Calculate difference from base silver price (for adjusting normalPrice)
     // This is the market movement since the base price was set
     // Adjusted price = normalPrice + silverDiff + manualAdjustment
     const silverDiff = baseRatePerGram - baseSilverPrice;
-    
+
     // Log every successful fetch (with timestamp for accuracy)
     const fetchTime = Date.now() - startTime;
     console.log(`✅ [${new Date().toISOString()}] Fetched EXACT live rate: ₹${baseRatePerGram.toFixed(2)}/gram (₹${baseRatePerKg}/kg, source: ${liveRate.source}, fetch time: ${fetchTime}ms, diff from base: ₹${silverDiff.toFixed(2)}, base: ₹${baseSilverPrice.toFixed(2)})`);
     console.log(`📊 Raw source data: Ask=${liveRate.rawData?.ask || 'N/A'}, High=${liveRate.rawData?.high || 'N/A'}, RatePerKg=${baseRatePerKg}`);
-    
+
     // Update all rates based on the live rate from endpoint
     const updatePromises = rates.map(async (rate) => {
       try {
@@ -147,42 +147,46 @@ const updateRates = async (io) => {
           return;
         }
 
-        // Calculate rate per gram based on purity
-        let ratePerGram = baseRatePerGram;
-        
-        // Adjust for different purity levels
-        if (rate.purity === '92.5%') {
+        // Calculate rate per gram based on purity and type
+        let ratePerGram = baseRatePerGram; // Default to Silver
+
+        // CRITICAL FIX: Distinguish between Gold and Silver products
+        const isGoldProduct = rate.type === 'gold' || rate.name.toLowerCase().includes('gold');
+
+        if (isGoldProduct) {
+          ratePerGram = liveRate.gold999Rate || ratePerGram; // Fallback to silver if gold not found (better than 0)
+        } else if (rate.purity === '92.5%') {
           // Sterling silver (92.5%) is typically 3-5% less than pure silver
           ratePerGram = baseRatePerGram * 0.96;
         }
         // Both 99.9% and 99.99% use base rate as-is (no multiplier)
-        
+
         // CRITICAL: normalPrice should ALWAYS be the current market rate (updates every second)
         // This ensures that when normalPrice increases/decreases, adjustedPrice also increases/decreases accordingly
-        // Set normalPrice to current market rate for this purity level
+        // Set normalPrice to current market rate for this product type
         const previousNormalPrice = rate.normalPrice;
         rate.normalPrice = rate.name.includes('236') ? 236 : ratePerGram;
-        
+
         // If this is the first time, log it
         if (previousNormalPrice === null || previousNormalPrice === undefined) {
           console.log(`🔧 Set normalPrice for ${rate.name} to ₹${rate.normalPrice.toFixed(2)}/gram (current market rate)`);
         }
-        
+
         // Get manual adjustment (can be negative) - this REPLACES previous adjustment, not cumulative
         const manualAdj = (typeof rate.manualAdjustment === 'number') ? rate.manualAdjustment : 0;
-        
+
         // CRITICAL: Calculate adjustedPrice = normalPrice (current market rate) + manualAdjustment
         // When normalPrice increases by ₹1, adjustedPrice also increases by ₹1 (keeping manualAdjustment constant)
         rate.adjustedPrice = rate.normalPrice + manualAdj;
-        
+
         // Keep ratePerGram in sync with adjustedPrice
         rate.ratePerGram = rate.adjustedPrice;
-        
+
         // Log adjustment application for debugging (only for first rate to avoid spam)
         if (rate.name === rates[0]?.name) {
           console.log(`💰 Applied adjustment: Normal ₹${rate.normalPrice.toFixed(2)}/gram (current market rate) + Manual ₹${manualAdj.toFixed(2)}/gram = Adjusted ₹${rate.adjustedPrice.toFixed(2)}/gram`);
         }
-        
+
         // Calculate total rate based on weight
         // CRITICAL: For Silver Bar 1kg, weightInGrams must be exactly 1000 (1kg = 1000g)
         let weightInGrams = rate.weight.value;
@@ -191,12 +195,12 @@ const updateRates = async (io) => {
         } else if (rate.weight.unit === 'oz') {
           weightInGrams = rate.weight.value * 28.35; // 1 oz = 28.35 grams
         }
-        
+
         // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
         // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
         rate.rate = rate.ratePerGram * weightInGrams; // No rounding - keep exact value
         rate.lastUpdated = new Date();
-        
+
         // Save to MongoDB with error handling
         try {
           await rate.save();
@@ -235,20 +239,20 @@ const updateRates = async (io) => {
         console.error(`❌ Error updating rate ${rate.name || rate._id}:`, rateError.message);
       }
     });
-    
+
     // Wait for all updates to complete
     await Promise.all(updatePromises);
 
     // Log every update to verify it's working
     const totalTime = Date.now() - startTime;
     console.log(`✅ Updated ${rates.length} rates in MongoDB (Base: ₹${baseRatePerGram.toFixed(2)}/gram from ${liveRate.source}, total time: ${totalTime}ms)`);
-    
+
     // Verify MongoDB was updated by checking one rate
     try {
       const verifyRate = await SilverRate.findOne({ location: 'Andhra Pradesh' }).sort({ lastUpdated: -1 });
       if (verifyRate) {
         const verifyAge = Date.now() - new Date(verifyRate.lastUpdated).getTime();
-        console.log(`✅ MongoDB verified: Latest rate "${verifyRate.name}" updated ${Math.round(verifyAge/1000)}s ago (adjusted: ₹${verifyRate.adjustedPrice}/gram, normal: ₹${verifyRate.normalPrice})`);
+        console.log(`✅ MongoDB verified: Latest rate "${verifyRate.name}" updated ${Math.round(verifyAge / 1000)}s ago (adjusted: ₹${verifyRate.adjustedPrice}/gram, normal: ₹${verifyRate.normalPrice})`);
       }
     } catch (verifyError) {
       console.warn('⚠️ Could not verify MongoDB update:', verifyError.message);
@@ -257,7 +261,7 @@ const updateRates = async (io) => {
     consecutiveFailures++;
     const errorTime = Date.now() - startTime;
     console.error(`❌ Error updating rates (${errorTime}ms):`, error.message || error);
-    
+
     // If we've had too many consecutive failures, log a warning
     if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       console.error(`⚠️ WARNING: ${consecutiveFailures} consecutive rate update failures. Last success: ${lastSuccessfulUpdate ? new Date(lastSuccessfulUpdate).toISOString() : 'never'}`);
@@ -267,13 +271,13 @@ const updateRates = async (io) => {
 
 // Start rate updater (updates every second)
 const startRateUpdater = (io) => {
-  console.log(`🚀 Starting rate updater - will update every ${UPDATE_INTERVAL}ms (${1000/UPDATE_INTERVAL} times per second)`);
-  
+  console.log(`🚀 Starting rate updater - will update every ${UPDATE_INTERVAL}ms (${1000 / UPDATE_INTERVAL} times per second)`);
+
   // Initial update (don't await to avoid blocking)
   updateRates(io).catch(err => {
     console.error('❌ Initial rate update failed:', err.message);
   });
-  
+
   // Update every second as requested
   // Use setInterval but ensure we don't stack updates if one takes longer than 1 second
   let isUpdating = false;
@@ -283,7 +287,7 @@ const startRateUpdater = (io) => {
       console.warn('⚠️ Previous rate update still running, skipping this cycle');
       return;
     }
-    
+
     isUpdating = true;
     updateRates(io)
       .finally(() => {
