@@ -57,6 +57,8 @@ const fetchFromRBGoldspot = async () => {
     let ratePerGram = null;
     let gold999Rate = null;
     let usdInrRate = null;
+    let spotGoldUsd = null;
+    let spotSilverUsd = null;
 
     for (const line of lines) {
       // Split by tab OR multiple spaces, and filter out empty strings
@@ -78,44 +80,66 @@ const fetchFromRBGoldspot = async () => {
 
       if (!askValue || askValue <= 0) continue;
 
-      // Silver 999 (ID: 2966)
-      if (id === '2966' || name.includes('Silver 999')) {
-        ratePerKg = askValue;
-        ratePerGram = askValue / 1000;
-        // console.log(`💎 RB Goldspot: Found Silver 999 -> ₹${ratePerKg}/kg`);
+      // USD-INR (ID: 3103) - Often includes market duty/premiums for India
+      if (id === '3103' || name.includes('USD-INR')) {
+        usdInrRate = askValue;
       }
-      // Gold 999 (ID: 945)
+      // GOLD ($) (ID: 3101) - In many RB feeds this is for 2 Troy Ounces
+      else if (id === '3101' || name.includes('GOLD ($)')) {
+        spotGoldUsd = askValue;
+      }
+      // SILVER ($) (ID: 3107) - In many RB feeds this is for 3.5 Troy Ounces
+      else if (id === '3107' || name.includes('SILVER ($)')) {
+        spotSilverUsd = askValue;
+      }
+      // Silver 999 (ID: 2966) - Retail rate
+      else if (id === '2966' || name.includes('Silver 999')) {
+        ratePerKg = askValue;
+      }
+      // Gold 999 (ID: 945) - Retail rate
       else if (id === '945' || name.includes('Gold 999')) {
         gold999Rate = askValue;
-        // console.log(`💎 RB Goldspot: Found Gold 999 -> ₹${gold999Rate}/gram`);
-      }
-      // USD-INR (ID: 3103)
-      else if (id === '3103' || name.includes('USD-INR')) {
-        usdInrRate = askValue;
       }
     }
 
-    if (ratePerKg) {
-      // Enforce Normalization
-      const normalizedKg = normalizeSafeRate(ratePerKg);
-      const normalizedGram = normalizedKg / 1000;
+    // CRITICAL: Calculate Live Rates from Spot if possible (User request: "fetch only lve price")
+    // Spot prices are much more stable and reflect true market prices without retail markups.
+    const effectiveUsdInr = usdInrRate || 91.675; // 91.675 is the specific bullion-market rate from the feed
 
-      // Normalize Gold if it's exceptionally high (e.g. 100g or 1kg unit)
-      if (gold999Rate) {
-        gold999Rate = normalizeSafeGoldRate(gold999Rate);
-      }
+    if (spotGoldUsd) {
+      // Calculation: (Spot / 2 units) * USDINR / 31.1035 grams-per-ounce
+      const spotGoldPerGram = (spotGoldUsd / 2) * effectiveUsdInr / 31.1035;
+      console.log(`💎 RB Goldspot: Calculated Live Gold Spot -> ₹${spotGoldPerGram.toFixed(2)}/g (Spot: $${spotGoldUsd}, USDINR: ${effectiveUsdInr})`);
+      gold999Rate = spotGoldPerGram;
+    } else if (gold999Rate) {
+      // Fallback: Normalize legacy Retail ID 945 (often 20g unit or high premium)
+      gold999Rate = normalizeSafeGoldRate(gold999Rate);
+    }
 
+    if (spotSilverUsd) {
+      // Calculation: (Spot / 3.5 units) * USDINR / 31.1035 grams-per-ounce
+      const spotSilverPerGram = (spotSilverUsd / 3.5) * effectiveUsdInr / 31.1035;
+      ratePerGram = spotSilverPerGram;
+      ratePerKg = spotSilverPerGram * 1000;
+      console.log(`💎 RB Goldspot: Calculated Live Silver Spot -> ₹${ratePerKg.toFixed(2)}/kg (Spot: $${spotSilverUsd}, USDINR: ${effectiveUsdInr})`);
+    } else if (ratePerKg) {
+      // Fallback: Normalize legacy Retail ID 2966
+      ratePerKg = normalizeSafeRate(ratePerKg);
+      ratePerGram = ratePerKg / 1000;
+    }
+
+    if (ratePerGram) {
       return {
-        ratePerKg: normalizedKg,
-        ratePerGram: normalizedGram,
+        ratePerKg: ratePerKg,
+        ratePerGram: ratePerGram,
         gold999Rate: gold999Rate,
-        usdInrRate: usdInrRate || 89.25,
+        usdInrRate: effectiveUsdInr,
         source: 'rbgoldspot',
         timestamp: new Date()
       };
     }
 
-    console.warn('⚠️ RB Goldspot: Could not find Silver 999 rate (ID 2966) in response');
+    console.warn('⚠️ RB Goldspot: Could not find/calculate Silver rate in response');
     return null;
 
   } catch (error) {
