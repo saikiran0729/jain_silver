@@ -8,7 +8,7 @@ const silverRateSchema = new mongoose.Schema({
   type: {
     type: String,
     required: true,
-    enum: ['coin', 'bar', 'jewelry']
+    enum: ['coin', 'bar', 'jewelry', 'gold']
   },
   weight: {
     value: {
@@ -86,16 +86,16 @@ silverRateSchema.index({ location: 1, type: 1 });
 
 // Instance method to calculate adjusted price based on silver price changes
 // IMPORTANT: Always recalculates from normalPrice, never accumulates
-silverRateSchema.methods.calculateAdjustedPrice = function(currentSilverPrice, baseSilverPrice) {
+silverRateSchema.methods.calculateAdjustedPrice = function (currentSilverPrice, baseSilverPrice) {
   // normalPrice = 236 is constant and must NEVER change
   const normalPrice = 236;
-  
+
   // Calculate difference only: silverDiff = currentSilverPrice - baseSilverPrice
   const silverDiff = currentSilverPrice - baseSilverPrice;
-  
+
   // Calculate adjusted price as: adjustedPrice = normalPrice + silverDiff
   const adjustedPrice = normalPrice + silverDiff;
-  
+
   return adjustedPrice;
 };
 
