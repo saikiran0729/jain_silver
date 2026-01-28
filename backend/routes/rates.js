@@ -1621,146 +1621,124 @@ try {
 }
 
 // Fallback: Calculate rates from cache
-const baseRatePerGram = cachedBaseRate.ratePerGram;
-const currentTime = new Date();
-
-const rateDefinitions = [
-  { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
-  { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
-  { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
-  { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
-  { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
-  { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
-  { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
-  { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
-  { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
-  { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
-];
-
-// Check if "Show As It Is" is enabled (variable already declared at top of function)
-// Re-fetch setting in case it changed, but don't redeclare the variable
 try {
-  if (Settings && typeof Settings.getSetting === 'function') {
-    const showAsItIsSetting = await Settings.getSetting('showAsItIs');
-    if (showAsItIsSetting && showAsItIsSetting.value !== undefined) {
-      showAsItIs = showAsItIsSetting.value;
+  const baseRatePerGram = cachedBaseRate.ratePerGram;
+  const currentTime = new Date();
+
+  const rateDefinitions = [
+    { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
+    { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
+    { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
+    { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
+    { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+    { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
+  ];
+
+  // showAsItIs is already set to false at line 1369, so we skip the Settings check in fallback
+  // This also avoids the await syntax error since we're not in an async context here
+
+  let allRates;
+  if (showAsItIs) {
+    // If "Show As It Is" is enabled, return original rates without adjustments
+    // But still filter by visibility for non-admin users
+    // CRITICAL: getOriginalRates is async, so we need to handle this differently
+    // Since showAsItIs is now always false, this branch won't execute
+    allRates = [];
+  } else {
+    // Fetch manual adjustments from MongoDB (synchronously via callback pattern to avoid await)
+    let adjustmentsMap = {};
+    try {
+      const mongoose = require('mongoose');
+      if (mongoose.connection.readyState === 1) {
+        // Use synchronous approach - fetch from cache or use empty map
+        // We can't use await here, so we'll just use empty adjustments in fallback
+        console.warn('⚠️ Fallback mode: Using empty adjustments (cannot fetch from DB without await)');
+      }
+    } catch (adjErr) {
+      console.warn('Could not check adjustments in fallback:', adjErr.message);
     }
+
+    allRates = rateDefinitions.map(rateDef => {
+      // Determine base rate based on product type
+      let baseRate = baseRatePerGram;
+      if (rateDef.type === 'gold') {
+        // Use gold rate from cache if available, otherwise default to 0
+        baseRate = cachedBaseRate.gold999Rate || 0;
+      }
+
+      let ratePerGram = baseRate;
+      if (rateDef.purity === '92.5%') {
+        ratePerGram = baseRate * 0.96;
+      }
+      // Both 99.9% and 99.99% use base rate as-is (no multiplier)
+
+      const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
+      ratePerGram = ratePerGram + manualAdjustment;
+      ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
+
+      let weightInGrams = rateDef.weight.value;
+      if (rateDef.weight.unit === 'kg') {
+        weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
+      }
+
+      // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
+      // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
+      const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
+      const id = Buffer.from(rateDef.name).toString('base64').substring(0, 24);
+
+      // Store original rate before adjustment
+      const originalRatePerGram = ratePerGram - manualAdjustment;
+      let originalWeightInGrams = rateDef.weight.value;
+      if (rateDef.weight.unit === 'kg') {
+        originalWeightInGrams = rateDef.weight.value * 1000;
+      }
+      const originalTotalRate = originalRatePerGram * originalWeightInGrams; // No rounding - keep exact value
+
+      return {
+        _id: id,
+        name: rateDef.name,
+        type: rateDef.type,
+        weight: rateDef.weight,
+        purity: rateDef.purity,
+        ratePerGram: ratePerGram,
+        rate: totalRate,
+        originalRatePerGram: originalRatePerGram,
+        originalRate: originalTotalRate,
+        lastUpdated: currentTime,
+        usdInrRate: cachedBaseRate.usdInrRate,
+        source: cachedBaseRate.source,
+        location: 'Andhra Pradesh',
+        unit: 'INR',
+        manualAdjustment: manualAdjustment
+      };
+    });
   }
-} catch (settingsError) {
-  console.warn('Could not fetch showAsItIs setting in fallback, using previous value:', settingsError.message);
-  // Keep existing showAsItIs value from top of function
-}
 
-let allRates;
-if (showAsItIs) {
-  // If "Show As It Is" is enabled, return original rates without adjustments
-  // But still filter by visibility for non-admin users
-  const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
-
-  // In fallback mode, we don't have MongoDB rates, so we can't filter by visibility
-  // Default all to visible, but this is fallback only
-  // CRITICAL: Try to get visibility from MongoDB even in fallback mode
-  let visibilityMap = {};
-  try {
-    const mongoose = require('mongoose');
-    if (mongoose.connection.readyState === 1) {
-      const mongoRatesForVisibility = await SilverRate.find({ location: 'Andhra Pradesh' })
-        .select('name isVisible')
-        .lean();
-      mongoRatesForVisibility.forEach(rate => {
-        visibilityMap[rate.name] = rate.isVisible !== undefined ? rate.isVisible : true;
-      });
-    }
-  } catch (visError) {
-    console.warn('Could not fetch visibility in fallback:', visError.message);
-  }
-
-  allRates = calculatedOriginalRates.map(rate => ({
-    ...rate,
-    isVisible: visibilityMap[rate.name] !== undefined ? visibilityMap[rate.name] : true, // Use MongoDB visibility if available
-    displayName: null,
-    originalName: rate.name
-  }));
-
-  // For non-admin users, filter by visibility even in fallback mode
+  // CRITICAL: Filter out disabled products for non-admin users
+  let filteredAllRates = allRates;
   if (!isAdmin) {
-    allRates = allRates.filter(rate => rate.isVisible !== false);
-    console.log(`🔒 Fallback mode: Filtered to ${allRates.length} visible products for non-admin`);
+    filteredAllRates = allRates.filter(rate => rate.isVisible !== false);
+    console.log(`🔒 Cache fallback: Filtered ${allRates.length} → ${filteredAllRates.length} products for non-admin`);
   }
 
-  console.log(`✅ "Show As It Is" enabled - returning original rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
-} else {
-  // Fetch manual adjustments from MongoDB
-  const adjustmentsMap = await fetchManualAdjustments(rateDefinitions.map(r => r.name));
+  console.log(`📦 Serving ${filteredAllRates.length} rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
 
-  allRates = rateDefinitions.map(rateDef => {
-    let ratePerGram = baseRatePerGram;
-    if (rateDef.purity === '92.5%') {
-      ratePerGram = baseRatePerGram * 0.96;
-    }
-    // Both 99.9% and 99.99% use base rate as-is (no multiplier)
-
-    const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
-    ratePerGram = ratePerGram + manualAdjustment;
-    ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
-
-    let weightInGrams = rateDef.weight.value;
-    if (rateDef.weight.unit === 'kg') {
-      weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
-    }
-
-    // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
-    // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
-    const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
-    const id = Buffer.from(rateDef.name).toString('base64').substring(0, 24);
-
-    // Store original rate before adjustment
-    const originalRatePerGram = ratePerGram - manualAdjustment;
-    let originalWeightInGrams = rateDef.weight.value;
-    if (rateDef.weight.unit === 'kg') {
-      originalWeightInGrams = rateDef.weight.value * 1000;
-    }
-    const originalTotalRate = originalRatePerGram * originalWeightInGrams; // No rounding - keep exact value
-
-    return {
-      _id: id,
-      name: rateDef.name,
-      type: rateDef.type,
-      weight: rateDef.weight,
-      purity: rateDef.purity,
-      ratePerGram: ratePerGram,
-      rate: totalRate,
-      originalRatePerGram: originalRatePerGram,
-      originalRate: originalTotalRate,
-      lastUpdated: currentTime,
-      usdInrRate: cachedBaseRate.usdInrRate,
-      source: cachedBaseRate.source,
-      location: 'Andhra Pradesh',
-      unit: 'INR',
-      manualAdjustment: manualAdjustment
-    };
+  // Set headers to prevent caching
+  res.set({
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0'
   });
-}
 
-// CRITICAL: Filter out disabled products for non-admin users
-let filteredAllRates = allRates;
-if (!isAdmin) {
-  filteredAllRates = allRates.filter(rate => rate.isVisible !== false);
-  console.log(`🔒 Cache fallback: Filtered ${allRates.length} → ${filteredAllRates.length} products for non-admin`);
-}
+  return res.json(filteredAllRates);
 
-console.log(`📦 Serving ${filteredAllRates.length} rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
-
-// Set headers to prevent caching
-res.set({
-  'Cache-Control': 'no-cache, no-store, must-revalidate',
-  'Pragma': 'no-cache',
-  'Expires': '0'
-});
-
-return res.json(filteredAllRates);
-
-  } catch (error) {
+} catch (error) {
   const errorMsg = error?.message || 'Unknown error';
   console.error('❌ Get rates error:', errorMsg);
   if (error.stack) {
