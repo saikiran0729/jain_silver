@@ -10,9 +10,21 @@ let Settings;
 try {
   Settings = require('../models/Settings');
 } catch (error) {
-  console.error('⚠️ Settings model could not be loaded:', error.message);
+  console.error('⚠️ Settings model could not be loaded initially:', error.message);
   Settings = null;
 }
+
+// Helper to ensure Settings is loaded
+const getSettingsModel = () => {
+  if (Settings) return Settings;
+  try {
+    Settings = require('../models/Settings');
+    return Settings;
+  } catch (error) {
+    console.error('⚠️ Settings model could not be loaded on demand:', error.message);
+    return null;
+  }
+};
 
 // Root route - get admin dashboard data from MongoDB
 router.get('/', auth, adminAuth, async (req, res) => {
@@ -985,8 +997,10 @@ router.post('/reset-display-names', auth, adminAuth, async (req, res) => {
 router.get('/show-as-it-is', auth, adminAuth, async (req, res) => {
   try {
     let showAsItIs = false;
-    if (Settings) {
-      const setting = await Settings.getSetting('showAsItIs');
+    const SettingsModel = getSettingsModel();
+
+    if (SettingsModel) {
+      const setting = await SettingsModel.getSetting('showAsItIs');
       if (setting && setting.value !== undefined) {
         showAsItIs = setting.value;
       }
@@ -1001,25 +1015,22 @@ router.get('/show-as-it-is', auth, adminAuth, async (req, res) => {
 // Toggle "Show As It Is" setting
 router.post('/toggle-show-as-it-is', auth, adminAuth, async (req, res) => {
   try {
-    if (!Settings) {
-      // If Settings model failed to load, try to load it again
-      try {
-        Settings = require('../models/Settings');
-      } catch (e) {
-        return res.status(503).json({ message: 'Settings service unavailable', error: e.message });
-      }
+    const SettingsModel = getSettingsModel();
+
+    if (!SettingsModel) {
+      return res.status(503).json({ message: 'Settings service unavailable' });
     }
 
     // Ensure getSetting exists
-    if (typeof Settings.getSetting !== 'function') {
+    if (typeof SettingsModel.getSetting !== 'function') {
       return res.status(503).json({ message: 'Settings model not correctly loaded' });
     }
 
-    const currentSetting = await Settings.getSetting('showAsItIs');
+    const currentSetting = await SettingsModel.getSetting('showAsItIs');
     const currentValue = currentSetting ? currentSetting.value : false;
     const newValue = !currentValue;
 
-    await Settings.setSetting('showAsItIs', newValue);
+    await SettingsModel.setSetting('showAsItIs', newValue);
 
     console.log(`✅ Toggled "Show As It Is" to: ${newValue}`);
     res.json({
