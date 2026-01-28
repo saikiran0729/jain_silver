@@ -321,65 +321,223 @@ const calculateSmoothedRate = (newRate) => {
   return Math.round(newRate * 100) / 100;
 };
 
-// Track updates to prevent concurrent fetches
-let isUpdating = false;
-const GLOBAL_MIN_UPDATE_INTERVAL = 1500; // 1.5s throttle
-
 // Update rates from endpoints (non-blocking)
 const updateRatesFromEndpoints = async () => {
+  // On Vercel production, triggering updates might be different, but for this specific user request
+  // we want to ensure 1-second updates if the process is running.
+
   const now = Date.now();
+  const timeSinceLastAttempt = now - lastUpdateAttempt;
 
-  if (isUpdating) return;
-  if (now - lastUpdateAttempt < GLOBAL_MIN_UPDATE_INTERVAL) return;
+  // STRICT 1-SECOND INTERVAL (User request: "fetch every second")
+  // We allow actual execution every ~1000ms
+  if (timeSinceLastAttempt < 1000) {
+    return;
+  }
 
-  isUpdating = true;
   lastUpdateAttempt = now;
+
+  // console.log(`📡 Fetching rates...`); // Reduced log spam
 
   try {
     const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
 
     // Fetch with SHORT timeout to prevent hanging the API request
+    // Backend fetch should be faster than frontend timeout (15s)
     const liveRate = await Promise.race([
       fetchSilverRatesFromMultipleSources(),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('RB Goldspot Timeout')), 3000)
+        setTimeout(() => reject(new Error('RB Goldspot Timeout')), 3500)
       )
     ]);
 
     if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0) {
+
+      // Update cache immediately
       cachedBaseRate = {
         ratePerGram: liveRate.ratePerGram,
         ratePerKg: liveRate.ratePerKg,
-        source: 'rbgoldspot',
+        source: 'rbgoldspot', // Hardcoded as we know it's RB
         lastUpdated: new Date(),
-        usdInrRate: liveRate.usdInrRate || 91.675
+        usdInrRate: liveRate.usdInrRate || 89.25
       };
+
+      // console.log(`✅ Rate updated: ₹${liveRate.ratePerGram.toFixed(2)}/gram`); // Reduced log spam
 
       lastSuccessfulUpdate = Date.now();
 
-      // Update MongoDB in background
-      updateMongoDBRates(liveRate.ratePerGram, 'rbgoldspot', liveRate.gold999Rate)
-        .catch(e => console.error('BG MongoDB Update Error:', e.message));
+      // Update MongoDB with exact rate from source
+      await updateMongoDBRates(liveRate.ratePerGram, 'rbgoldspot', liveRate.gold999Rate);
+
+    } else {
+      console.warn('⚠️ Invalid rate received -> Keeping old rate');
     }
   } catch (error) {
     console.error('❌ Rate fetch failed:', error.message);
-  } finally {
-    isUpdating = false;
   }
 };
 
-// ... (other helpers) ...
+// Update MongoDB rates
+const updateMongoDBRates = async (baseRatePerGram, source, goldRatePerGram = null) => {
+  try {
+    const mongoose = require('mongoose');
+    if (mongoose.connection.readyState !== 1) {
+      try {
+        await mongoose.connect(process.env.MONGODB_URI, {
+          useNewUrlParser: true,
+          useUnifiedTopology: true,
+          serverSelectionTimeoutMS: 5000,
+        });
+        console.log('✅ MongoDB connected for rate update');
+      } catch (connError) {
+        console.warn('⚠️ MongoDB connection failed:', connError.message);
+        return;
+      }
+    }
+    const SilverRate = require('../models/SilverRate');
 
+    // Get ALL product definitions (Coins, Bars, Jewelry, AND Gold)
+    // Pass goldRatePerGram to include Gold products if available
+    const ratesList = await getOriginalRates(baseRatePerGram, goldRatePerGram);
+
+
+    // We need to re-map this to rateDefinitions format for the bulk update logic below
+    // getOriginalRates returns calculated objects, but the logic below expects definitions + calculation
+    // Actually, getOriginalRates returns the full object structure needed for the list response.
+    // But the bulk update logic below re-calculates everything from `rateDefinitions` array.
+    // So we should update `rateDefinitions` array inside this function too, or just reuse the logic from `getOriginalRates`?
+
+    // Let's redefine `rateDefinitions` here including Gold if applicable, consistent with getOriginalRates
+    const rateDefinitions = [
+      { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
+      { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
+      { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
+      { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
+      { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
+    ];
+
+    // Always add Gold products to ensure they exist in DB (default to 0 if rate not available)
+    rateDefinitions.push(
+      { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
+    );
+
+
+    // Fetch manual adjustments from MongoDB
+    const adjustmentsMap = await fetchManualAdjustments(rateDefinitions.map(r => r.name));
+
+    let updatedCount = 0;
+    const updatePromises = rateDefinitions.map(async (rateDef) => {
+      try {
+        let ratePerGram;
+        if (rateDef.type === 'gold') {
+          // CRITICAL FIX: Use Gold rate for Gold products
+          // Pass 0 if undefined to avoid NaN
+          ratePerGram = goldRatePerGram || 0;
+        } else {
+          // Use Silver rate for other products
+          ratePerGram = baseRatePerGram;
+          if (rateDef.purity === '92.5%') {
+            ratePerGram = baseRatePerGram * 0.96;
+          }
+        }
+        // Both 99.9% and 99.99% use base rate as-is (no multiplier)
+
+        const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
+        ratePerGram = ratePerGram + manualAdjustment;
+        ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
+
+        let weightInGrams = rateDef.weight.value;
+        if (rateDef.weight.unit === 'kg') {
+          weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
+        }
+
+        // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
+        // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
+        const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
+
+        await SilverRate.findOneAndUpdate(
+          { name: rateDef.name, location: 'Andhra Pradesh' },
+          {
+            $set: {
+              name: rateDef.name,
+              type: rateDef.type,
+              weight: rateDef.weight,
+              purity: rateDef.purity,
+              ratePerGram: ratePerGram,
+              rate: totalRate,
+              lastUpdated: new Date(),
+              location: 'Andhra Pradesh',
+              unit: 'INR',
+              manualAdjustment: manualAdjustment,
+              source: 'rbgoldspot'
+            },
+            $setOnInsert: {
+              // Set defaults only when inserting new documents (not when updating existing)
+              isVisible: true,
+              displayName: null
+            }
+          },
+          { upsert: true, new: true }
+        );
+        updatedCount++;
+      } catch (err) {
+        console.error(`❌ Failed to update ${rateDef.name}:`, err.message);
+      }
+    });
+
+    await Promise.all(updatePromises);
+
+    if (updatedCount > 0) {
+      console.log(`✅ MongoDB: Updated ${updatedCount} rates (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
+    }
+  } catch (error) {
+    console.error('❌ MongoDB rate update error:', error.message);
+  }
+};
+
+/**
+ * @swagger
+ * /rates:
+ *   get:
+ *     summary: Get all silver rates (Public)
+ *     tags: [Rates]
+ *     description: Returns current silver rates for all products with manual adjustments applied
+ *     responses:
+ *       200:
+ *         description: List of silver rates
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/SilverRate'
+ *       500:
+ *         description: Server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+// Get current base rate from source (without adjustments) - for "Show As It Is" feature
 router.get('/base-rate', async (req, res) => {
   try {
-    // Fast Path: Return cache if fresh enough (within 3s buffer)
-    const isCacheFresh = (Date.now() - cachedBaseRate.lastUpdated.getTime() < 3000);
-
-    if (isCacheFresh && cachedBaseRate.ratePerGram > 0) {
-      // Trigger background refresh if older than 1s
-      if (Date.now() - cachedBaseRate.lastUpdated.getTime() > 1000) {
-        updateRatesFromEndpoints().catch(e => { });
+    // STALE-WHILE-REVALIDATE PATTERN
+    // 1. Return cached data immediately if available AND VALID (not anomalous)
+    // STALE-WHILE-REVALIDATE PATTERN for 1s real-time updates
+    if (cachedBaseRate && cachedBaseRate.ratePerGram > 0 && (Date.now() - cachedBaseRate.lastUpdated.getTime() < 2000)) {
+      // Return mostly fresh cache immediately to be fast
+      // User wants "every second", so 2s cache is acceptable buffer if system is busy
+      // But let's trigger a background update anyway to keep it super fresh
+      if (Date.now() - cachedBaseRate.lastUpdated.getTime() > 800) {
+        updateRatesFromEndpoints().catch(e => console.error(e));
       }
+
       return res.json({
         baseRatePerGram: cachedBaseRate.ratePerGram,
         baseRatePerKg: cachedBaseRate.ratePerKg,
@@ -389,656 +547,868 @@ router.get('/base-rate', async (req, res) => {
       });
     }
 
-    // Force update if stale or no cache
-    await updateRatesFromEndpoints();
+    // Cold start or Stale Cache? Fetch Live!
+    await updateRatesFromEndpoints(); // This updates cachedBaseRate
 
+    if (cachedBaseRate && cachedBaseRate.ratePerGram > 0) {
+      return res.json({
+        baseRatePerGram: cachedBaseRate.ratePerGram,
+        baseRatePerKg: cachedBaseRate.ratePerKg,
+        source: cachedBaseRate.source,
+        lastUpdated: cachedBaseRate.lastUpdated,
+        usdInrRate: cachedBaseRate.usdInrRate
+      });
+    }
+
+
+    // Fallback if update failed
     return res.json({
-      baseRatePerGram: cachedBaseRate.ratePerGram || 350.0,
-      baseRatePerKg: cachedBaseRate.ratePerKg || 350000,
-      source: cachedBaseRate.source,
-      lastUpdated: cachedBaseRate.lastUpdated,
-      usdInrRate: cachedBaseRate.usdInrRate
+      baseRatePerGram: 350.0,
+      source: 'fallback'
     });
   } catch (error) {
-    res.json({
-      baseRatePerGram: cachedBaseRate.ratePerGram || 350.0,
-      source: 'fallback',
-      lastUpdated: cachedBaseRate.lastUpdated
+    console.error('Error fetching base rate:', error.message);
+    // Return cached base rate if we have it, even if it failed above (unlikely but safe)
+    if (cachedBaseRate && cachedBaseRate.ratePerGram > 0) {
+      return res.json({
+        baseRatePerGram: cachedBaseRate.ratePerGram,
+        baseRatePerKg: cachedBaseRate.ratePerKg,
+        source: cachedBaseRate.source,
+        lastUpdated: cachedBaseRate.lastUpdated
+      });
+    }
+
+    // Fallback if no cache
+    return res.json({
+      baseRatePerGram: 350.0, // Default fallback
+      source: 'fallback'
     });
   }
 });
 
+// Get all silver rates - First tries MongoDB, then live API
 router.get('/', async (req, res) => {
   try {
-    const skipUpdate = req.query.skipUpdate === 'true';
-    const adminParam = req.query.admin === 'true';
+    // Check for skipUpdate query parameter (for admin dashboard to avoid waiting for slow external updates)
+    let skipUpdate = req.query.skipUpdate === 'true' || req.query.skipUpdate === true;
 
-    // TRIGGER BACKGROUND UPDATE ALWAYS (throttled internally)
-    if (!skipUpdate) {
-      updateRatesFromEndpoints().catch(e => { });
+    // Check for explicit admin parameter (for admin dashboard)
+    const adminParam = req.query.admin === 'true' || req.query.admin === true;
+
+    // CRITICAL OPTIMIZATION: If skipUpdate is true, NEVER attempt external fetch
+    // This resolves the 15s timeout issue during polling.
+    if (skipUpdate) {
+      console.log('⚡ Fast path: skipUpdate=true, fetching from MongoDB only');
+      try {
+        const mongoose = require('mongoose');
+        if (mongoose.connection.readyState === 1) {
+          const SilverRate = require('../models/SilverRate');
+          let mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' }).sort({ name: 1 }).lean();
+
+          // Trigger background update but don't wait for it
+          updateRatesFromEndpoints().catch(e => console.error('Background update failed:', e.message));
+
+          if (mongoRates.length > 0) {
+            // Apply adjustments and visibility (admin vs regular)
+            const isAdmin = isAdminUser(req) || adminParam;
+            const finalRates = await applyManualAdjustments(mongoRates, isAdmin, true);
+            return res.json(finalRates);
+          }
+        }
+      } catch (fastErr) {
+        console.warn('⚠️ Fast path failed, falling back to standard logic:', fastErr.message);
+      }
     }
 
+    // Standard logic (for manual refresh or if fast path fails)
+    // Check if user is admin from token
+    const isAdminFromToken = isAdminUser(req);
+
+    // Admin is true if: token says admin OR explicit admin parameter is set
+    // CRITICAL: This determines whether disabled products (isVisible=false) are shown
+    const isAdmin = isAdminFromToken || adminParam;
+
+    // Log admin detection for debugging
+    if (isAdmin) {
+      console.log('👤 Admin user detected in /rates endpoint', isAdminFromToken ? '(from token)' : '(from admin parameter)');
+      console.log('🔍 Admin detection details:', {
+        isAdminFromToken,
+        adminParam,
+        adminParamRaw: req.query.admin,
+        skipUpdate,
+        finalIsAdmin: isAdmin,
+        queryParams: req.query
+      });
+    } else {
+      console.log('👤 Regular user (non-admin) accessing /rates endpoint');
+      console.log('🔍 Non-admin details:', {
+        isAdminFromToken,
+        adminParam,
+        adminParamRaw: req.query.admin,
+        skipUpdate
+      });
+    }
+
+    // Auth check (optional)
+    try {
+      const token = req.headers.authorization?.replace('Bearer ', '');
+      if (token) {
+        const jwt = require('jsonwebtoken');
+        jwt.verify(token, process.env.JWT_SECRET || 'jain_silver_secret_key_2024_change_in_production');
+      }
+    } catch (authError) {
+      // Continue without auth
+    }
+
+    // Check if "Show As It Is" is enabled
+    // First check query parameter (from frontend), then fall back to Settings
+    let showAsItIs = false;
+    const showAsItIsFromQuery = req.query.showAsItIs === 'true' || req.query.showAsItIs === true;
+
+    if (showAsItIsFromQuery) {
+      showAsItIs = true;
+    } else {
+      try {
+        // Ensure Settings model is available
+        if (Settings && typeof Settings.getSetting === 'function') {
+          const showAsItIsSetting = await Settings.getSetting('showAsItIs');
+          if (showAsItIsSetting && showAsItIsSetting.value !== undefined) {
+            showAsItIs = showAsItIsSetting.value;
+          }
+        }
+      } catch (settingsError) {
+        console.warn('Could not fetch showAsItIs setting, defaulting to false:', settingsError.message);
+        // Continue with default false value
+      }
+    }
+
+    // Log showAsItIs state for debugging
+    if (isAdmin || skipUpdate) {
+      console.log(`👁️ "Show As It Is" state: ${showAsItIs} (from query: ${showAsItIsFromQuery}, final: ${showAsItIs})`);
+    }
+
+    // Declare mongoRates in outer scope to prevent ReferenceError if connection fails
+    // This ensures fallback logic doesn't crash if it tries to access mongoRates
+    let mongoRates = [];
+
+    // ALWAYS try to get rates from MongoDB first (primary source)
+    // In serverless, we need to ensure connection on each request
     try {
       const mongoose = require('mongoose');
+
+      // Safety check: ensure mongoose is available
+      if (!mongoose) {
+        console.warn('⚠️ Mongoose not available, skipping MongoDB fetch');
+        throw new Error('Mongoose not available');
+      }
+
+      // For serverless (Vercel), ensure connection on each request
       if (mongoose.connection.readyState !== 1) {
-        await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 3000 });
-      }
-
-      const mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' })
-        .sort({ name: 1 })
-        .lean();
-
-      if (mongoRates.length > 0) {
-        const isAdmin = isAdminUser(req) || adminParam;
-        const finalRates = await applyManualAdjustments(mongoRates, isAdmin, true);
-        return res.json(finalRates);
-      }
-    } catch (dbErr) {
-      console.error('DB Error in /rates:', dbErr.message);
-    }
-
-    // Response fallback if DB fails
-    return res.status(503).json({ message: 'Rates temporarily unavailable', source: 'status' });
-  } catch (error) {
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
-
-// Standard logic (for manual refresh or if fast path fails)
-// Check if user is admin from token
-const isAdminFromToken = isAdminUser(req);
-
-// Admin is true if: token says admin OR explicit admin parameter is set
-// CRITICAL: This determines whether disabled products (isVisible=false) are shown
-const isAdmin = isAdminFromToken || adminParam;
-
-// Log admin detection for debugging
-if (isAdmin) {
-  console.log('👤 Admin user detected in /rates endpoint', isAdminFromToken ? '(from token)' : '(from admin parameter)');
-  console.log('🔍 Admin detection details:', {
-    isAdminFromToken,
-    adminParam,
-    adminParamRaw: req.query.admin,
-    skipUpdate,
-    finalIsAdmin: isAdmin,
-    queryParams: req.query
-  });
-} else {
-  console.log('👤 Regular user (non-admin) accessing /rates endpoint');
-  console.log('🔍 Non-admin details:', {
-    isAdminFromToken,
-    adminParam,
-    adminParamRaw: req.query.admin,
-    skipUpdate
-  });
-}
-
-// Auth check (optional)
-try {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (token) {
-    const jwt = require('jsonwebtoken');
-    jwt.verify(token, process.env.JWT_SECRET || 'jain_silver_secret_key_2024_change_in_production');
-  }
-} catch (authError) {
-  // Continue without auth
-}
-
-// Check if "Show As It Is" is enabled
-// First check query parameter (from frontend), then fall back to Settings
-let showAsItIs = false;
-const showAsItIsFromQuery = req.query.showAsItIs === 'true' || req.query.showAsItIs === true;
-
-if (showAsItIsFromQuery) {
-  showAsItIs = true;
-} else {
-  try {
-    // Ensure Settings model is available
-    if (Settings && typeof Settings.getSetting === 'function') {
-      const showAsItIsSetting = await Settings.getSetting('showAsItIs');
-      if (showAsItIsSetting && showAsItIsSetting.value !== undefined) {
-        showAsItIs = showAsItIsSetting.value;
-      }
-    }
-  } catch (settingsError) {
-    console.warn('Could not fetch showAsItIs setting, defaulting to false:', settingsError.message);
-    // Continue with default false value
-  }
-}
-
-// Log showAsItIs state for debugging
-if (isAdmin || skipUpdate) {
-  console.log(`👁️ "Show As It Is" state: ${showAsItIs} (from query: ${showAsItIsFromQuery}, final: ${showAsItIs})`);
-}
-
-// Declare mongoRates in outer scope to prevent ReferenceError if connection fails
-// This ensures fallback logic doesn't crash if it tries to access mongoRates
-let mongoRates = [];
-
-// ALWAYS try to get rates from MongoDB first (primary source)
-// In serverless, we need to ensure connection on each request
-try {
-  const mongoose = require('mongoose');
-
-  // Safety check: ensure mongoose is available
-  if (!mongoose) {
-    console.warn('⚠️ Mongoose not available, skipping MongoDB fetch');
-    throw new Error('Mongoose not available');
-  }
-
-  // For serverless (Vercel), ensure connection on each request
-  if (mongoose.connection.readyState !== 1) {
-    // Try to connect if not connected (serverless cold start)
-    try {
-      const mongoURI = process.env.MONGODB_URI;
-      if (mongoURI) {
-        // Quick connection attempt with short timeout for serverless
-        await Promise.race([
-          mongoose.connect(mongoURI, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-            serverSelectionTimeoutMS: 3000, // 3 seconds for serverless
-            socketTimeoutMS: 10000,
-            maxPoolSize: 1, // Single connection for serverless
-            minPoolSize: 0
-          }),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('MongoDB connection timeout')), 3000)
-          )
-        ]);
-        console.log('✅ MongoDB connected on request');
-      }
-    } catch (connErr) {
-      console.warn('⚠️ MongoDB connection failed on request:', connErr.message);
-    }
-  }
-
-  if (mongoose.connection.readyState === 1) {
-    // Fetch ALL products from MongoDB (including disabled ones) - no filter on isVisible
-    // CRITICAL: Do NOT filter by isVisible here - admin needs to see all products
-    let mongoRatesLocal;
-    try {
-      mongoRatesLocal = await SilverRate.find({ location: 'Andhra Pradesh' })
-        .sort({ name: 1 })
-        .lean();
-
-      mongoRates = mongoRatesLocal; // Assign to outer scope variable
-
-      // Ensure mongoRates is an array
-      if (!Array.isArray(mongoRates)) {
-        console.error('❌ MongoDB query returned non-array:', typeof mongoRates);
-        mongoRates = [];
-      }
-    } catch (queryError) {
-      console.error('❌ MongoDB query failed:', queryError.message);
-      if (queryError.stack) {
-        console.error('Query error stack:', queryError.stack.substring(0, 500));
-      }
-      // Set to empty array to continue with fallback
-      mongoRates = [];
-    }
-
-    // Declare latestRate and mongoAge in broader scope so they're accessible later
-    let latestRate = null;
-    let mongoAge = 0;
-
-    // Define thresholds at top level so they're accessible throughout the route handler
-    const STALE_THRESHOLD = 500; // 500ms - trigger update if older than 0.5 seconds for near real-time
-    const VERY_STALE_THRESHOLD = 2000; // 2 seconds - if very stale, wait for update before serving
-    const OLD_RATE_THRESHOLD = 200; // If rate is below this, it's likely old cached data (updated for current rates ~₹290/gram)
-
-    // Declare stale rate flags in broader scope
-    let hasStaleRates = false;
-    let hasStaleBaseRate = false;
-    let hasOld99_9Rates = false;
-
-    // Log for debugging - always log when skipUpdate is true (likely admin dashboard)
-    if (skipUpdate || isAdmin) {
-      const disabledCount = mongoRates.filter(r => r.isVisible === false).length;
-      const enabledCount = mongoRates.filter(r => r.isVisible !== false).length;
-      console.log(`📊 ${skipUpdate ? 'skipUpdate' : 'Admin'} view: Found ${mongoRates.length} total products (${enabledCount} enabled, ${disabledCount} disabled)`);
-
-      // Log disabled products explicitly
-      if (disabledCount > 0) {
-        const disabledProducts = mongoRates.filter(r => r.isVisible === false);
-        console.log(`🚫 DISABLED PRODUCTS FOUND:`, disabledProducts.map(r => `${r.name} (isVisible: ${r.isVisible})`).join(', '));
-      }
-
-      const productNames = mongoRates.map(r => `${r.name}${r.displayName ? ` (display: ${r.displayName})` : ''}${r.isVisible === false ? ' [DISABLED]' : ''}`);
-      console.log(`📋 All products in MongoDB:`, productNames.join(', '));
-    }
-
-    // Ensure all defined products exist for admins OR when skipUpdate is true (admin dashboard)
-    // This ensures admin dashboard always shows all products even if admin check fails
-    if ((isAdmin || skipUpdate) && mongoRates) {
-      const tempLatestRate = mongoRates.length > 0 ? mongoRates.reduce((latest, rate) => {
-        return rate.lastUpdated > latest.lastUpdated ? rate : latest;
-      }, mongoRates[0]) : null;
-      // Use latest rate's ratePerGram to estimate base rate, or use cached
-      let estimatedBaseRate = cachedBaseRate.ratePerGram;
-      if (tempLatestRate && tempLatestRate.ratePerGram > 0) {
-        // Reverse calculate base rate from latest rate
-        if (tempLatestRate.purity === '92.5%') {
-          estimatedBaseRate = tempLatestRate.ratePerGram / 0.96;
-        } else if (tempLatestRate.purity === '99.99%') {
-          estimatedBaseRate = tempLatestRate.ratePerGram; // 99.99% uses base rate as-is
-        } else {
-          estimatedBaseRate = tempLatestRate.ratePerGram;
-        }
-      }
-      const ratesBeforeEnsure = mongoRates.length;
-      mongoRates = ensureAllProductsForAdmin(mongoRates, isAdmin, estimatedBaseRate, skipUpdate);
-      const ratesAfterEnsure = mongoRates.length;
-
-      // Log after ensuring all products
-      const disabledCountAfter = mongoRates.filter(r => r.isVisible === false).length;
-      console.log(`📊 Admin view after ensureAllProducts: ${ratesBeforeEnsure} → ${ratesAfterEnsure} products (${disabledCountAfter} disabled)`);
-      if (ratesAfterEnsure > ratesBeforeEnsure) {
-        const addedProducts = mongoRates.slice(ratesBeforeEnsure).map(r => r.name || r.originalName);
-        console.log(`✅ Added ${ratesAfterEnsure - ratesBeforeEnsure} missing products:`, addedProducts.join(', '));
-      }
-    }
-
-    if (mongoRates && mongoRates.length > 0) {
-      // Always use MongoDB rates if available (they're updated every second)
-      latestRate = mongoRates.reduce((latest, rate) => {
-        if (!rate || !rate.lastUpdated) return latest || rate;
-        const rateTime = new Date(rate.lastUpdated).getTime();
-        const latestTime = latest && latest.lastUpdated ? new Date(latest.lastUpdated).getTime() : 0;
-        return rateTime > latestTime ? rate : latest;
-      }, mongoRates[0]);
-
-      if (!latestRate || !latestRate.lastUpdated) {
-        throw new Error('Invalid rate data in MongoDB - missing lastUpdated');
-      }
-
-      mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
-      // Thresholds are defined at top level above
-
-      // CRITICAL: Check if Gold rates are present. If not, force an update to create them.
-      const hasGold = mongoRates.some(r => r.type === 'gold' || (r.name && r.name.toLowerCase().includes('gold') && r.name.toLowerCase().includes('999')));
-      if (!hasGold && skipUpdate) {
-        console.log('⚠️ Gold rates missing from DB - Forcing update/insert despite skipUpdate parameter');
-        skipUpdate = false;
-      }
-
-
-      // Check if ANY 99.9% rate is old cached data (should be ~₹290, not below ₹200)
-      hasOld99_9Rates = mongoRates.some(rate =>
-        rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
-      );
-
-      // CRITICAL: Check if rates are significantly below current market rate (₹93/gram) or anomalously high (₹300+)
-      // Valid range for Silver is approx ₹80-120. Set wide bounds ₹50-200.
-      // This ensures we catch both "too low" and "too high (3.5kg unit)" errors.
-      hasStaleRates = mongoRates.some(rate => {
-        if (rate.purity === '99.9%' && (rate.ratePerGram < 50 || rate.ratePerGram > 200)) return true;
-        if (rate.purity === '99.99%' && (rate.ratePerGram < 50 || rate.ratePerGram > 200)) return true;
-        return false;
-      });
-
-      // Also check if base rate (from 99.9% rates) is significantly outside expected range
-      // This catches cases where rates might be slightly above threshold but still wrong
-      const baseRateFrom99_9 = mongoRates.find(r => r.purity === '99.9%')?.ratePerGram || 0;
-      const baseRateFrom99_99 = mongoRates.find(r => r.purity === '99.99%')?.ratePerGram || 0;
-      // 99.99% uses base rate as-is (no multiplier), so base = 99.99% rate directly
-      const estimatedBaseFrom99_99 = baseRateFrom99_99 > 0 ? baseRateFrom99_99 : 0;
-      const estimatedBase = Math.max(baseRateFrom99_9, estimatedBaseFrom99_99);
-      // If estimated base rate is outside ₹50-200, consider all rates stale
-      hasStaleBaseRate = estimatedBase > 0 && (estimatedBase < 50 || estimatedBase > 200);
-
-      // If skipUpdate is true, skip waiting for updates and return current rates immediately
-      if (skipUpdate) {
-        console.log('⏩ Skipping rate update (skipUpdate=true), returning current MongoDB rates immediately');
-        if (isAdmin) {
-          console.log(`📊 skipUpdate path: mongoRates has ${mongoRates.length} products`);
-          const mongoProductNames = mongoRates.map(r => r.name || r.originalName || 'unnamed');
-          console.log(`📋 skipUpdate path - MongoDB product names:`, mongoProductNames.join(', '));
-        }
-        let finalRates;
-        if (showAsItIs) {
-          // If "Show As It Is" is enabled, return original rates without adjustments
-          let baseRatePerGram = cachedBaseRate.ratePerGram;
-          try {
-            const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
-            const liveRate = await Promise.race([
-              fetchSilverRatesFromMultipleSources(),
+        // Try to connect if not connected (serverless cold start)
+        try {
+          const mongoURI = process.env.MONGODB_URI;
+          if (mongoURI) {
+            // Quick connection attempt with short timeout for serverless
+            await Promise.race([
+              mongoose.connect(mongoURI, {
+                useNewUrlParser: true,
+                useUnifiedTopology: true,
+                serverSelectionTimeoutMS: 3000, // 3 seconds for serverless
+                socketTimeoutMS: 10000,
+                maxPoolSize: 1, // Single connection for serverless
+                minPoolSize: 0
+              }),
               new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Timeout after 5 seconds')), 5000)
+                setTimeout(() => reject(new Error('MongoDB connection timeout')), 3000)
               )
             ]);
-            if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0) {
-              baseRatePerGram = liveRate.ratePerGram;
-            }
-          } catch (fetchError) {
-            console.warn('Could not fetch fresh base rate, using cached:', fetchError.message);
+            console.log('✅ MongoDB connected on request');
           }
-          // For "Show As It Is", merge with MongoDB visibility info
-          // CRITICAL: For admin, start with ALL MongoDB products (including disabled), then merge calculated rates
-          const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
-          const calculatedRatesMap = new Map();
-          calculatedOriginalRates.forEach(calcRate => {
-            calculatedRatesMap.set(calcRate.name, calcRate);
-          });
-
-          let mergedRates = [];
-
-          // For admin: Start with ALL MongoDB products (including disabled ones)
-          // This ensures disabled products are always included
-          if (isAdmin || skipUpdate) {
-            console.log(`👁️ "Show As It Is" + Admin: Starting with ${mongoRates.length} MongoDB products`);
-
-            mongoRates.forEach(mongoRate => {
-              const calculatedRate = calculatedRatesMap.get(mongoRate.name);
-
-              if (calculatedRate) {
-                // Product exists in both - use calculated rate but preserve MongoDB visibility and displayName
-                let weightInGrams = mongoRate.weight.value;
-                if (mongoRate.weight.unit === 'kg') {
-                  weightInGrams = mongoRate.weight.value * 1000;
-                }
-
-                mergedRates.push({
-                  ...calculatedRate,
-                  isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
-                  displayName: mongoRate.displayName || null,
-                  originalName: mongoRate.name,
-                  // Preserve all MongoDB fields
-                  _id: mongoRate._id,
-                  weight: mongoRate.weight,
-                  purity: mongoRate.purity,
-                  type: mongoRate.type,
-                  location: mongoRate.location
-                });
-
-                if (mongoRate.isVisible === false) {
-                  console.log(`🚫 Including disabled product from MongoDB: ${mongoRate.name} (merged with calculated rate)`);
-                }
-              } else {
-                // Product exists in MongoDB but not in calculated rates - calculate rate and include it
-                let weightInGrams = mongoRate.weight.value;
-                if (mongoRate.weight.unit === 'kg') {
-                  weightInGrams = mongoRate.weight.value * 1000;
-                }
-
-                // Calculate original rate for this product based on base rate and purity
-                let originalRatePerGram = baseRatePerGram;
-                if (mongoRate.purity === '92.5%') {
-                  originalRatePerGram = baseRatePerGram * 0.96;
-                } else if (mongoRate.purity === '99.99%') {
-                  originalRatePerGram = baseRatePerGram; // 99.99% uses base rate as-is
-                }
-                // 99.9% uses base rate as-is
-
-                const originalTotalRate = originalRatePerGram * weightInGrams; // No rounding - keep exact value
-
-                mergedRates.push({
-                  ...mongoRate,
-                  originalName: mongoRate.name,
-                  name: mongoRate.displayName || mongoRate.name,
-                  isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
-                  ratePerGram: originalRatePerGram,
-                  rate: originalTotalRate,
-                  // Preserve weight info
-                  weight: mongoRate.weight || { value: 1, unit: 'kg' }
-                });
-
-                if (mongoRate.isVisible === false) {
-                  console.log(`🚫 Including disabled product from MongoDB (not in calculated): ${mongoRate.name}`);
-                } else {
-                  console.log(`✅ Added product from MongoDB (not in calculated): ${mongoRate.name}`);
-                }
-              }
-            });
-
-            // Log final count for admin
-            const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
-            console.log(`👁️ "Show As It Is" + Admin: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
-          } else {
-            // For non-admin: Start with calculated rates and merge MongoDB visibility
-            mergedRates = calculatedOriginalRates.map(calcRate => {
-              const mongoRate = mongoRates.find(r => r.name === calcRate.name);
-              return {
-                ...calcRate,
-                isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
-                displayName: mongoRate?.displayName || null,
-                originalName: calcRate.name
-              };
-            });
-          }
-
-          // IMPORTANT: Only filter for non-admin users
-          // Admin users (including those with admin=true parameter) should see ALL products
-          if (!isAdmin) {
-            mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
-            console.log(`🔒 Non-admin: Filtered to ${mergedRates.length} visible products`);
-          } else {
-            const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
-            console.log(`👁️ Admin view: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
-          }
-          // CRITICAL: Preserve isVisible when mapping - use spread to keep all fields
-          finalRates = mergedRates.map(rate => {
-            const result = {
-              ...rate,
-              name: rate.displayName || rate.name,
-              // Explicitly preserve isVisible
-              isVisible: rate.isVisible !== undefined ? rate.isVisible : true
-            };
-            // Log disabled products being included
-            if (isAdmin && result.isVisible === false) {
-              console.log(`🚫 Final mapping: Including disabled product: ${result.name || result.originalName} (isVisible: ${result.isVisible})`);
-            }
-            return result;
-          });
-        } else {
-          // Log before applying adjustments
-          if (isAdmin || skipUpdate) {
-            const disabledBefore = mongoRates.filter(r => r.isVisible === false).length;
-            console.log(`📊 Before applyManualAdjustments: ${mongoRates.length} products (${disabledBefore} disabled)`);
-            const productNames = mongoRates.map(r => `${r.name || r.originalName || 'unnamed'}${r.isVisible === false ? ' [DISABLED]' : ''}`);
-            console.log(`📋 Product names:`, productNames.join(', '));
-          }
-          finalRates = await applyManualAdjustments(mongoRates, isAdmin, skipUpdate);
-          // Log after applying adjustments
-          if (isAdmin || skipUpdate) {
-            const disabledAfter = finalRates.filter(r => r.isVisible === false).length;
-            console.log(`📊 After applyManualAdjustments: ${finalRates.length} products (${disabledAfter} disabled)`);
-            const finalProductNames = finalRates.map(r => `${r.name || r.originalName || 'unnamed'}${r.isVisible === false ? ' [DISABLED]' : ''}`);
-            console.log(`📋 Final product names:`, finalProductNames.join(', '));
-
-            // CRITICAL: Verify disabled products are in the response
-            if (disabledAfter === 0 && disabledBefore > 0) {
-              console.error(`❌ ERROR: Disabled products were filtered out! Had ${disabledBefore} disabled, now have ${disabledAfter}`);
-            }
-          }
+        } catch (connErr) {
+          console.warn('⚠️ MongoDB connection failed on request:', connErr.message);
         }
-
-        // CRITICAL: Filter out disabled products for non-admin users
-        let filteredFinalRates = finalRates;
-        if (!isAdmin && !skipUpdate) {
-          filteredFinalRates = finalRates.filter(rate => rate.isVisible !== false);
-          console.log(`🔒 skipUpdate=false: Filtered ${finalRates.length} → ${filteredFinalRates.length} products for non-admin`);
-        }
-
-        const ratesWithUSD = filteredFinalRates.map(rate => ({
-          ...rate,
-          usdInrRate: cachedBaseRate.usdInrRate || 89.25
-        }));
-        res.set({
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0'
-        });
-        return res.json(ratesWithUSD);
       }
 
-    }
-
-    // If rates are very stale OR contain old 99.9% rates, trigger update
-    // On Vercel, trigger non-blocking update. On other platforms, wait for update.
-    if (mongoAge > VERY_STALE_THRESHOLD || hasOld99_9Rates) {
-      if (process.env.VERCEL) {
-        // On Vercel, trigger non-blocking update immediately
-        const reason = hasOld99_9Rates
-          ? `contains old 99.9% rates (below ₹100 detected, expected ~₹200-210)`
-          : `very stale (${Math.round(mongoAge / 1000)}s old)`;
-        console.log(`⚠️ Rates are ${reason}, triggering immediate update on Vercel...`);
-        updateRatesHandler(req, null).catch(err => {
-          console.error('❌ Immediate rate update failed:', err.message);
-        });
-        // Continue to serve current rates (they'll be updated in background)
-      } else {
-        const reason = hasOld99_9Rates
-          ? `contains old 99.9% rates (below ₹100 detected, expected ~₹200-210)`
-          : `very stale (${Math.round(mongoAge / 1000)}s old)`;
-        console.log(`⚠️ Rates are ${reason}, fetching fresh rates before serving...`);
+      if (mongoose.connection.readyState === 1) {
+        // Fetch ALL products from MongoDB (including disabled ones) - no filter on isVisible
+        // CRITICAL: Do NOT filter by isVisible here - admin needs to see all products
+        let mongoRatesLocal;
         try {
-          await updateRatesHandler(req, null); // Wait for update
-          // Fetch fresh rates after update
-          let freshRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+          mongoRatesLocal = await SilverRate.find({ location: 'Andhra Pradesh' })
             .sort({ name: 1 })
             .lean();
 
-          // Ensure all defined products exist for admins
-          if (isAdmin && freshRates) {
-            const latestRate = freshRates.length > 0 ? freshRates.reduce((latest, rate) => {
-              return rate.lastUpdated > latest.lastUpdated ? rate : latest;
-            }, freshRates[0]) : null;
-            let estimatedBaseRate = cachedBaseRate.ratePerGram;
-            if (latestRate && latestRate.ratePerGram > 0) {
-              if (latestRate.purity === '92.5%') {
-                estimatedBaseRate = latestRate.ratePerGram / 0.96;
-              } else if (latestRate.purity === '99.99%') {
-                estimatedBaseRate = latestRate.ratePerGram; // 99.99% uses base rate as-is
-              } else {
-                estimatedBaseRate = latestRate.ratePerGram;
-              }
-            }
-            freshRates = ensureAllProductsForAdmin(freshRates, isAdmin, estimatedBaseRate);
+          mongoRates = mongoRatesLocal; // Assign to outer scope variable
+
+          // Ensure mongoRates is an array
+          if (!Array.isArray(mongoRates)) {
+            console.error('❌ MongoDB query returned non-array:', typeof mongoRates);
+            mongoRates = [];
+          }
+        } catch (queryError) {
+          console.error('❌ MongoDB query failed:', queryError.message);
+          if (queryError.stack) {
+            console.error('Query error stack:', queryError.stack.substring(0, 500));
+          }
+          // Set to empty array to continue with fallback
+          mongoRates = [];
+        }
+
+        // Declare latestRate and mongoAge in broader scope so they're accessible later
+        let latestRate = null;
+        let mongoAge = 0;
+
+        // Define thresholds at top level so they're accessible throughout the route handler
+        const STALE_THRESHOLD = 500; // 500ms - trigger update if older than 0.5 seconds for near real-time
+        const VERY_STALE_THRESHOLD = 2000; // 2 seconds - if very stale, wait for update before serving
+        const OLD_RATE_THRESHOLD = 200; // If rate is below this, it's likely old cached data (updated for current rates ~₹290/gram)
+
+        // Declare stale rate flags in broader scope
+        let hasStaleRates = false;
+        let hasStaleBaseRate = false;
+        let hasOld99_9Rates = false;
+
+        // Log for debugging - always log when skipUpdate is true (likely admin dashboard)
+        if (skipUpdate || isAdmin) {
+          const disabledCount = mongoRates.filter(r => r.isVisible === false).length;
+          const enabledCount = mongoRates.filter(r => r.isVisible !== false).length;
+          console.log(`📊 ${skipUpdate ? 'skipUpdate' : 'Admin'} view: Found ${mongoRates.length} total products (${enabledCount} enabled, ${disabledCount} disabled)`);
+
+          // Log disabled products explicitly
+          if (disabledCount > 0) {
+            const disabledProducts = mongoRates.filter(r => r.isVisible === false);
+            console.log(`🚫 DISABLED PRODUCTS FOUND:`, disabledProducts.map(r => `${r.name} (isVisible: ${r.isVisible})`).join(', '));
           }
 
-          if (freshRates && freshRates.length > 0) {
-            // Verify no old 99.9% rates in fresh data
-            const stillHasOldRates = freshRates.some(rate =>
-              rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
-            );
+          const productNames = mongoRates.map(r => `${r.name}${r.displayName ? ` (display: ${r.displayName})` : ''}${r.isVisible === false ? ' [DISABLED]' : ''}`);
+          console.log(`📋 All products in MongoDB:`, productNames.join(', '));
+        }
 
-            if (stillHasOldRates) {
-              console.error('❌ Fresh rates still contain old 99.9% rates! Update may have failed.');
-              // Try one more time with longer timeout
-              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-              await updateRatesHandler(req, null);
-              let retryRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+        // Ensure all defined products exist for admins OR when skipUpdate is true (admin dashboard)
+        // This ensures admin dashboard always shows all products even if admin check fails
+        if ((isAdmin || skipUpdate) && mongoRates) {
+          const tempLatestRate = mongoRates.length > 0 ? mongoRates.reduce((latest, rate) => {
+            return rate.lastUpdated > latest.lastUpdated ? rate : latest;
+          }, mongoRates[0]) : null;
+          // Use latest rate's ratePerGram to estimate base rate, or use cached
+          let estimatedBaseRate = cachedBaseRate.ratePerGram;
+          if (tempLatestRate && tempLatestRate.ratePerGram > 0) {
+            // Reverse calculate base rate from latest rate
+            if (tempLatestRate.purity === '92.5%') {
+              estimatedBaseRate = tempLatestRate.ratePerGram / 0.96;
+            } else if (tempLatestRate.purity === '99.99%') {
+              estimatedBaseRate = tempLatestRate.ratePerGram; // 99.99% uses base rate as-is
+            } else {
+              estimatedBaseRate = tempLatestRate.ratePerGram;
+            }
+          }
+          const ratesBeforeEnsure = mongoRates.length;
+          mongoRates = ensureAllProductsForAdmin(mongoRates, isAdmin, estimatedBaseRate, skipUpdate);
+          const ratesAfterEnsure = mongoRates.length;
+
+          // Log after ensuring all products
+          const disabledCountAfter = mongoRates.filter(r => r.isVisible === false).length;
+          console.log(`📊 Admin view after ensureAllProducts: ${ratesBeforeEnsure} → ${ratesAfterEnsure} products (${disabledCountAfter} disabled)`);
+          if (ratesAfterEnsure > ratesBeforeEnsure) {
+            const addedProducts = mongoRates.slice(ratesBeforeEnsure).map(r => r.name || r.originalName);
+            console.log(`✅ Added ${ratesAfterEnsure - ratesBeforeEnsure} missing products:`, addedProducts.join(', '));
+          }
+        }
+
+        if (mongoRates && mongoRates.length > 0) {
+          // Always use MongoDB rates if available (they're updated every second)
+          latestRate = mongoRates.reduce((latest, rate) => {
+            if (!rate || !rate.lastUpdated) return latest || rate;
+            const rateTime = new Date(rate.lastUpdated).getTime();
+            const latestTime = latest && latest.lastUpdated ? new Date(latest.lastUpdated).getTime() : 0;
+            return rateTime > latestTime ? rate : latest;
+          }, mongoRates[0]);
+
+          if (!latestRate || !latestRate.lastUpdated) {
+            throw new Error('Invalid rate data in MongoDB - missing lastUpdated');
+          }
+
+          mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
+          // Thresholds are defined at top level above
+
+          // CRITICAL: Check if Gold rates are present. If not, force an update to create them.
+          const hasGold = mongoRates.some(r => r.type === 'gold' || (r.name && r.name.toLowerCase().includes('gold') && r.name.toLowerCase().includes('999')));
+          if (!hasGold && skipUpdate) {
+            console.log('⚠️ Gold rates missing from DB - Forcing update/insert despite skipUpdate parameter');
+            skipUpdate = false;
+          }
+
+
+          // Check if ANY 99.9% rate is old cached data (should be ~₹290, not below ₹200)
+          hasOld99_9Rates = mongoRates.some(rate =>
+            rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
+          );
+
+          // CRITICAL: Check if rates are significantly below current market rate (₹93/gram) or anomalously high (₹300+)
+          // Valid range for Silver is approx ₹80-120. Set wide bounds ₹50-200.
+          // This ensures we catch both "too low" and "too high (3.5kg unit)" errors.
+          hasStaleRates = mongoRates.some(rate => {
+            if (rate.purity === '99.9%' && (rate.ratePerGram < 50 || rate.ratePerGram > 200)) return true;
+            if (rate.purity === '99.99%' && (rate.ratePerGram < 50 || rate.ratePerGram > 200)) return true;
+            return false;
+          });
+
+          // Also check if base rate (from 99.9% rates) is significantly outside expected range
+          // This catches cases where rates might be slightly above threshold but still wrong
+          const baseRateFrom99_9 = mongoRates.find(r => r.purity === '99.9%')?.ratePerGram || 0;
+          const baseRateFrom99_99 = mongoRates.find(r => r.purity === '99.99%')?.ratePerGram || 0;
+          // 99.99% uses base rate as-is (no multiplier), so base = 99.99% rate directly
+          const estimatedBaseFrom99_99 = baseRateFrom99_99 > 0 ? baseRateFrom99_99 : 0;
+          const estimatedBase = Math.max(baseRateFrom99_9, estimatedBaseFrom99_99);
+          // If estimated base rate is outside ₹50-200, consider all rates stale
+          hasStaleBaseRate = estimatedBase > 0 && (estimatedBase < 50 || estimatedBase > 200);
+
+          // If skipUpdate is true, skip waiting for updates and return current rates immediately
+          if (skipUpdate) {
+            console.log('⏩ Skipping rate update (skipUpdate=true), returning current MongoDB rates immediately');
+            if (isAdmin) {
+              console.log(`📊 skipUpdate path: mongoRates has ${mongoRates.length} products`);
+              const mongoProductNames = mongoRates.map(r => r.name || r.originalName || 'unnamed');
+              console.log(`📋 skipUpdate path - MongoDB product names:`, mongoProductNames.join(', '));
+            }
+            let finalRates;
+            if (showAsItIs) {
+              // If "Show As It Is" is enabled, return original rates without adjustments
+              let baseRatePerGram = cachedBaseRate.ratePerGram;
+              try {
+                const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
+                const liveRate = await Promise.race([
+                  fetchSilverRatesFromMultipleSources(),
+                  new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Timeout after 5 seconds')), 5000)
+                  )
+                ]);
+                if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0) {
+                  baseRatePerGram = liveRate.ratePerGram;
+                }
+              } catch (fetchError) {
+                console.warn('Could not fetch fresh base rate, using cached:', fetchError.message);
+              }
+              // For "Show As It Is", merge with MongoDB visibility info
+              // CRITICAL: For admin, start with ALL MongoDB products (including disabled), then merge calculated rates
+              const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
+              const calculatedRatesMap = new Map();
+              calculatedOriginalRates.forEach(calcRate => {
+                calculatedRatesMap.set(calcRate.name, calcRate);
+              });
+
+              let mergedRates = [];
+
+              // For admin: Start with ALL MongoDB products (including disabled ones)
+              // This ensures disabled products are always included
+              if (isAdmin || skipUpdate) {
+                console.log(`👁️ "Show As It Is" + Admin: Starting with ${mongoRates.length} MongoDB products`);
+
+                mongoRates.forEach(mongoRate => {
+                  const calculatedRate = calculatedRatesMap.get(mongoRate.name);
+
+                  if (calculatedRate) {
+                    // Product exists in both - use calculated rate but preserve MongoDB visibility and displayName
+                    let weightInGrams = mongoRate.weight.value;
+                    if (mongoRate.weight.unit === 'kg') {
+                      weightInGrams = mongoRate.weight.value * 1000;
+                    }
+
+                    mergedRates.push({
+                      ...calculatedRate,
+                      isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
+                      displayName: mongoRate.displayName || null,
+                      originalName: mongoRate.name,
+                      // Preserve all MongoDB fields
+                      _id: mongoRate._id,
+                      weight: mongoRate.weight,
+                      purity: mongoRate.purity,
+                      type: mongoRate.type,
+                      location: mongoRate.location
+                    });
+
+                    if (mongoRate.isVisible === false) {
+                      console.log(`🚫 Including disabled product from MongoDB: ${mongoRate.name} (merged with calculated rate)`);
+                    }
+                  } else {
+                    // Product exists in MongoDB but not in calculated rates - calculate rate and include it
+                    let weightInGrams = mongoRate.weight.value;
+                    if (mongoRate.weight.unit === 'kg') {
+                      weightInGrams = mongoRate.weight.value * 1000;
+                    }
+
+                    // Calculate original rate for this product based on base rate and purity
+                    let originalRatePerGram = baseRatePerGram;
+                    if (mongoRate.purity === '92.5%') {
+                      originalRatePerGram = baseRatePerGram * 0.96;
+                    } else if (mongoRate.purity === '99.99%') {
+                      originalRatePerGram = baseRatePerGram; // 99.99% uses base rate as-is
+                    }
+                    // 99.9% uses base rate as-is
+
+                    const originalTotalRate = originalRatePerGram * weightInGrams; // No rounding - keep exact value
+
+                    mergedRates.push({
+                      ...mongoRate,
+                      originalName: mongoRate.name,
+                      name: mongoRate.displayName || mongoRate.name,
+                      isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
+                      ratePerGram: originalRatePerGram,
+                      rate: originalTotalRate,
+                      // Preserve weight info
+                      weight: mongoRate.weight || { value: 1, unit: 'kg' }
+                    });
+
+                    if (mongoRate.isVisible === false) {
+                      console.log(`🚫 Including disabled product from MongoDB (not in calculated): ${mongoRate.name}`);
+                    } else {
+                      console.log(`✅ Added product from MongoDB (not in calculated): ${mongoRate.name}`);
+                    }
+                  }
+                });
+
+                // Log final count for admin
+                const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
+                console.log(`👁️ "Show As It Is" + Admin: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
+              } else {
+                // For non-admin: Start with calculated rates and merge MongoDB visibility
+                mergedRates = calculatedOriginalRates.map(calcRate => {
+                  const mongoRate = mongoRates.find(r => r.name === calcRate.name);
+                  return {
+                    ...calcRate,
+                    isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
+                    displayName: mongoRate?.displayName || null,
+                    originalName: calcRate.name
+                  };
+                });
+              }
+
+              // IMPORTANT: Only filter for non-admin users
+              // Admin users (including those with admin=true parameter) should see ALL products
+              if (!isAdmin) {
+                mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
+                console.log(`🔒 Non-admin: Filtered to ${mergedRates.length} visible products`);
+              } else {
+                const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
+                console.log(`👁️ Admin view: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
+              }
+              // CRITICAL: Preserve isVisible when mapping - use spread to keep all fields
+              finalRates = mergedRates.map(rate => {
+                const result = {
+                  ...rate,
+                  name: rate.displayName || rate.name,
+                  // Explicitly preserve isVisible
+                  isVisible: rate.isVisible !== undefined ? rate.isVisible : true
+                };
+                // Log disabled products being included
+                if (isAdmin && result.isVisible === false) {
+                  console.log(`🚫 Final mapping: Including disabled product: ${result.name || result.originalName} (isVisible: ${result.isVisible})`);
+                }
+                return result;
+              });
+            } else {
+              // Log before applying adjustments
+              if (isAdmin || skipUpdate) {
+                const disabledBefore = mongoRates.filter(r => r.isVisible === false).length;
+                console.log(`📊 Before applyManualAdjustments: ${mongoRates.length} products (${disabledBefore} disabled)`);
+                const productNames = mongoRates.map(r => `${r.name || r.originalName || 'unnamed'}${r.isVisible === false ? ' [DISABLED]' : ''}`);
+                console.log(`📋 Product names:`, productNames.join(', '));
+              }
+              finalRates = await applyManualAdjustments(mongoRates, isAdmin, skipUpdate);
+              // Log after applying adjustments
+              if (isAdmin || skipUpdate) {
+                const disabledAfter = finalRates.filter(r => r.isVisible === false).length;
+                console.log(`📊 After applyManualAdjustments: ${finalRates.length} products (${disabledAfter} disabled)`);
+                const finalProductNames = finalRates.map(r => `${r.name || r.originalName || 'unnamed'}${r.isVisible === false ? ' [DISABLED]' : ''}`);
+                console.log(`📋 Final product names:`, finalProductNames.join(', '));
+
+                // CRITICAL: Verify disabled products are in the response
+                if (disabledAfter === 0 && disabledBefore > 0) {
+                  console.error(`❌ ERROR: Disabled products were filtered out! Had ${disabledBefore} disabled, now have ${disabledAfter}`);
+                }
+              }
+            }
+
+            // CRITICAL: Filter out disabled products for non-admin users
+            let filteredFinalRates = finalRates;
+            if (!isAdmin && !skipUpdate) {
+              filteredFinalRates = finalRates.filter(rate => rate.isVisible !== false);
+              console.log(`🔒 skipUpdate=false: Filtered ${finalRates.length} → ${filteredFinalRates.length} products for non-admin`);
+            }
+
+            const ratesWithUSD = filteredFinalRates.map(rate => ({
+              ...rate,
+              usdInrRate: cachedBaseRate.usdInrRate || 89.25
+            }));
+            res.set({
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0'
+            });
+            return res.json(ratesWithUSD);
+          }
+
+        }
+
+        // If rates are very stale OR contain old 99.9% rates, trigger update
+        // On Vercel, trigger non-blocking update. On other platforms, wait for update.
+        if (mongoAge > VERY_STALE_THRESHOLD || hasOld99_9Rates) {
+          if (process.env.VERCEL) {
+            // On Vercel, trigger non-blocking update immediately
+            const reason = hasOld99_9Rates
+              ? `contains old 99.9% rates (below ₹100 detected, expected ~₹200-210)`
+              : `very stale (${Math.round(mongoAge / 1000)}s old)`;
+            console.log(`⚠️ Rates are ${reason}, triggering immediate update on Vercel...`);
+            updateRatesHandler(req, null).catch(err => {
+              console.error('❌ Immediate rate update failed:', err.message);
+            });
+            // Continue to serve current rates (they'll be updated in background)
+          } else {
+            const reason = hasOld99_9Rates
+              ? `contains old 99.9% rates (below ₹100 detected, expected ~₹200-210)`
+              : `very stale (${Math.round(mongoAge / 1000)}s old)`;
+            console.log(`⚠️ Rates are ${reason}, fetching fresh rates before serving...`);
+            try {
+              await updateRatesHandler(req, null); // Wait for update
+              // Fetch fresh rates after update
+              let freshRates = await SilverRate.find({ location: 'Andhra Pradesh' })
                 .sort({ name: 1 })
                 .lean();
 
               // Ensure all defined products exist for admins
-              if (isAdmin && retryRates) {
-                const latestRate = retryRates.length > 0 ? retryRates.reduce((latest, rate) => {
+              if (isAdmin && freshRates) {
+                const latestRate = freshRates.length > 0 ? freshRates.reduce((latest, rate) => {
                   return rate.lastUpdated > latest.lastUpdated ? rate : latest;
-                }, retryRates[0]) : null;
+                }, freshRates[0]) : null;
                 let estimatedBaseRate = cachedBaseRate.ratePerGram;
                 if (latestRate && latestRate.ratePerGram > 0) {
                   if (latestRate.purity === '92.5%') {
                     estimatedBaseRate = latestRate.ratePerGram / 0.96;
                   } else if (latestRate.purity === '99.99%') {
-                    estimatedBaseRate = latestRate.ratePerGram / 1.005;
+                    estimatedBaseRate = latestRate.ratePerGram; // 99.99% uses base rate as-is
                   } else {
                     estimatedBaseRate = latestRate.ratePerGram;
                   }
                 }
-                retryRates = ensureAllProductsForAdmin(retryRates, isAdmin, estimatedBaseRate);
+                freshRates = ensureAllProductsForAdmin(freshRates, isAdmin, estimatedBaseRate);
               }
 
-              if (retryRates && retryRates.length > 0) {
-                // For "Show As It Is", handle specially
-                let processedRates;
-                if (showAsItIs) {
-                  let baseRatePerGram = cachedBaseRate.ratePerGram;
-                  const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
-                  const retryRatesMap = new Map();
-                  retryRates.forEach(rate => {
-                    retryRatesMap.set(rate.name, rate);
-                  });
-                  let mergedRates = calculatedOriginalRates.map(calcRate => {
-                    const mongoRate = retryRatesMap.get(calcRate.name);
-                    return {
-                      ...calcRate,
-                      isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
-                      displayName: mongoRate?.displayName || null,
-                      originalName: calcRate.name
-                    };
-                  });
+              if (freshRates && freshRates.length > 0) {
+                // Verify no old 99.9% rates in fresh data
+                const stillHasOldRates = freshRates.some(rate =>
+                  rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
+                );
 
-                  // For admin users, ensure ALL MongoDB products are included (including disabled ones)
-                  // This ensures disabled products still appear for admin even in "Show As It Is" mode
-                  if (isAdmin) {
-                    const calculatedNames = new Set(calculatedOriginalRates.map(r => r.name));
-                    const mergedNames = new Set(mergedRates.map(r => r.originalName || r.name));
+                if (stillHasOldRates) {
+                  console.error('❌ Fresh rates still contain old 99.9% rates! Update may have failed.');
+                  // Try one more time with longer timeout
+                  await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+                  await updateRatesHandler(req, null);
+                  let retryRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+                    .sort({ name: 1 })
+                    .lean();
 
-                    retryRates.forEach(mongoRate => {
-                      // Include if not already in merged rates (by originalName or name)
-                      const mongoName = mongoRate.name;
-                      const isAlreadyIncluded = mergedNames.has(mongoName) ||
-                        mergedRates.some(r => (r.originalName || r.name) === mongoName);
-
-                      if (!isAlreadyIncluded) {
-                        // Product exists in MongoDB but not in calculated rates - include it for admin
-                        let weightInGrams = mongoRate.weight.value;
-                        if (mongoRate.weight.unit === 'kg') {
-                          weightInGrams = mongoRate.weight.value * 1000;
-                        }
-
-                        // Calculate original rate for this product based on base rate and purity
-                        let originalRatePerGram = baseRatePerGram;
-                        if (mongoRate.purity === '92.5%') {
-                          originalRatePerGram = baseRatePerGram * 0.96;
-                        } else if (mongoRate.purity === '99.99%') {
-                          originalRatePerGram = baseRatePerGram * 1.005;
-                        }
-                        // 99.9% uses base rate as-is
-
-                        const originalTotalRate = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
-
-                        mergedRates.push({
-                          ...mongoRate,
-                          originalName: mongoRate.name,
-                          name: mongoRate.displayName || mongoRate.name,
-                          isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
-                          ratePerGram: originalRatePerGram,
-                          rate: originalTotalRate,
-                          // Preserve weight info
-                          weight: mongoRate.weight || { value: 1, unit: 'kg' }
-                        });
-
-                        console.log(`✅ Added disabled product to "Show As It Is" view (retry): ${mongoRate.name} (isVisible: ${mongoRate.isVisible})`);
+                  // Ensure all defined products exist for admins
+                  if (isAdmin && retryRates) {
+                    const latestRate = retryRates.length > 0 ? retryRates.reduce((latest, rate) => {
+                      return rate.lastUpdated > latest.lastUpdated ? rate : latest;
+                    }, retryRates[0]) : null;
+                    let estimatedBaseRate = cachedBaseRate.ratePerGram;
+                    if (latestRate && latestRate.ratePerGram > 0) {
+                      if (latestRate.purity === '92.5%') {
+                        estimatedBaseRate = latestRate.ratePerGram / 0.96;
+                      } else if (latestRate.purity === '99.99%') {
+                        estimatedBaseRate = latestRate.ratePerGram / 1.005;
+                      } else {
+                        estimatedBaseRate = latestRate.ratePerGram;
                       }
+                    }
+                    retryRates = ensureAllProductsForAdmin(retryRates, isAdmin, estimatedBaseRate);
+                  }
+
+                  if (retryRates && retryRates.length > 0) {
+                    // For "Show As It Is", handle specially
+                    let processedRates;
+                    if (showAsItIs) {
+                      let baseRatePerGram = cachedBaseRate.ratePerGram;
+                      const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
+                      const retryRatesMap = new Map();
+                      retryRates.forEach(rate => {
+                        retryRatesMap.set(rate.name, rate);
+                      });
+                      let mergedRates = calculatedOriginalRates.map(calcRate => {
+                        const mongoRate = retryRatesMap.get(calcRate.name);
+                        return {
+                          ...calcRate,
+                          isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
+                          displayName: mongoRate?.displayName || null,
+                          originalName: calcRate.name
+                        };
+                      });
+
+                      // For admin users, ensure ALL MongoDB products are included (including disabled ones)
+                      // This ensures disabled products still appear for admin even in "Show As It Is" mode
+                      if (isAdmin) {
+                        const calculatedNames = new Set(calculatedOriginalRates.map(r => r.name));
+                        const mergedNames = new Set(mergedRates.map(r => r.originalName || r.name));
+
+                        retryRates.forEach(mongoRate => {
+                          // Include if not already in merged rates (by originalName or name)
+                          const mongoName = mongoRate.name;
+                          const isAlreadyIncluded = mergedNames.has(mongoName) ||
+                            mergedRates.some(r => (r.originalName || r.name) === mongoName);
+
+                          if (!isAlreadyIncluded) {
+                            // Product exists in MongoDB but not in calculated rates - include it for admin
+                            let weightInGrams = mongoRate.weight.value;
+                            if (mongoRate.weight.unit === 'kg') {
+                              weightInGrams = mongoRate.weight.value * 1000;
+                            }
+
+                            // Calculate original rate for this product based on base rate and purity
+                            let originalRatePerGram = baseRatePerGram;
+                            if (mongoRate.purity === '92.5%') {
+                              originalRatePerGram = baseRatePerGram * 0.96;
+                            } else if (mongoRate.purity === '99.99%') {
+                              originalRatePerGram = baseRatePerGram * 1.005;
+                            }
+                            // 99.9% uses base rate as-is
+
+                            const originalTotalRate = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
+
+                            mergedRates.push({
+                              ...mongoRate,
+                              originalName: mongoRate.name,
+                              name: mongoRate.displayName || mongoRate.name,
+                              isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
+                              ratePerGram: originalRatePerGram,
+                              rate: originalTotalRate,
+                              // Preserve weight info
+                              weight: mongoRate.weight || { value: 1, unit: 'kg' }
+                            });
+
+                            console.log(`✅ Added disabled product to "Show As It Is" view (retry): ${mongoRate.name} (isVisible: ${mongoRate.isVisible})`);
+                          }
+                        });
+                      }
+
+                      // IMPORTANT: Only filter for non-admin users
+                      if (!isAdmin) {
+                        mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
+                        console.log(`🔒 Non-admin: Filtered to ${mergedRates.length} visible products`);
+                      } else {
+                        const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
+                        console.log(`👁️ Admin view: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
+                      }
+                      processedRates = mergedRates.map(rate => ({
+                        ...rate,
+                        name: rate.displayName || rate.name
+                      }));
+                    } else {
+                      processedRates = await applyManualAdjustments(retryRates, isAdmin);
+                    }
+                    // CRITICAL: Filter out disabled products for non-admin users
+                    let filteredProcessedRates = processedRates;
+                    if (!isAdmin) {
+                      filteredProcessedRates = processedRates.filter(rate => rate.isVisible !== false);
+                      console.log(`🔒 Filtered ${processedRates.length} → ${filteredProcessedRates.length} products for non-admin`);
+                    }
+
+                    const ratesWithUSD = filteredProcessedRates.map(rate => ({
+                      ...rate,
+                      usdInrRate: cachedBaseRate.usdInrRate || 89.25
+                    }));
+                    res.set({
+                      'Cache-Control': 'no-cache, no-store, must-revalidate',
+                      'Pragma': 'no-cache',
+                      'Expires': '0'
                     });
+                    return res.json(ratesWithUSD);
                   }
-
-                  // IMPORTANT: Only filter for non-admin users
-                  if (!isAdmin) {
-                    mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
-                    console.log(`🔒 Non-admin: Filtered to ${mergedRates.length} visible products`);
-                  } else {
-                    const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
-                    console.log(`👁️ Admin view: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
-                  }
-                  processedRates = mergedRates.map(rate => ({
-                    ...rate,
-                    name: rate.displayName || rate.name
-                  }));
                 } else {
-                  processedRates = await applyManualAdjustments(retryRates, isAdmin);
+                  const freshLatest = freshRates.reduce((latest, rate) => {
+                    return rate.lastUpdated > latest.lastUpdated ? rate : latest;
+                  }, freshRates[0]);
+                  const freshAge = Date.now() - new Date(freshLatest.lastUpdated).getTime();
+                  console.log(`✅ Fresh rates loaded: ${freshRates.length} rates (${Math.round(freshAge / 1000)}s old, latest: ${freshLatest.name} = ₹${freshLatest.ratePerGram}/gram)`);
+
+                  // For "Show As It Is", handle specially
+                  let processedRates;
+                  if (showAsItIs) {
+                    let baseRatePerGram = cachedBaseRate.ratePerGram;
+                    const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
+                    const freshRatesMap = new Map();
+                    freshRates.forEach(rate => {
+                      freshRatesMap.set(rate.name, rate);
+                    });
+                    let mergedRates = calculatedOriginalRates.map(calcRate => {
+                      const mongoRate = freshRatesMap.get(calcRate.name);
+                      return {
+                        ...calcRate,
+                        isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
+                        displayName: mongoRate?.displayName || null,
+                        originalName: calcRate.name
+                      };
+                    });
+                    // IMPORTANT: Only filter for non-admin users
+                    if (!isAdmin) {
+                      mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
+                      console.log(`🔒 Non-admin: Filtered to ${mergedRates.length} visible products`);
+                    } else {
+                      const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
+                      console.log(`👁️ Admin view: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
+                    }
+                    processedRates = mergedRates.map(rate => ({
+                      ...rate,
+                      name: rate.displayName || rate.name
+                    }));
+                  } else {
+                    processedRates = await applyManualAdjustments(freshRates, isAdmin);
+                  }
+                  // CRITICAL: Filter out disabled products for non-admin users
+                  let filteredProcessedRates = processedRates;
+                  if (!isAdmin) {
+                    filteredProcessedRates = processedRates.filter(rate => rate.isVisible !== false);
+                    console.log(`🔒 Filtered ${processedRates.length} → ${filteredProcessedRates.length} products for non-admin`);
+                  }
+
+                  const ratesWithUSD = filteredProcessedRates.map(rate => ({
+                    ...rate,
+                    usdInrRate: cachedBaseRate.usdInrRate || 89.25
+                  }));
+                  res.set({
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
+                  });
+                  return res.json(ratesWithUSD);
                 }
+              }
+            } catch (updateErr) {
+              console.error('❌ Update failed for stale/old rates:', updateErr.message);
+              // Don't serve old rates - return error instead
+              return res.status(503).json({
+                error: 'Rate update in progress, please retry',
+                message: 'Fetching fresh rates, please try again in a moment'
+              });
+            }
+          }
+
+          // If rates are stale (older than 1 second) OR if rates are below current market rate (₹250), trigger update.
+          // Since mobile app polls every second, this ensures rates update every second.
+          // On Vercel, always trigger non-blocking update (even with skipUpdate) to keep rates fresh
+          // This ensures adjustedPrice = normalPrice (current market rate) + manualAdjustment updates every second
+          // ALWAYS trigger update if rates are stale (even slightly stale) OR if rates are old (below ₹240) to ensure fresh data
+          // If rates are stale (older than 1 second) OR if rates are below current market rate (₹250), trigger update.
+          // Since mobile app polls every second, this ensures rates update every second.
+          // ALWAYS trigger non-blocking update to prevent timeouts
+          if (mongoAge > STALE_THRESHOLD || hasStaleRates || hasStaleBaseRate) {
+            // FIRE AND FORGET - Trigger update in background
+            updateRatesHandler(req, null).catch(err => {
+              // Only log errors occasionally to avoid spam
+              if (Math.random() < 0.1) {
+                console.error('❌ Background rate update failed:', err.message);
+              }
+            });
+
+            // CRITICAL: For customer requests, we want to try to serve fresh data if possible
+            // But NEVER block for long.
+            // If we have data (even if stale), we will serve it and let the background update fix it for next request.
+            // This ensures NO TIMEOUTS.
+
+            // Recalculate on-the-fly for customers using potentially stale base rate from DB
+            // This is better than nothing. The background update will fix the DB soon.
+            if (!skipUpdate && !isAdmin && mongoRates && Array.isArray(mongoRates) && mongoRates.length > 0) {
+              // Proceed to serve what we have, optionally recalculating with any known fresh base rate if we have one in memory
+              // We already have cachedBaseRate which might be fresher than MongoDB
+            }
+          }    // Warn if serving old rates (might indicate update failures)
+          if (mongoAge > 5000) {
+            console.warn(`⚠️ Serving rates that are ${Math.round(mongoAge / 1000)}s old - updates may be failing!`);
+          }
+
+          // If rates are extremely stale (more than 1 hour), trigger immediate update
+          const EXTREMELY_STALE_THRESHOLD = 3600000; // 1 hour in milliseconds
+          if (mongoAge > EXTREMELY_STALE_THRESHOLD) {
+            console.error(`🚨 CRITICAL: Rates are extremely stale (${Math.round(mongoAge / 3600000)} hours old)! Triggering immediate update...`);
+            // Trigger update immediately (non-blocking on Vercel, blocking on other platforms)
+            if (process.env.VERCEL) {
+              updateRatesHandler(req, null).catch(err => {
+                console.error('❌ Critical rate update failed:', err.message);
+              });
+            } else {
+              try {
+                await updateRatesHandler(req, null);
+                // Re-fetch rates after update
+                mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+                  .sort({ name: 1 })
+                  .lean();
+                if (isAdmin && mongoRates) {
+                  const latestRate = mongoRates.length > 0 ? mongoRates.reduce((latest, rate) => {
+                    return rate.lastUpdated > latest.lastUpdated ? rate : latest;
+                  }, mongoRates[0]) : null;
+                  let estimatedBaseRate = cachedBaseRate.ratePerGram;
+                  if (latestRate && latestRate.ratePerGram > 0) {
+                    if (latestRate.purity === '92.5%') {
+                      estimatedBaseRate = latestRate.ratePerGram / 0.96;
+                    } else if (latestRate.purity === '99.99%') {
+                      estimatedBaseRate = latestRate.ratePerGram / 1.005;
+                    } else {
+                      estimatedBaseRate = latestRate.ratePerGram;
+                    }
+                  }
+                  mongoRates = ensureAllProductsForAdmin(mongoRates, isAdmin, estimatedBaseRate);
+                }
+              } catch (updateErr) {
+                console.error('❌ Critical update failed:', updateErr.message);
+              }
+            }
+          }
+
+          // Check if we're about to serve old 99.9% rates - if so, don't serve them
+          const hasOld99_9InResponse = mongoRates.some(rate =>
+            rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
+          );
+
+          // On Vercel, avoid blocking here as well – better to serve the latest
+          // known values than to time out the client while waiting for an update.
+          if (!process.env.VERCEL && hasOld99_9InResponse) {
+            console.error(`❌ BLOCKED: Attempted to serve old 99.9% rates (below ₹100 detected). Fetching fresh rates...`);
+            try {
+              await updateRatesHandler(req, null);
+              let freshRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+                .sort({ name: 1 })
+                .lean();
+
+              // Ensure all defined products exist for admins
+              if (isAdmin && freshRates) {
+                const latestRate = freshRates.length > 0 ? freshRates.reduce((latest, rate) => {
+                  return rate.lastUpdated > latest.lastUpdated ? rate : latest;
+                }, freshRates[0]) : null;
+                let estimatedBaseRate = cachedBaseRate.ratePerGram;
+                if (latestRate && latestRate.ratePerGram > 0) {
+                  if (latestRate.purity === '92.5%') {
+                    estimatedBaseRate = latestRate.ratePerGram / 0.96;
+                  } else if (latestRate.purity === '99.99%') {
+                    estimatedBaseRate = latestRate.ratePerGram; // 99.99% uses base rate as-is
+                  } else {
+                    estimatedBaseRate = latestRate.ratePerGram;
+                  }
+                }
+                freshRates = ensureAllProductsForAdmin(freshRates, isAdmin, estimatedBaseRate);
+              }
+
+              if (freshRates && freshRates.length > 0) {
+                const ratesWithAdjustments = await applyManualAdjustments(freshRates, isAdmin);
+
                 // CRITICAL: Filter out disabled products for non-admin users
-                let filteredProcessedRates = processedRates;
+                let filteredRatesWithAdjustments = ratesWithAdjustments;
                 if (!isAdmin) {
-                  filteredProcessedRates = processedRates.filter(rate => rate.isVisible !== false);
-                  console.log(`🔒 Filtered ${processedRates.length} → ${filteredProcessedRates.length} products for non-admin`);
+                  filteredRatesWithAdjustments = ratesWithAdjustments.filter(rate => rate.isVisible !== false);
+                  console.log(`🔒 Filtered ${ratesWithAdjustments.length} → ${filteredRatesWithAdjustments.length} products for non-admin`);
                 }
 
-                const ratesWithUSD = filteredProcessedRates.map(rate => ({
+                const ratesWithUSD = filteredRatesWithAdjustments.map(rate => ({
                   ...rate,
                   usdInrRate: cachedBaseRate.usdInrRate || 89.25
                 }));
@@ -1049,54 +1419,364 @@ try {
                 });
                 return res.json(ratesWithUSD);
               }
+            } catch (updateErr) {
+              console.error('❌ Failed to fetch fresh rates:', updateErr.message);
+              return res.status(503).json({
+                error: 'Rate update in progress',
+                message: 'Please retry in a moment'
+              });
+            }
+          }
+
+          // Ensure latestRate and mongoAge are defined (might not be if coming from Vercel recalculation path)
+          if ((!latestRate || mongoAge === undefined) && mongoRates && mongoRates.length > 0) {
+            latestRate = mongoRates.reduce((latest, rate) => {
+              if (!rate || !rate.lastUpdated) return latest || rate;
+              const rateTime = new Date(rate.lastUpdated).getTime();
+              const latestTime = latest && latest.lastUpdated ? new Date(latest.lastUpdated).getTime() : 0;
+              return rateTime > latestTime ? rate : latest;
+            }, mongoRates[0]);
+            if (latestRate && latestRate.lastUpdated) {
+              mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
+            }
+          }
+
+          // Only log occasionally to avoid spam (every 10th request)
+          if (Math.random() < 0.1 && latestRate && mongoRates) {
+            console.log(`📦 Serving ${mongoRates.length} rates from MongoDB (${Math.round(mongoAge / 1000)}s old, latest: ${latestRate.name} = ₹${latestRate.ratePerGram}/gram)`);
+          }
+
+          // CRITICAL: If MongoDB rates are stale (below ₹240/gram), force recalculation with live rate
+          // This ensures users always see current market rates (₹290/gram) instead of old cached rates
+          // Check both hasStaleRates and hasStaleBaseRate to catch all stale cases
+          if ((hasStaleRates || hasStaleBaseRate || cachedBaseRate.ratePerGram > 200) && !skipUpdate && !isAdmin) {
+            const staleReason = hasStaleRates ? 'rates below ₹50/gram' : 'base rate below ₹50/gram';
+            const anomalyReason = cachedBaseRate.ratePerGram > 200 ? 'rate anomaly detected (>₹200/g)' : null;
+
+            if (anomalyReason) {
+              console.log(`⚠️ ${anomalyReason}, forcing recalculation with live rate...`);
             } else {
-              const freshLatest = freshRates.reduce((latest, rate) => {
-                return rate.lastUpdated > latest.lastUpdated ? rate : latest;
-              }, freshRates[0]);
-              const freshAge = Date.now() - new Date(freshLatest.lastUpdated).getTime();
-              console.log(`✅ Fresh rates loaded: ${freshRates.length} rates (${Math.round(freshAge / 1000)}s old, latest: ${freshLatest.name} = ₹${freshLatest.ratePerGram}/gram)`);
+              console.log(`⚠️ MongoDB rates are stale (${staleReason}), forcing recalculation with live rate...`);
+            }
+            try {
+              const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
+              const liveRate = await Promise.race([
+                fetchSilverRatesFromMultipleSources(),
+                new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error('Timeout after 3 seconds')), 3000)
+                )
+              ]);
+              if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0 && liveRate.ratePerGram >= 50) {
+                // Update cache with fresh rate
+                cachedBaseRate = {
+                  ...cachedBaseRate,
+                  ratePerGram: liveRate.ratePerGram,
+                  ratePerKg: liveRate.ratePerKg,
+                  lastUpdated: new Date(),
+                  source: liveRate.source || 'live',
+                  usdInrRate: liveRate.usdInrRate || cachedBaseRate.usdInrRate || 89.25
+                };
+                console.log(`✅ Updated cache with fresh rate: ₹${liveRate.ratePerGram.toFixed(2)}/gram (was using stale ₹${latestRate?.ratePerGram || 'N/A'}/gram)`);
 
-              // For "Show As It Is", handle specially
-              let processedRates;
-              if (showAsItIs) {
-                let baseRatePerGram = cachedBaseRate.ratePerGram;
-                const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
-                const freshRatesMap = new Map();
-                freshRates.forEach(rate => {
-                  freshRatesMap.set(rate.name, rate);
-                });
-                let mergedRates = calculatedOriginalRates.map(calcRate => {
-                  const mongoRate = freshRatesMap.get(calcRate.name);
-                  return {
-                    ...calcRate,
-                    isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
-                    displayName: mongoRate?.displayName || null,
-                    originalName: calcRate.name
-                  };
-                });
-                // IMPORTANT: Only filter for non-admin users
-                if (!isAdmin) {
-                  mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
-                  console.log(`🔒 Non-admin: Filtered to ${mergedRates.length} visible products`);
-                } else {
-                  const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
-                  console.log(`👁️ Admin view: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
-                }
-                processedRates = mergedRates.map(rate => ({
+                // CRITICAL: Save updated rates to MongoDB so they persist for future requests
+                console.log('💾 Saving updated rates to MongoDB...');
+                await updateMongoDBRates(liveRate.ratePerGram, liveRate.source, liveRate.gold999Rate);
+                console.log('✅ Updated rates saved to MongoDB');
+
+                // Recalculate rates on-the-fly with fresh base rate
+                let currentBaseRate = liveRate.ratePerGram;
+                const rateNames = mongoRates.map(r => r.originalName || r.name).filter(Boolean);
+                const adjustmentsMap = await fetchManualAdjustments(rateNames);
+
+                const recalculatedRates = mongoRates.map((rate) => {
+                  try {
+                    if (!rate || typeof rate !== 'object') return null;
+                    const rateName = (rate.originalName || rate.name);
+                    if (!rateName) return null;
+                    const manualAdjustment = adjustmentsMap[rateName] || (rate.manualAdjustment || 0) || 0;
+
+                    let ratePerGram = currentBaseRate;
+                    if (rate.purity === '92.5%') {
+                      ratePerGram = currentBaseRate * 0.96;
+                    } else if (rate.purity === '99.99%') {
+                      ratePerGram = currentBaseRate * 1.005;
+                    }
+                    ratePerGram = ratePerGram + manualAdjustment;
+                    ratePerGram = Math.max(0, ratePerGram);
+
+                    let weightInGrams = (rate.weight && rate.weight.value) ? rate.weight.value : 1;
+                    if (rate.weight && rate.weight.unit === 'kg') {
+                      weightInGrams = rate.weight.value * 1000;
+                    }
+                    const totalRate = ratePerGram * weightInGrams;
+
+                    return {
+                      ...rate,
+                      ratePerGram: ratePerGram,
+                      rate: totalRate,
+                      originalRatePerGram: ratePerGram - manualAdjustment,
+                      originalRate: (ratePerGram - manualAdjustment) * weightInGrams,
+                      manualAdjustment: manualAdjustment,
+                      lastUpdated: new Date()
+                    };
+                  } catch (rateError) {
+                    return null;
+                  }
+                }).filter(rate => rate !== null);
+
+                const visibleRates = recalculatedRates.filter(rate => rate.isVisible !== false);
+                const finalRates = visibleRates.map(rate => ({
                   ...rate,
-                  name: rate.displayName || rate.name
+                  name: rate.displayName || rate.name,
+                  originalName: rate.originalName || rate.name
                 }));
-              } else {
-                processedRates = await applyManualAdjustments(freshRates, isAdmin);
-              }
-              // CRITICAL: Filter out disabled products for non-admin users
-              let filteredProcessedRates = processedRates;
-              if (!isAdmin) {
-                filteredProcessedRates = processedRates.filter(rate => rate.isVisible !== false);
-                console.log(`🔒 Filtered ${processedRates.length} → ${filteredProcessedRates.length} products for non-admin`);
-              }
+                const ratesWithUSD = finalRates.map(rate => ({
+                  ...rate,
+                  usdInrRate: cachedBaseRate.usdInrRate || 89.25
+                }));
 
-              const ratesWithUSD = filteredProcessedRates.map(rate => ({
+                console.log(`✅ Recalculated ${finalRates.length} rates with fresh live rate: ₹${currentBaseRate.toFixed(2)}/gram`);
+                res.set({
+                  'Cache-Control': 'no-cache, no-store, must-revalidate',
+                  'Pragma': 'no-cache',
+                  'Expires': '0'
+                });
+                return res.json(ratesWithUSD);
+              }
+            } catch (staleRecalcError) {
+              console.warn('⚠️ Failed to recalculate stale rates, continuing with MongoDB rates:', staleRecalcError.message);
+            }
+          }
+
+          let finalRates;
+          if (showAsItIs) {
+            // If "Show As It Is" is enabled, return original rates without adjustments
+            // But still need to filter by visibility for non-admin users
+            // Fetch fresh base rate from source
+            let baseRatePerGram = cachedBaseRate.ratePerGram;
+            try {
+              const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
+              const liveRate = await Promise.race([
+                fetchSilverRatesFromMultipleSources(),
+                new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error('Timeout after 5 seconds')), 5000)
+                )
+              ]);
+              if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0) {
+                baseRatePerGram = liveRate.ratePerGram;
+                console.log(`✅ Fetched fresh base rate for "Show As It Is": ₹${baseRatePerGram.toFixed(2)}/gram`);
+              }
+            } catch (fetchError) {
+              console.warn('Could not fetch fresh base rate, using cached:', fetchError.message);
+              // Use cached base rate as fallback
+            }
+
+            // Get original rates from base rate, but merge with MongoDB data for visibility info
+            // CRITICAL: For admin, start with ALL MongoDB products (including disabled), then merge calculated rates
+            const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
+            const calculatedRatesMap = new Map();
+            calculatedOriginalRates.forEach(calcRate => {
+              calculatedRatesMap.set(calcRate.name, calcRate);
+            });
+
+            let mergedRates = [];
+
+            // For admin: Start with ALL MongoDB products (including disabled ones)
+            if (isAdmin) {
+              console.log(`👁️ "Show As It Is" + Admin (non-skipUpdate path): Starting with ${mongoRates.length} MongoDB products`);
+
+              mongoRates.forEach(mongoRate => {
+                const calculatedRate = calculatedRatesMap.get(mongoRate.name);
+
+                if (calculatedRate) {
+                  // Product exists in both - use calculated rate but preserve MongoDB visibility and displayName
+                  mergedRates.push({
+                    ...calculatedRate,
+                    isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
+                    displayName: mongoRate.displayName || null,
+                    originalName: mongoRate.name,
+                    // Preserve all MongoDB fields
+                    _id: mongoRate._id,
+                    weight: mongoRate.weight,
+                    purity: mongoRate.purity,
+                    type: mongoRate.type,
+                    location: mongoRate.location
+                  });
+
+                  if (mongoRate.isVisible === false) {
+                    console.log(`🚫 Including disabled product from MongoDB: ${mongoRate.name} (merged with calculated rate)`);
+                  }
+                } else {
+                  // Product exists in MongoDB but not in calculated rates - calculate rate and include it
+                  let weightInGrams = mongoRate.weight.value;
+                  if (mongoRate.weight.unit === 'kg') {
+                    weightInGrams = mongoRate.weight.value * 1000;
+                  }
+
+                  // Calculate original rate for this product based on base rate and purity
+                  let originalRatePerGram = baseRatePerGram;
+                  if (mongoRate.purity === '92.5%') {
+                    originalRatePerGram = baseRatePerGram * 0.96;
+                  } else if (mongoRate.purity === '99.99%') {
+                    originalRatePerGram = baseRatePerGram; // 99.99% uses base rate as-is
+                  }
+                  // 99.9% uses base rate as-is
+
+                  const originalTotalRate = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
+
+                  mergedRates.push({
+                    ...mongoRate,
+                    originalName: mongoRate.name,
+                    name: mongoRate.displayName || mongoRate.name,
+                    isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
+                    ratePerGram: originalRatePerGram,
+                    rate: originalTotalRate,
+                    weight: mongoRate.weight || { value: 1, unit: 'kg' }
+                  });
+
+                  if (mongoRate.isVisible === false) {
+                    console.log(`🚫 Including disabled product from MongoDB (not in calculated): ${mongoRate.name}`);
+                  }
+                }
+              });
+            } else {
+              // For non-admin: Start with calculated rates and merge MongoDB visibility
+              const mongoRatesMap = new Map();
+              mongoRates.forEach(rate => {
+                mongoRatesMap.set(rate.name, rate);
+              });
+
+              mergedRates = calculatedOriginalRates.map(calcRate => {
+                const mongoRate = mongoRatesMap.get(calcRate.name);
+                return {
+                  ...calcRate,
+                  isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
+                  displayName: mongoRate?.displayName || null,
+                  originalName: calcRate.name
+                };
+              });
+            }
+
+            // IMPORTANT: Only filter for non-admin users
+            // Admin users (including those with admin=true parameter) should see ALL products
+            if (!isAdmin) {
+              mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
+              console.log(`🔒 Non-admin: Filtered to ${mergedRates.length} visible products`);
+            } else {
+              const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
+              console.log(`👁️ "Show As It Is" + Admin: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
+            }
+
+            // Apply displayName if set
+            // CRITICAL: Preserve isVisible when mapping
+            finalRates = mergedRates.map(rate => {
+              const result = {
+                ...rate,
+                name: rate.displayName || rate.name,
+                // Explicitly preserve isVisible
+                isVisible: rate.isVisible !== undefined ? rate.isVisible : true
+              };
+              // Log disabled products being included
+              if (isAdmin && result.isVisible === false) {
+                console.log(`🚫 Final mapping (non-skipUpdate): Including disabled product: ${result.name || result.originalName} (isVisible: ${result.isVisible})`);
+              }
+              return result;
+            });
+
+            console.log(`✅ "Show As It Is" enabled - returning original rates (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
+          } else {
+            // Apply manual adjustments to rates from MongoDB
+            // This ensures admin adjustments are reflected immediately
+            // CRITICAL: Pass skipUpdate to ensure disabled products are included
+            if (!mongoRates || !Array.isArray(mongoRates) || mongoRates.length === 0) {
+              console.error('❌ mongoRates is invalid before applyManualAdjustments:', { mongoRates, type: typeof mongoRates, isArray: Array.isArray(mongoRates) });
+              throw new Error('Failed to process rates - mongoRates is invalid');
+            }
+            finalRates = await applyManualAdjustments(mongoRates, isAdmin, skipUpdate);
+          }
+
+          // Validate finalRates before proceeding
+          if (!finalRates || !Array.isArray(finalRates) || finalRates.length === 0) {
+            console.error('❌ finalRates is invalid:', { finalRates, type: typeof finalRates, isArray: Array.isArray(finalRates) });
+            throw new Error('Failed to process rates - finalRates is invalid');
+          }
+
+          // CRITICAL: Filter out disabled products for non-admin users BEFORE adding USD rate
+          // This ensures customers NEVER see disabled products, even if filtering was missed earlier
+          let filteredFinalRates = finalRates;
+          if (!isAdmin && !skipUpdate) {
+            const beforeFilter = filteredFinalRates.length;
+            filteredFinalRates = finalRates.filter(rate => {
+              const isVisible = rate.isVisible !== undefined ? rate.isVisible : true;
+              return isVisible !== false;
+            });
+            const afterFilter = filteredFinalRates.length;
+            if (beforeFilter !== afterFilter) {
+              console.log(`🔒 FINAL FILTER: Non-admin - Filtered ${beforeFilter} → ${afterFilter} products (removed ${beforeFilter - afterFilter} disabled)`);
+            }
+          }
+
+          // Add USD rate to all rates if available
+          // CRITICAL: Preserve isVisible field when mapping
+          const ratesWithUSD = filteredFinalRates.map(rate => ({
+            ...rate,
+            usdInrRate: cachedBaseRate.usdInrRate || 89.25,
+            // Explicitly preserve isVisible to ensure it's not lost
+            isVisible: rate.isVisible !== undefined ? rate.isVisible : true
+          }));
+
+          // Log final response for admin
+          if (isAdmin || skipUpdate) {
+            const disabledInResponse = ratesWithUSD.filter(r => r.isVisible === false).length;
+            console.log(`📤 skipUpdate response: Returning ${ratesWithUSD.length} rates to admin (${disabledInResponse} disabled)`);
+            const responseProductNames = ratesWithUSD.map(r => `${r.name || r.originalName || 'unnamed'}${r.isVisible === false ? ' [DISABLED]' : ''}`);
+            console.log(`📋 skipUpdate response product names:`, responseProductNames.join(', '));
+
+            // CRITICAL: Verify disabled products are in response
+            if (disabledInResponse === 0) {
+              console.warn(`⚠️ WARNING: No disabled products in response! Check if they were filtered out.`);
+            }
+          } else {
+            // Log for non-admin to verify no disabled products
+            const disabledInResponse = ratesWithUSD.filter(r => r.isVisible === false).length;
+            if (disabledInResponse > 0) {
+              console.error(`❌ ERROR: Non-admin response contains ${disabledInResponse} disabled products! This should never happen.`);
+            } else {
+              console.log(`🔒 FINAL RESPONSE: Non-admin - Returning ${ratesWithUSD.length} visible products only (no disabled products)`);
+            }
+          }
+
+          // Set headers to prevent caching
+          res.set({
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          });
+
+          // Final verification before sending response
+          if (isAdmin || skipUpdate) {
+            const finalDisabledCount = ratesWithUSD.filter(r => r.isVisible === false).length;
+            console.log(`📤 FINAL RESPONSE: Sending ${ratesWithUSD.length} rates (${finalDisabledCount} disabled)`);
+            if (finalDisabledCount > 0) {
+              const disabledInFinal = ratesWithUSD.filter(r => r.isVisible === false);
+              console.log(`🚫 FINAL RESPONSE - Disabled products:`, disabledInFinal.map(r => `${r.name || r.originalName} (isVisible: ${r.isVisible})`).join(', '));
+            } else {
+              console.warn(`⚠️ FINAL RESPONSE WARNING: No disabled products in final response!`);
+            }
+          }
+
+          return res.json(ratesWithUSD);
+        } else {
+          console.warn('⚠️ No rates found in MongoDB, triggering update...');
+          // If no rates exist, try to update immediately
+          try {
+            await updateRatesHandler(req, null);
+            // After update, fetch again
+            const updatedRates = await SilverRate.find({ location: 'Andhra Pradesh' })
+              .sort({ name: 1 })
+              .lean();
+            if (updatedRates && updatedRates.length > 0) {
+              const ratesWithUSD = updatedRates.map(rate => ({
                 ...rate,
                 usdInrRate: cachedBaseRate.usdInrRate || 89.25
               }));
@@ -1107,665 +1787,188 @@ try {
               });
               return res.json(ratesWithUSD);
             }
-          }
-        } catch (updateErr) {
-          console.error('❌ Update failed for stale/old rates:', updateErr.message);
-          // Don't serve old rates - return error instead
-          return res.status(503).json({
-            error: 'Rate update in progress, please retry',
-            message: 'Fetching fresh rates, please try again in a moment'
-          });
-        }
-      }
-
-      // If rates are stale (older than 3.5 seconds) OR if rates are below current market rate (₹250), trigger update.
-      // Background update interval increased to 3.5s to reduce Vercel execution time
-      if (mongoAge > 3500 || hasStaleRates || hasStaleBaseRate) {
-        // FIRE AND FORGET - Trigger update in background
-        updateRatesHandler(req, null).catch(err => {
-          // Only log errors occasionally to avoid spam
-          if (Math.random() < 0.1) {
-            console.error('❌ Background rate update failed:', err.message);
-          }
-        });
-
-        // CRITICAL: For customer requests, we want to try to serve fresh data if possible
-        // But NEVER block for long.
-        // If we have data (even if stale), we will serve it and let the background update fix it for next request.
-        // This ensures NO TIMEOUTS.
-
-        // Recalculate on-the-fly for customers using potentially stale base rate from DB
-        // This is better than nothing. The background update will fix the DB soon.
-        if (!skipUpdate && !isAdmin && mongoRates && Array.isArray(mongoRates) && mongoRates.length > 0) {
-          // Proceed to serve what we have, optionally recalculating with any known fresh base rate if we have one in memory
-          // We already have cachedBaseRate which might be fresher than MongoDB
-        }
-      }    // Warn if serving old rates (might indicate update failures)
-      if (mongoAge > 5000) {
-        console.warn(`⚠️ Serving rates that are ${Math.round(mongoAge / 1000)}s old - updates may be failing!`);
-      }
-
-      // If rates are extremely stale (more than 1 hour), trigger immediate update
-      const EXTREMELY_STALE_THRESHOLD = 3600000; // 1 hour in milliseconds
-      if (mongoAge > EXTREMELY_STALE_THRESHOLD) {
-        console.error(`🚨 CRITICAL: Rates are extremely stale (${Math.round(mongoAge / 3600000)} hours old)! Triggering immediate update...`);
-        // Trigger update immediately (non-blocking on Vercel, blocking on other platforms)
-        if (process.env.VERCEL) {
-          updateRatesHandler(req, null).catch(err => {
-            console.error('❌ Critical rate update failed:', err.message);
-          });
-        } else {
-          try {
-            await updateRatesHandler(req, null);
-            // Re-fetch rates after update
-            mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' })
-              .sort({ name: 1 })
-              .lean();
-            if (isAdmin && mongoRates) {
-              const latestRate = mongoRates.length > 0 ? mongoRates.reduce((latest, rate) => {
-                return rate.lastUpdated > latest.lastUpdated ? rate : latest;
-              }, mongoRates[0]) : null;
-              let estimatedBaseRate = cachedBaseRate.ratePerGram;
-              if (latestRate && latestRate.ratePerGram > 0) {
-                if (latestRate.purity === '92.5%') {
-                  estimatedBaseRate = latestRate.ratePerGram / 0.96;
-                } else if (latestRate.purity === '99.99%') {
-                  estimatedBaseRate = latestRate.ratePerGram / 1.005;
-                } else {
-                  estimatedBaseRate = latestRate.ratePerGram;
-                }
-              }
-              mongoRates = ensureAllProductsForAdmin(mongoRates, isAdmin, estimatedBaseRate);
-            }
           } catch (updateErr) {
-            console.error('❌ Critical update failed:', updateErr.message);
+            console.error('Update failed:', updateErr.message);
           }
-        }
-      }
-
-      // Check if we're about to serve old 99.9% rates - if so, don't serve them
-      const hasOld99_9InResponse = mongoRates.some(rate =>
-        rate.purity === '99.9%' && rate.ratePerGram < OLD_RATE_THRESHOLD
-      );
-
-      // On Vercel, avoid blocking here as well – better to serve the latest
-      // known values than to time out the client while waiting for an update.
-      if (!process.env.VERCEL && hasOld99_9InResponse) {
-        console.error(`❌ BLOCKED: Attempted to serve old 99.9% rates (below ₹100 detected). Fetching fresh rates...`);
-        try {
-          await updateRatesHandler(req, null);
-          let freshRates = await SilverRate.find({ location: 'Andhra Pradesh' })
-            .sort({ name: 1 })
-            .lean();
-
-          // Ensure all defined products exist for admins
-          if (isAdmin && freshRates) {
-            const latestRate = freshRates.length > 0 ? freshRates.reduce((latest, rate) => {
-              return rate.lastUpdated > latest.lastUpdated ? rate : latest;
-            }, freshRates[0]) : null;
-            let estimatedBaseRate = cachedBaseRate.ratePerGram;
-            if (latestRate && latestRate.ratePerGram > 0) {
-              if (latestRate.purity === '92.5%') {
-                estimatedBaseRate = latestRate.ratePerGram / 0.96;
-              } else if (latestRate.purity === '99.99%') {
-                estimatedBaseRate = latestRate.ratePerGram; // 99.99% uses base rate as-is
-              } else {
-                estimatedBaseRate = latestRate.ratePerGram;
-              }
-            }
-            freshRates = ensureAllProductsForAdmin(freshRates, isAdmin, estimatedBaseRate);
-          }
-
-          if (freshRates && freshRates.length > 0) {
-            const ratesWithAdjustments = await applyManualAdjustments(freshRates, isAdmin);
-
-            // CRITICAL: Filter out disabled products for non-admin users
-            let filteredRatesWithAdjustments = ratesWithAdjustments;
-            if (!isAdmin) {
-              filteredRatesWithAdjustments = ratesWithAdjustments.filter(rate => rate.isVisible !== false);
-              console.log(`🔒 Filtered ${ratesWithAdjustments.length} → ${filteredRatesWithAdjustments.length} products for non-admin`);
-            }
-
-            const ratesWithUSD = filteredRatesWithAdjustments.map(rate => ({
-              ...rate,
-              usdInrRate: cachedBaseRate.usdInrRate || 89.25
-            }));
-            res.set({
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-              'Pragma': 'no-cache',
-              'Expires': '0'
-            });
-            return res.json(ratesWithUSD);
-          }
-        } catch (updateErr) {
-          console.error('❌ Failed to fetch fresh rates:', updateErr.message);
-          return res.status(503).json({
-            error: 'Rate update in progress',
-            message: 'Please retry in a moment'
-          });
-        }
-      }
-
-      // Ensure latestRate and mongoAge are defined (might not be if coming from Vercel recalculation path)
-      if ((!latestRate || mongoAge === undefined) && mongoRates && mongoRates.length > 0) {
-        latestRate = mongoRates.reduce((latest, rate) => {
-          if (!rate || !rate.lastUpdated) return latest || rate;
-          const rateTime = new Date(rate.lastUpdated).getTime();
-          const latestTime = latest && latest.lastUpdated ? new Date(latest.lastUpdated).getTime() : 0;
-          return rateTime > latestTime ? rate : latest;
-        }, mongoRates[0]);
-        if (latestRate && latestRate.lastUpdated) {
-          mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
-        }
-      }
-
-      // Only log occasionally to avoid spam (every 10th request)
-      if (Math.random() < 0.1 && latestRate && mongoRates) {
-        console.log(`📦 Serving ${mongoRates.length} rates from MongoDB (${Math.round(mongoAge / 1000)}s old, latest: ${latestRate.name} = ₹${latestRate.ratePerGram}/gram)`);
-      }
-
-      // CRITICAL: If MongoDB rates are stale (below ₹240/gram), force recalculation with live rate
-      // This ensures users always see current market rates (₹290/gram) instead of old cached rates
-      // Check both hasStaleRates and hasStaleBaseRate to catch all stale cases
-      if ((hasStaleRates || hasStaleBaseRate || cachedBaseRate.ratePerGram > 200) && !skipUpdate && !isAdmin) {
-        const staleReason = hasStaleRates ? 'rates below ₹50/gram' : 'base rate below ₹50/gram';
-        const anomalyReason = cachedBaseRate.ratePerGram > 200 ? 'rate anomaly detected (>₹200/g)' : null;
-
-        if (anomalyReason) {
-          console.log(`⚠️ ${anomalyReason}, forcing recalculation with live rate...`);
-        } else {
-          console.log(`⚠️ MongoDB rates are stale (${staleReason}), forcing recalculation with live rate...`);
-        }
-        try {
-          const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
-          const liveRate = await Promise.race([
-            fetchSilverRatesFromMultipleSources(),
-            new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('Timeout after 3 seconds')), 3000)
-            )
-          ]);
-          if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0 && liveRate.ratePerGram >= 50) {
-            // Update cache with fresh rate
-            cachedBaseRate = {
-              ...cachedBaseRate,
-              ratePerGram: liveRate.ratePerGram,
-              ratePerKg: liveRate.ratePerKg,
-              lastUpdated: new Date(),
-              source: liveRate.source || 'live',
-              usdInrRate: liveRate.usdInrRate || cachedBaseRate.usdInrRate || 89.25
-            };
-            console.log(`✅ Updated cache with fresh rate: ₹${liveRate.ratePerGram.toFixed(2)}/gram (was using stale ₹${latestRate?.ratePerGram || 'N/A'}/gram)`);
-
-            // CRITICAL: Save updated rates to MongoDB so they persist for future requests
-            console.log('💾 Saving updated rates to MongoDB...');
-            await updateMongoDBRates(liveRate.ratePerGram, liveRate.source, liveRate.gold999Rate);
-            console.log('✅ Updated rates saved to MongoDB');
-
-            // Recalculate rates on-the-fly with fresh base rate
-            let currentBaseRate = liveRate.ratePerGram;
-            const rateNames = mongoRates.map(r => r.originalName || r.name).filter(Boolean);
-            const adjustmentsMap = await fetchManualAdjustments(rateNames);
-
-            const recalculatedRates = mongoRates.map((rate) => {
-              try {
-                if (!rate || typeof rate !== 'object') return null;
-                const rateName = (rate.originalName || rate.name);
-                if (!rateName) return null;
-                const manualAdjustment = adjustmentsMap[rateName] || (rate.manualAdjustment || 0) || 0;
-
-                let ratePerGram = currentBaseRate;
-                if (rate.purity === '92.5%') {
-                  ratePerGram = currentBaseRate * 0.96;
-                } else if (rate.purity === '99.99%') {
-                  ratePerGram = currentBaseRate * 1.005;
-                }
-                ratePerGram = ratePerGram + manualAdjustment;
-                ratePerGram = Math.max(0, ratePerGram);
-
-                let weightInGrams = (rate.weight && rate.weight.value) ? rate.weight.value : 1;
-                if (rate.weight && rate.weight.unit === 'kg') {
-                  weightInGrams = rate.weight.value * 1000;
-                }
-                const totalRate = ratePerGram * weightInGrams;
-
-                return {
-                  ...rate,
-                  ratePerGram: ratePerGram,
-                  rate: totalRate,
-                  originalRatePerGram: ratePerGram - manualAdjustment,
-                  originalRate: (ratePerGram - manualAdjustment) * weightInGrams,
-                  manualAdjustment: manualAdjustment,
-                  lastUpdated: new Date()
-                };
-              } catch (rateError) {
-                return null;
-              }
-            }).filter(rate => rate !== null);
-
-            const visibleRates = recalculatedRates.filter(rate => rate.isVisible !== false);
-            const finalRates = visibleRates.map(rate => ({
-              ...rate,
-              name: rate.displayName || rate.name,
-              originalName: rate.originalName || rate.name
-            }));
-            const ratesWithUSD = finalRates.map(rate => ({
-              ...rate,
-              usdInrRate: cachedBaseRate.usdInrRate || 89.25
-            }));
-
-            console.log(`✅ Recalculated ${finalRates.length} rates with fresh live rate: ₹${currentBaseRate.toFixed(2)}/gram`);
-            res.set({
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-              'Pragma': 'no-cache',
-              'Expires': '0'
-            });
-            return res.json(ratesWithUSD);
-          }
-        } catch (staleRecalcError) {
-          console.warn('⚠️ Failed to recalculate stale rates, continuing with MongoDB rates:', staleRecalcError.message);
-        }
-      }
-
-      const showAsItIs = false; // Feature disabled per user request
-      let finalRates;
-      if (showAsItIs) {
-        // If "Show As It Is" is enabled, return original rates without adjustments
-        // But still need to filter by visibility for non-admin users
-        // Fetch fresh base rate from source
-        let baseRatePerGram = cachedBaseRate.ratePerGram;
-        try {
-          const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
-          const liveRate = await Promise.race([
-            fetchSilverRatesFromMultipleSources(),
-            new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('Timeout after 5 seconds')), 5000)
-            )
-          ]);
-          if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0) {
-            baseRatePerGram = liveRate.ratePerGram;
-            console.log(`✅ Fetched fresh base rate for "Show As It Is": ₹${baseRatePerGram.toFixed(2)}/gram`);
-          }
-        } catch (fetchError) {
-          console.warn('Could not fetch fresh base rate, using cached:', fetchError.message);
-          // Use cached base rate as fallback
-        }
-
-        // Get original rates from base rate, but merge with MongoDB data for visibility info
-        // CRITICAL: For admin, start with ALL MongoDB products (including disabled), then merge calculated rates
-        const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
-        const calculatedRatesMap = new Map();
-        calculatedOriginalRates.forEach(calcRate => {
-          calculatedRatesMap.set(calcRate.name, calcRate);
-        });
-
-        let mergedRates = [];
-
-        // For admin: Start with ALL MongoDB products (including disabled ones)
-        if (isAdmin) {
-          console.log(`👁️ "Show As It Is" + Admin (non-skipUpdate path): Starting with ${mongoRates.length} MongoDB products`);
-
-          mongoRates.forEach(mongoRate => {
-            const calculatedRate = calculatedRatesMap.get(mongoRate.name);
-
-            if (calculatedRate) {
-              // Product exists in both - use calculated rate but preserve MongoDB visibility and displayName
-              mergedRates.push({
-                ...calculatedRate,
-                isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
-                displayName: mongoRate.displayName || null,
-                originalName: mongoRate.name,
-                // Preserve all MongoDB fields
-                _id: mongoRate._id,
-                weight: mongoRate.weight,
-                purity: mongoRate.purity,
-                type: mongoRate.type,
-                location: mongoRate.location
-              });
-
-              if (mongoRate.isVisible === false) {
-                console.log(`🚫 Including disabled product from MongoDB: ${mongoRate.name} (merged with calculated rate)`);
-              }
-            } else {
-              // Product exists in MongoDB but not in calculated rates - calculate rate and include it
-              let weightInGrams = mongoRate.weight.value;
-              if (mongoRate.weight.unit === 'kg') {
-                weightInGrams = mongoRate.weight.value * 1000;
-              }
-
-              // Calculate original rate for this product based on base rate and purity
-              let originalRatePerGram = baseRatePerGram;
-              if (mongoRate.purity === '92.5%') {
-                originalRatePerGram = baseRatePerGram * 0.96;
-              } else if (mongoRate.purity === '99.99%') {
-                originalRatePerGram = baseRatePerGram; // 99.99% uses base rate as-is
-              }
-              // 99.9% uses base rate as-is
-
-              const originalTotalRate = Math.round(originalRatePerGram * weightInGrams * 100) / 100;
-
-              mergedRates.push({
-                ...mongoRate,
-                originalName: mongoRate.name,
-                name: mongoRate.displayName || mongoRate.name,
-                isVisible: mongoRate.isVisible !== undefined ? mongoRate.isVisible : true,
-                ratePerGram: originalRatePerGram,
-                rate: originalTotalRate,
-                weight: mongoRate.weight || { value: 1, unit: 'kg' }
-              });
-
-              if (mongoRate.isVisible === false) {
-                console.log(`🚫 Including disabled product from MongoDB (not in calculated): ${mongoRate.name}`);
-              }
-            }
-          });
-        } else {
-          // For non-admin: Start with calculated rates and merge MongoDB visibility
-          const mongoRatesMap = new Map();
-          mongoRates.forEach(rate => {
-            mongoRatesMap.set(rate.name, rate);
-          });
-
-          mergedRates = calculatedOriginalRates.map(calcRate => {
-            const mongoRate = mongoRatesMap.get(calcRate.name);
-            return {
-              ...calcRate,
-              isVisible: mongoRate?.isVisible !== undefined ? mongoRate.isVisible : true,
-              displayName: mongoRate?.displayName || null,
-              originalName: calcRate.name
-            };
-          });
-        }
-
-        // IMPORTANT: Only filter for non-admin users
-        // Admin users (including those with admin=true parameter) should see ALL products
-        if (!isAdmin) {
-          mergedRates = mergedRates.filter(rate => rate.isVisible !== false);
-          console.log(`🔒 Non-admin: Filtered to ${mergedRates.length} visible products`);
-        } else {
-          const disabledCount = mergedRates.filter(r => r.isVisible === false).length;
-          console.log(`👁️ "Show As It Is" + Admin: Showing ALL ${mergedRates.length} products (${disabledCount} disabled)`);
-        }
-
-        // Apply displayName if set
-        // CRITICAL: Preserve isVisible when mapping
-        finalRates = mergedRates.map(rate => {
-          const result = {
-            ...rate,
-            name: rate.displayName || rate.name,
-            // Explicitly preserve isVisible
-            isVisible: rate.isVisible !== undefined ? rate.isVisible : true
-          };
-          // Log disabled products being included
-          if (isAdmin && result.isVisible === false) {
-            console.log(`🚫 Final mapping (non-skipUpdate): Including disabled product: ${result.name || result.originalName} (isVisible: ${result.isVisible})`);
-          }
-          return result;
-        });
-
-        console.log(`✅ "Show As It Is" enabled - returning original rates (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
-      } else {
-        // Apply manual adjustments to rates from MongoDB
-        // This ensures admin adjustments are reflected immediately
-        // CRITICAL: Pass skipUpdate to ensure disabled products are included
-        if (!mongoRates || !Array.isArray(mongoRates) || mongoRates.length === 0) {
-          console.error('❌ mongoRates is invalid before applyManualAdjustments:', { mongoRates, type: typeof mongoRates, isArray: Array.isArray(mongoRates) });
-          throw new Error('Failed to process rates - mongoRates is invalid');
-        }
-        finalRates = await applyManualAdjustments(mongoRates, isAdmin, skipUpdate);
-      }
-
-      // Validate finalRates before proceeding
-      if (!finalRates || !Array.isArray(finalRates) || finalRates.length === 0) {
-        console.error('❌ finalRates is invalid:', { finalRates, type: typeof finalRates, isArray: Array.isArray(finalRates) });
-        throw new Error('Failed to process rates - finalRates is invalid');
-      }
-
-      // CRITICAL: Filter out disabled products for non-admin users BEFORE adding USD rate
-      // This ensures customers NEVER see disabled products, even if filtering was missed earlier
-      let filteredFinalRates = finalRates;
-      if (!isAdmin && !skipUpdate) {
-        const beforeFilter = filteredFinalRates.length;
-        filteredFinalRates = finalRates.filter(rate => {
-          const isVisible = rate.isVisible !== undefined ? rate.isVisible : true;
-          return isVisible !== false;
-        });
-        const afterFilter = filteredFinalRates.length;
-        if (beforeFilter !== afterFilter) {
-          console.log(`🔒 FINAL FILTER: Non-admin - Filtered ${beforeFilter} → ${afterFilter} products (removed ${beforeFilter - afterFilter} disabled)`);
-        }
-      }
-
-      // Add USD rate to all rates if available
-      // CRITICAL: Preserve isVisible field when mapping
-      const ratesWithUSD = filteredFinalRates.map(rate => ({
-        ...rate,
-        usdInrRate: cachedBaseRate.usdInrRate || 89.25,
-        // Explicitly preserve isVisible to ensure it's not lost
-        isVisible: rate.isVisible !== undefined ? rate.isVisible : true
-      }));
-
-      // Log final response for admin
-      if (isAdmin || skipUpdate) {
-        const disabledInResponse = ratesWithUSD.filter(r => r.isVisible === false).length;
-        console.log(`📤 skipUpdate response: Returning ${ratesWithUSD.length} rates to admin (${disabledInResponse} disabled)`);
-        const responseProductNames = ratesWithUSD.map(r => `${r.name || r.originalName || 'unnamed'}${r.isVisible === false ? ' [DISABLED]' : ''}`);
-        console.log(`📋 skipUpdate response product names:`, responseProductNames.join(', '));
-
-        // CRITICAL: Verify disabled products are in response
-        if (disabledInResponse === 0) {
-          console.warn(`⚠️ WARNING: No disabled products in response! Check if they were filtered out.`);
+          console.warn('⚠️ Falling back to cache');
         }
       } else {
-        // Log for non-admin to verify no disabled products
-        const disabledInResponse = ratesWithUSD.filter(r => r.isVisible === false).length;
-        if (disabledInResponse > 0) {
-          console.error(`❌ ERROR: Non-admin response contains ${disabledInResponse} disabled products! This should never happen.`);
-        } else {
-          console.log(`🔒 FINAL RESPONSE: Non-admin - Returning ${ratesWithUSD.length} visible products only (no disabled products)`);
-        }
+        console.warn('⚠️ MongoDB not connected, falling back to cache');
       }
 
-      // Set headers to prevent caching
-      res.set({
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0'
-      });
-
-      // Final verification before sending response
-      if (isAdmin || skipUpdate) {
-        const finalDisabledCount = ratesWithUSD.filter(r => r.isVisible === false).length;
-        console.log(`📤 FINAL RESPONSE: Sending ${ratesWithUSD.length} rates (${finalDisabledCount} disabled)`);
-        if (finalDisabledCount > 0) {
-          const disabledInFinal = ratesWithUSD.filter(r => r.isVisible === false);
-          console.log(`🚫 FINAL RESPONSE - Disabled products:`, disabledInFinal.map(r => `${r.name || r.originalName} (isVisible: ${r.isVisible})`).join(', '));
-        } else {
-          console.warn(`⚠️ FINAL RESPONSE WARNING: No disabled products in final response!`);
-        }
-      }
-
-      return res.json(ratesWithUSD);
-    } else {
-      console.warn('⚠️ No rates found in MongoDB, triggering update...');
-      // If no rates exist, try to update immediately
-      try {
-        await updateRatesHandler(req, null);
-        // After update, fetch again
-        const updatedRates = await SilverRate.find({ location: 'Andhra Pradesh' })
-          .sort({ name: 1 })
-          .lean();
-        if (updatedRates && updatedRates.length > 0) {
-          const ratesWithUSD = updatedRates.map(rate => ({
-            ...rate,
-            usdInrRate: cachedBaseRate.usdInrRate || 89.25
-          }));
-          res.set({
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
-          });
-          return res.json(ratesWithUSD);
-        }
-      } catch (updateErr) {
-        console.error('Update failed:', updateErr.message);
-      }
+    } catch (mongoErr) {
+      console.error('❌ MongoDB read failed:', mongoErr.message);
       console.warn('⚠️ Falling back to cache');
     }
-  } else {
-    console.warn('⚠️ MongoDB not connected, falling back to cache');
-  }
 
-} catch (mongoErr) {
-  console.error('❌ MongoDB read failed:', mongoErr.message);
-  console.warn('⚠️ Falling back to cache');
-}
+    // Fallback: Calculate rates from cache
+    const baseRatePerGram = cachedBaseRate.ratePerGram;
+    const currentTime = new Date();
 
-// Fallback: Calculate rates from cache
-try {
-  const baseRatePerGram = cachedBaseRate.ratePerGram;
-  const currentTime = new Date();
+    const rateDefinitions = [
+      { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
+      { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
+      { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
+      { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
+      { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
+    ];
 
-  const rateDefinitions = [
-    { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
-    { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
-    { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
-    { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
-    { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
-    { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
-    { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
-    { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
-    { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
-    { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
-    { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
-    { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
-  ];
-
-  // showAsItIs is already set to false at line 1369, so we skip the Settings check in fallback
-  // This also avoids the await syntax error since we're not in an async context here
-
-  let allRates;
-  if (showAsItIs) {
-    // If "Show As It Is" is enabled, return original rates without adjustments
-    // But still filter by visibility for non-admin users
-    // CRITICAL: getOriginalRates is async, so we need to handle this differently
-    // Since showAsItIs is now always false, this branch won't execute
-    allRates = [];
-  } else {
-    // Fetch manual adjustments from MongoDB (synchronously via callback pattern to avoid await)
-    let adjustmentsMap = {};
+    // Check if "Show As It Is" is enabled (variable already declared at top of function)
+    // Re-fetch setting in case it changed, but don't redeclare the variable
     try {
-      const mongoose = require('mongoose');
-      if (mongoose.connection.readyState === 1) {
-        // Use synchronous approach - fetch from cache or use empty map
-        // We can't use await here, so we'll just use empty adjustments in fallback
-        console.warn('⚠️ Fallback mode: Using empty adjustments (cannot fetch from DB without await)');
+      if (Settings && typeof Settings.getSetting === 'function') {
+        const showAsItIsSetting = await Settings.getSetting('showAsItIs');
+        if (showAsItIsSetting && showAsItIsSetting.value !== undefined) {
+          showAsItIs = showAsItIsSetting.value;
+        }
       }
-    } catch (adjErr) {
-      console.warn('Could not check adjustments in fallback:', adjErr.message);
+    } catch (settingsError) {
+      console.warn('Could not fetch showAsItIs setting in fallback, using previous value:', settingsError.message);
+      // Keep existing showAsItIs value from top of function
     }
 
-    allRates = rateDefinitions.map(rateDef => {
-      // Determine base rate based on product type
-      let baseRate = baseRatePerGram;
-      if (rateDef.type === 'gold') {
-        // Use gold rate from cache if available, otherwise default to 0
-        baseRate = cachedBaseRate.gold999Rate || 0;
+    let allRates;
+    if (showAsItIs) {
+      // If "Show As It Is" is enabled, return original rates without adjustments
+      // But still filter by visibility for non-admin users
+      const calculatedOriginalRates = await getOriginalRates(baseRatePerGram);
+
+      // In fallback mode, we don't have MongoDB rates, so we can't filter by visibility
+      // Default all to visible, but this is fallback only
+      // CRITICAL: Try to get visibility from MongoDB even in fallback mode
+      let visibilityMap = {};
+      try {
+        const mongoose = require('mongoose');
+        if (mongoose.connection.readyState === 1) {
+          const mongoRatesForVisibility = await SilverRate.find({ location: 'Andhra Pradesh' })
+            .select('name isVisible')
+            .lean();
+          mongoRatesForVisibility.forEach(rate => {
+            visibilityMap[rate.name] = rate.isVisible !== undefined ? rate.isVisible : true;
+          });
+        }
+      } catch (visError) {
+        console.warn('Could not fetch visibility in fallback:', visError.message);
       }
 
-      let ratePerGram = baseRate;
-      if (rateDef.purity === '92.5%') {
-        ratePerGram = baseRate * 0.96;
-      }
-      // Both 99.9% and 99.99% use base rate as-is (no multiplier)
+      allRates = calculatedOriginalRates.map(rate => ({
+        ...rate,
+        isVisible: visibilityMap[rate.name] !== undefined ? visibilityMap[rate.name] : true, // Use MongoDB visibility if available
+        displayName: null,
+        originalName: rate.name
+      }));
 
-      const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
-      ratePerGram = ratePerGram + manualAdjustment;
-      ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
-
-      let weightInGrams = rateDef.weight.value;
-      if (rateDef.weight.unit === 'kg') {
-        weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
+      // For non-admin users, filter by visibility even in fallback mode
+      if (!isAdmin) {
+        allRates = allRates.filter(rate => rate.isVisible !== false);
+        console.log(`🔒 Fallback mode: Filtered to ${allRates.length} visible products for non-admin`);
       }
 
-      // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
-      // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
-      const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
-      const id = Buffer.from(rateDef.name).toString('base64').substring(0, 24);
+      console.log(`✅ "Show As It Is" enabled - returning original rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
+    } else {
+      // Fetch manual adjustments from MongoDB
+      const adjustmentsMap = await fetchManualAdjustments(rateDefinitions.map(r => r.name));
 
-      // Store original rate before adjustment
-      const originalRatePerGram = ratePerGram - manualAdjustment;
-      let originalWeightInGrams = rateDef.weight.value;
-      if (rateDef.weight.unit === 'kg') {
-        originalWeightInGrams = rateDef.weight.value * 1000;
-      }
-      const originalTotalRate = originalRatePerGram * originalWeightInGrams; // No rounding - keep exact value
+      allRates = rateDefinitions.map(rateDef => {
+        let ratePerGram = baseRatePerGram;
+        if (rateDef.purity === '92.5%') {
+          ratePerGram = baseRatePerGram * 0.96;
+        }
+        // Both 99.9% and 99.99% use base rate as-is (no multiplier)
 
-      return {
-        _id: id,
-        name: rateDef.name,
-        type: rateDef.type,
-        weight: rateDef.weight,
-        purity: rateDef.purity,
-        ratePerGram: ratePerGram,
-        rate: totalRate,
-        originalRatePerGram: originalRatePerGram,
-        originalRate: originalTotalRate,
-        lastUpdated: currentTime,
-        usdInrRate: cachedBaseRate.usdInrRate,
-        source: cachedBaseRate.source,
-        location: 'Andhra Pradesh',
-        unit: 'INR',
-        manualAdjustment: manualAdjustment
-      };
+        const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
+        ratePerGram = ratePerGram + manualAdjustment;
+        ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
+
+        let weightInGrams = rateDef.weight.value;
+        if (rateDef.weight.unit === 'kg') {
+          weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
+        }
+
+        // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
+        // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
+        const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
+        const id = Buffer.from(rateDef.name).toString('base64').substring(0, 24);
+
+        // Store original rate before adjustment
+        const originalRatePerGram = ratePerGram - manualAdjustment;
+        let originalWeightInGrams = rateDef.weight.value;
+        if (rateDef.weight.unit === 'kg') {
+          originalWeightInGrams = rateDef.weight.value * 1000;
+        }
+        const originalTotalRate = originalRatePerGram * originalWeightInGrams; // No rounding - keep exact value
+
+        return {
+          _id: id,
+          name: rateDef.name,
+          type: rateDef.type,
+          weight: rateDef.weight,
+          purity: rateDef.purity,
+          ratePerGram: ratePerGram,
+          rate: totalRate,
+          originalRatePerGram: originalRatePerGram,
+          originalRate: originalTotalRate,
+          lastUpdated: currentTime,
+          usdInrRate: cachedBaseRate.usdInrRate,
+          source: cachedBaseRate.source,
+          location: 'Andhra Pradesh',
+          unit: 'INR',
+          manualAdjustment: manualAdjustment
+        };
+      });
+    }
+
+    // CRITICAL: Filter out disabled products for non-admin users
+    let filteredAllRates = allRates;
+    if (!isAdmin) {
+      filteredAllRates = allRates.filter(rate => rate.isVisible !== false);
+      console.log(`🔒 Cache fallback: Filtered ${allRates.length} → ${filteredAllRates.length} products for non-admin`);
+    }
+
+    console.log(`📦 Serving ${filteredAllRates.length} rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
+
+    // Set headers to prevent caching
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
     });
+
+    return res.json(filteredAllRates);
+
+  } catch (error) {
+    const errorMsg = error?.message || 'Unknown error';
+    console.error('❌ Get rates error:', errorMsg);
+    if (error.stack) {
+      console.error('Error stack:', error.stack.substring(0, 500));
+    }
+
+    // Ensure we haven't already sent a response
+    if (res.headersSent) {
+      console.error('❌ Response already sent, cannot send error response');
+      return;
+    }
+
+    // Return a more detailed error in development, generic in production
+    // Ensure error message is safe for JSON (no special characters that break parsing)
+    const safeErrorMsg = String(errorMsg).replace(/[^\x20-\x7E]/g, ''); // Remove non-printable characters
+    const errorDetails = process.env.NODE_ENV === 'development'
+      ? { error: 'Failed to fetch rates', message: safeErrorMsg, stack: (error.stack?.substring(0, 500) || '').replace(/[^\x20-\x7E]/g, '') }
+      : { error: 'Failed to fetch rates', message: 'An error occurred while fetching rates. Please try again.' };
+
+    try {
+      return res.status(500).json(errorDetails);
+    } catch (jsonError) {
+      // If JSON.stringify fails, send a simple text response
+      console.error('❌ Failed to send JSON error response:', jsonError.message);
+      return res.status(500).send('Internal Server Error');
+    }
   }
-
-  // CRITICAL: Filter out disabled products for non-admin users
-  let filteredAllRates = allRates;
-  if (!isAdmin) {
-    filteredAllRates = allRates.filter(rate => rate.isVisible !== false);
-    console.log(`🔒 Cache fallback: Filtered ${allRates.length} → ${filteredAllRates.length} products for non-admin`);
-  }
-
-  console.log(`📦 Serving ${filteredAllRates.length} rates from cache (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
-
-  // Set headers to prevent caching
-  res.set({
-    'Cache-Control': 'no-cache, no-store, must-revalidate',
-    'Pragma': 'no-cache',
-    'Expires': '0'
-  });
-
-  return res.json(filteredAllRates);
-
-} catch (error) {
-  const errorMsg = error?.message || 'Unknown error';
-  console.error('❌ Get rates error:', errorMsg);
-  if (error.stack) {
-    console.error('Error stack:', error.stack.substring(0, 500));
-  }
-
-  // Ensure we haven't already sent a response
-  if (res.headersSent) {
-    console.error('❌ Response already sent, cannot send error response');
-    return;
-  }
-
-  // Return a more detailed error in development, generic in production
-  // Ensure error message is safe for JSON (no special characters that break parsing)
-  const safeErrorMsg = String(errorMsg).replace(/[^\x20-\x7E]/g, ''); // Remove non-printable characters
-  const errorDetails = process.env.NODE_ENV === 'development'
-    ? { error: 'Failed to fetch rates', message: safeErrorMsg, stack: (error.stack?.substring(0, 500) || '').replace(/[^\x20-\x7E]/g, '') }
-    : { error: 'Failed to fetch rates', message: 'An error occurred while fetching rates. Please try again.' };
-
-  try {
-    return res.status(500).json(errorDetails);
-  } catch (jsonError) {
-    // If JSON.stringify fails, send a simple text response
-    console.error('❌ Failed to send JSON error response:', jsonError.message);
-    return res.status(500).send('Internal Server Error');
-  }
-}
 });
 
 // Update silver rate (admin only) - Now saves to MongoDB
