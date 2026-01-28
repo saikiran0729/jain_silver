@@ -671,13 +671,20 @@ router.get('/', async (req, res) => {
       try {
         // Ensure Settings model is available
         if (Settings && typeof Settings.getSetting === 'function') {
-          const showAsItIsSetting = await Settings.getSetting('showAsItIs');
+          // Wrap in timeout to prevent hanging if DB is slow
+          const settingsPromise = Settings.getSetting('showAsItIs');
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Settings fetch timeout')), 2000)
+          );
+
+          const showAsItIsSetting = await Promise.race([settingsPromise, timeoutPromise]);
+
           if (showAsItIsSetting && showAsItIsSetting.value !== undefined) {
             showAsItIs = showAsItIsSetting.value;
           }
         }
       } catch (settingsError) {
-        console.warn('Could not fetch showAsItIs setting, defaulting to false:', settingsError.message);
+        console.warn('Could not fetch showAsItIs setting (using default false):', settingsError.message);
         // Continue with default false value
       }
     }

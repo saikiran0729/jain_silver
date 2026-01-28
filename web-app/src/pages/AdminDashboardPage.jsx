@@ -905,9 +905,21 @@ function AdminDashboardPage() {
             <CardContent>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h6" sx={{ fontWeight: 700 }}>Current Silver Rates</Typography>
-                <Button size="small" onClick={() => fetchRates(false)} disabled={loadingRates}>
-                  Refresh
-                </Button>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Button
+                    size="small"
+                    variant={globalShowAsItIs ? "contained" : "outlined"}
+                    color={globalShowAsItIs ? "warning" : "primary"}
+                    onClick={toggleShowAsItIs}
+                    disabled={loadingAction}
+                    sx={{ mr: 1 }}
+                  >
+                    {globalShowAsItIs ? 'Show Adjusted' : 'Show As It Is'}
+                  </Button>
+                  <Button size="small" onClick={() => fetchRates(false)} disabled={loadingRates}>
+                    Refresh
+                  </Button>
+                </Box>
               </Box>
               {loadingRates && rates.length === 0 ? (
                 <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
