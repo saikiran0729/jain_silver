@@ -1118,15 +1118,9 @@ try {
         }
       }
 
-      // If rates are stale (older than 1 second) OR if rates are below current market rate (₹250), trigger update.
-      // Since mobile app polls every second, this ensures rates update every second.
-      // On Vercel, always trigger non-blocking update (even with skipUpdate) to keep rates fresh
-      // This ensures adjustedPrice = normalPrice (current market rate) + manualAdjustment updates every second
-      // ALWAYS trigger update if rates are stale (even slightly stale) OR if rates are old (below ₹240) to ensure fresh data
-      // If rates are stale (older than 1 second) OR if rates are below current market rate (₹250), trigger update.
-      // Since mobile app polls every second, this ensures rates update every second.
-      // ALWAYS trigger non-blocking update to prevent timeouts
-      if (mongoAge > STALE_THRESHOLD || hasStaleRates || hasStaleBaseRate) {
+      // If rates are stale (older than 3.5 seconds) OR if rates are below current market rate (₹250), trigger update.
+      // Background update interval increased to 3.5s to reduce Vercel execution time
+      if (mongoAge > 3500 || hasStaleRates || hasStaleBaseRate) {
         // FIRE AND FORGET - Trigger update in background
         updateRatesHandler(req, null).catch(err => {
           // Only log errors occasionally to avoid spam
@@ -1372,6 +1366,7 @@ try {
         }
       }
 
+      const showAsItIs = false; // Feature disabled per user request
       let finalRates;
       if (showAsItIs) {
         // If "Show As It Is" is enabled, return original rates without adjustments

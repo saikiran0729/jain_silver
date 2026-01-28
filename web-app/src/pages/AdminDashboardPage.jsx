@@ -52,17 +52,17 @@ function AdminDashboardPage() {
 
     // Initial fetch for current tab will be handled by the next useEffect
 
-    // Set up interval to fetch base rate every 2 seconds for live Normal Price updates
+    // Set up interval to fetch base rate every 5 seconds for live Normal Price updates
     // Slightly staggered from main rates fetch to avoid concurrent spikes
     baseRateIntervalRef.current = setInterval(() => {
       fetchBaseRate();
-    }, 2000);
+    }, 5000);
 
-    // Set up interval to fetch rates every 2 seconds for live Adjusted Price updates
+    // Set up interval to fetch rates every 5 seconds for live Adjusted Price updates
     // Use skipUpdate=true for fast polling (backend triggers updates in background)
     ratesIntervalRef.current = setInterval(() => {
       fetchRates(true, true);
-    }, 2000);
+    }, 5000);
 
     // Cleanup on unmount
     return () => {

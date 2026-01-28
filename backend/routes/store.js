@@ -4,9 +4,19 @@ const StoreInfo = require('../models/Store');
 const auth = require('../middleware/auth');
 const adminAuth = require('../middleware/adminAuth');
 
+// Memory cache for store info to speed up responses and reduce DB load
+let storeCache = null;
+let lastCacheUpdate = 0;
+const CACHE_TTL = 60000; // 1 minute
+
 // Root route - get store information from MongoDB
 router.get('/', async (req, res) => {
   try {
+    // Check if we have a valid cache
+    if (storeCache && (Date.now() - lastCacheUpdate < CACHE_TTL)) {
+      return res.json(storeCache);
+    }
+
     // Default store info
     const defaultStoreInfo = {
       welcomeMessage: 'Welcome to Jain Silver Plaza - Your trusted partner for premium silver products. We offer the best quality silver coins, bars, and jewelry with transparent pricing and excellent customer service.',
@@ -68,6 +78,11 @@ router.get('/', async (req, res) => {
       }
 
       const mergedInfo = { ...defaultStoreInfo, ...(storeInfo || {}) };
+
+      // Update cache
+      storeCache = mergedInfo;
+      lastCacheUpdate = Date.now();
+
       res.json(mergedInfo);
     } catch (dbError) {
       console.error('Error fetching store info from database:', dbError.message);
@@ -125,6 +140,10 @@ router.get('/', async (req, res) => {
 // Get store information (public endpoint) - alias for root
 router.get('/info', async (req, res) => {
   try {
+    // Check cache first
+    if (storeCache && (Date.now() - lastCacheUpdate < CACHE_TTL)) {
+      return res.json(storeCache);
+    }
     // Default store info to return if MongoDB fails
     const defaultStoreInfo = {
       welcomeMessage: 'Welcome to Jain Silver Plaza - Your trusted partner for premium silver products. We offer the best quality silver coins, bars, and jewelry with transparent pricing and excellent customer service.',
@@ -202,6 +221,11 @@ router.get('/info', async (req, res) => {
       };
 
       console.log('📖 Returning store info:', JSON.stringify(mergedInfo, null, 2));
+
+      // Update cache
+      storeCache = mergedInfo;
+      lastCacheUpdate = Date.now();
+
       res.json(mergedInfo);
     } catch (dbError) {
       console.error('Error fetching store info from database:', dbError.message);
@@ -397,6 +421,10 @@ router.put('/info', auth, adminAuth, async (req, res) => {
       message: 'Store information updated successfully',
       storeInfo: savedInfo
     });
+
+    // Invalidate cache on update
+    storeCache = null;
+    lastCacheUpdate = 0;
   } catch (error) {
     console.error('❌ Update store info error:', error);
     console.error('Error name:', error.name);
