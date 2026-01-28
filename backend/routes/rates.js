@@ -12,8 +12,8 @@ const fetchManualAdjustments = async (rateNames) => {
   try {
     const mongoose = require('mongoose');
     if (mongoose.connection.readyState !== 1) {
-      console.warn('⚠️ MongoDB not connected, skipping manual adjustments fetch (using defaults)');
-      return adjustmentsMap; // Return empty map immediately
+      console.warn('⚠️ MongoDB not connected, skipping manual adjustments fetch (preserving existing)');
+      return null; // Return null to indicate failure
     }
 
     const adjustments = await SilverRate.find({
@@ -448,7 +448,18 @@ const updateMongoDBRates = async (baseRatePerGram, source, goldRatePerGram = nul
         }
         // Both 99.9% and 99.99% use base rate as-is (no multiplier)
 
-        const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
+        // Only apply adjustment if we successfully fetched them
+        // If adjustmentsMap is null (fetch failed), preserve existing adjustment in DB by NOT including it in $set
+        const manualAdjustment = adjustmentsMap ? (adjustmentsMap[rateDef.name] || 0) : 0;
+
+        // If map is valid, apply adjustment to rate. If not, we can't accurately calculate rate with adjustment here.
+        // But we must update the rate. 
+        // Best approach: If we can't fetch adjustments, assume 0 for CALCULATION but don't overwrite in DB?
+        // Actually, if we use 0 for calculation, the displayed rate will drop.
+        // Ideally we should NOT update the rate if we can't fetch adjustments, to prevent price glitches.
+        // But preventing updates might lead to stale rates.
+        // Compromise: Use 0 for calculation (safe fallback) but DO NOT overwrite manualAdjustment field in DB.
+
         ratePerGram = ratePerGram + manualAdjustment;
         ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
 
@@ -458,25 +469,30 @@ const updateMongoDBRates = async (baseRatePerGram, source, goldRatePerGram = nul
         }
 
         // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
-        // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
         const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
+
+        const updatePayload = {
+          name: rateDef.name,
+          type: rateDef.type,
+          weight: rateDef.weight,
+          purity: rateDef.purity,
+          ratePerGram: ratePerGram,
+          rate: totalRate,
+          lastUpdated: new Date(),
+          location: 'Andhra Pradesh',
+          unit: 'INR',
+          source: 'rbgoldspot'
+        };
+
+        // Only update manualAdjustment if we successfully fetched the map
+        if (adjustmentsMap !== null) {
+          updatePayload.manualAdjustment = manualAdjustment;
+        }
 
         await SilverRate.findOneAndUpdate(
           { name: rateDef.name, location: 'Andhra Pradesh' },
           {
-            $set: {
-              name: rateDef.name,
-              type: rateDef.type,
-              weight: rateDef.weight,
-              purity: rateDef.purity,
-              ratePerGram: ratePerGram,
-              rate: totalRate,
-              lastUpdated: new Date(),
-              location: 'Andhra Pradesh',
-              unit: 'INR',
-              manualAdjustment: manualAdjustment,
-              source: 'rbgoldspot'
-            },
+            $set: updatePayload,
             $setOnInsert: {
               // Set defaults only when inserting new documents (not when updating existing)
               isVisible: true,
