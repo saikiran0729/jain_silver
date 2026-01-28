@@ -47,34 +47,45 @@ function AdminDashboardPage() {
   const ratesIntervalRef = React.useRef(null);
 
   useEffect(() => {
-    // Initial fetch of global settings
-    fetchShowAsItIsSetting();
+    // Fetch immediately
+    fetchBaseRate();
+    fetchRates(true); // Use skipUpdate=true for fast initial load (backend will update in background)
 
-    // Initial fetch for current tab will be handled by the next useEffect
-
-    // Set up interval to fetch base rate every 5 seconds for live Normal Price updates
-    // Slightly staggered from main rates fetch to avoid concurrent spikes
+    // Set up interval to fetch base rate every second for live Normal Price updates
     baseRateIntervalRef.current = setInterval(() => {
       fetchBaseRate();
-    }, 5000);
+    }, 1000); // Updated to 1 second per user request
 
-    // Set up interval to fetch rates every 5 seconds for live Adjusted Price updates
-    // Use skipUpdate=true for fast polling (backend triggers updates in background)
+    // Set up interval to fetch rates every second for live Adjusted Price updates
+    // Use skipUpdate=true for fast polling (backend triggers updates in background on Vercel)
+    // Optimized to update smoothly without causing UI flickering
     ratesIntervalRef.current = setInterval(() => {
+      // Use skipUpdate=true for fast polling (backend triggers updates in background on Vercel)
+      // Pass isPolling=true to suppress error alerts and prevent loading state changes
       fetchRates(true, true);
-    }, 5000);
+    }, 1000); // Updated to 1 second per user request
 
     // Cleanup on unmount
     return () => {
-      if (baseRateIntervalRef.current) clearInterval(baseRateIntervalRef.current);
-      if (ratesIntervalRef.current) clearInterval(ratesIntervalRef.current);
+      if (baseRateIntervalRef.current) {
+        clearInterval(baseRateIntervalRef.current);
+        baseRateIntervalRef.current = null;
+      }
+      if (ratesIntervalRef.current) {
+        clearInterval(ratesIntervalRef.current);
+        ratesIntervalRef.current = null;
+      }
     };
   }, []);
   const [editProductDialogOpen, setEditProductDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [editProductName, setEditProductName] = useState('');
 
-
+  useEffect(() => {
+    // Initial fetch of global settings
+    fetchShowAsItIsSetting();
+    fetchBaseRate();
+  }, []);
 
   useEffect(() => {
     // Fetch tab-specific data
@@ -118,17 +129,32 @@ function AdminDashboardPage() {
 
   const fetchBaseRate = async () => {
     try {
+      // Use dedicated endpoint to get just the base rate (faster)
+      // Add cache busting timestamp
+      // Increase timeout to prevent frequent timeouts
       const response = await api.get('/rates/base-rate', {
         params: { _t: Date.now() },
-        timeout: 15000 // High timeout for resilience
+        timeout: 10000 // Increased from 5000ms to 10000ms to reduce timeout errors
       });
       if (response.data && response.data.baseRatePerGram) {
         setBaseRateFromSource(response.data);
-        return response.data;
+        // Only log occasionally to avoid console spam (every 10 seconds)
+        const now = Date.now();
+        if (!fetchBaseRate.lastLogTime || now - fetchBaseRate.lastLogTime > 10000) {
+          console.log(`✅ Live base rate: ₹${Number(response.data.baseRatePerGram || 0).toFixed(2)}/gram (updating every second for Normal Price)`);
+          fetchBaseRate.lastLogTime = now;
+        }
       }
+      return response.data;
     } catch (error) {
-      // Silently handle errors during polling
-      console.warn('⚠️ Error fetching base rate from RB Gold:', error.message);
+      // Silently handle errors during polling - don't spam console
+      // Only log if base rate was never successfully fetched
+      if (!baseRateFromSource || !baseRateFromSource.baseRatePerGram) {
+        console.warn('⚠️ Error fetching base rate from RB Gold:', error.message);
+        if (error.response?.status === 404) {
+          console.warn('   Base rate endpoint not available - ensure backend is deployed');
+        }
+      }
       return null;
     }
   };
@@ -137,23 +163,33 @@ function AdminDashboardPage() {
 
   const fetchRates = async (skipUpdate = true, isPolling = false) => {
     try {
-      if (!isPolling && (!rates || rates.length === 0)) {
-        setLoadingRates(true);
+      // Only show loading spinner on initial load, never during polling to avoid UI flickering
+      // CRITICAL: Don't set loadingRates during polling to prevent button from being disabled
+      if (!isPolling) {
+        if (!rates || rates.length === 0) {
+          setLoadingRates(true);
+        }
+        // Only set loading on initial fetch, not during polling
+        if (!skipUpdate || rates.length === 0) {
+          setLoadingRates(true);
+        }
       }
+      console.log('📡 Fetching rates from /rates endpoint...', skipUpdate ? '(skipping update)' : '(allowing update)');
 
-      // Fetch base rate once alongside main rates if polling
-      // This ensures Normal Price always has a fresh baseline
+      // CRITICAL: Always fetch base rate FIRST to ensure Normal Price shows exact RB Gold prices
+      // Fetch base rate before rates to ensure it's available when calculating Normal Price
       await fetchBaseRate();
 
+      // Use skipUpdate=true for fast polling (just read from MongoDB)
+      // Backend will trigger updates in background on Vercel even when skipUpdate=true
+      // Use longer timeout for skipUpdate=false (manual refresh that triggers full update)
       const response = await api.get('/rates', {
         params: {
-          skipUpdate: skipUpdate ? 'true' : 'false',
-          admin: 'true',
-          _t: Date.now()
+          skipUpdate: skipUpdate ? 'true' : undefined,
+          _t: Date.now() // Cache busting
         },
-        timeout: 15000
+        timeout: 30000 // Increased to 30 seconds to handle network variability
       });
-
       console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
       // Only clear loading if we set it (not during polling)
       if (!isPolling) {
@@ -625,7 +661,7 @@ function AdminDashboardPage() {
   const fetchStoreInfo = async () => {
     try {
       setLoadingStore(true);
-      const response = await api.get('/store/info', { timeout: 15000 });
+      const response = await api.get('/store/info');
       const storeData = response.data || {};
       setStoreInfo(storeData);
       // Preserve all fields including storeTimings and bankDetails
@@ -939,10 +975,6 @@ function AdminDashboardPage() {
                         // Formula: base rate + adjustment (done by backend)
 
                         // Show ONLY live prices as requested
-                        const isGold = rate.name && rate.name.toLowerCase().includes('gold');
-                        const displayUnit = isGold ? '/10g' : '/kg';
-                        const displayMultiplier = isGold ? 10 : 1000;
-
                         return (
                           <TableRow
                             key={rate._id || rate.name}
@@ -977,7 +1009,7 @@ function AdminDashboardPage() {
                                     color: colors.textPrimary,
                                   }}
                                 >
-                                  ₹{Number((finalAdjustedRatePerGram || 0) * displayMultiplier).toFixed(2)}{displayUnit}
+                                  ₹{Number((finalAdjustedRatePerGram || 0) * 1000).toFixed(2)}/kg
                                 </Typography>
                               </Box>
                               <Typography
