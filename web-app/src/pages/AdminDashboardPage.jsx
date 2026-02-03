@@ -176,9 +176,11 @@ function AdminDashboardPage() {
       }
       console.log('📡 Fetching rates from /rates endpoint...', skipUpdate ? '(skipping update)' : '(allowing update)');
 
-      // CRITICAL: Always fetch base rate FIRST to ensure Normal Price shows exact RB Gold prices
-      // Fetch base rate before rates to ensure it's available when calculating Normal Price
-      await fetchBaseRate();
+      // ONLY fetch base rate if we are doing a full update (skipUpdate=false)
+      // This saves time during metadata updates (name/visibility)
+      if (!skipUpdate) {
+        await fetchBaseRate();
+      }
 
       // Use skipUpdate=true for fast polling (just read from MongoDB)
       // Backend will trigger updates in background on Vercel even when skipUpdate=true
@@ -533,23 +535,49 @@ function AdminDashboardPage() {
   };
 
   const handleSaveProduct = async () => {
-    if (!editingProduct) return;
+    if (!editingProduct || !editProductName.trim()) return;
+
+    const originalProduct = { ...editingProduct };
+    const newDisplayName = editProductName.trim();
 
     try {
       setLoadingAction(true);
-      // Use originalName if available (for admin), otherwise use name
+
+      // OPTIMISTIC UPDATE: Update local state immediately
+      setRates(prevRates => prevRates.map(r =>
+        (r.originalName || r.name) === (originalProduct.originalName || originalProduct.name)
+          ? { ...r, displayName: newDisplayName }
+          : r
+      ));
+
+      setEditProductDialogOpen(false);
+
       const productName = editingProduct.originalName || editingProduct.name || editingProduct._id;
       const response = await api.put('/admin/product', {
         productName: productName,
-        displayName: editProductName.trim() || null, // null means use original name
+        displayName: newDisplayName,
         isVisible: editingProduct.isVisible !== undefined ? editingProduct.isVisible : true
       });
-      alert(response.data.message || 'Product updated successfully');
-      setEditProductDialogOpen(false);
+
+      // Update with actual response data if available
+      if (response.data?.product) {
+        const updatedProduct = response.data.product;
+        setRates(prevRates => prevRates.map(r =>
+          (r.originalName || r.name) === updatedProduct.name
+            ? { ...r, ...updatedProduct }
+            : r
+        ));
+      }
+
       setEditingProduct(null);
       setEditProductName('');
-      await fetchRates(true); // Refresh rates
     } catch (error) {
+      // ROLLBACK on error
+      setRates(prevRates => prevRates.map(r =>
+        (r.originalName || r.name) === (originalProduct.originalName || originalProduct.name)
+          ? originalProduct
+          : r
+      ));
       alert(error.response?.data?.message || 'Failed to update product');
       console.error('Update product error:', error);
     } finally {
@@ -558,18 +586,41 @@ function AdminDashboardPage() {
   };
 
   const handleToggleVisibility = async (product) => {
+    const originalVisibility = product.isVisible !== undefined ? product.isVisible : true;
+    const newVisibility = !originalVisibility;
+
     try {
       setLoadingAction(true);
-      const newVisibility = !(product.isVisible !== undefined ? product.isVisible : true);
-      // Use originalName if available (for admin), otherwise use name
+
+      // OPTIMISTIC UPDATE: Update local state immediately
+      setRates(prevRates => prevRates.map(r =>
+        (r.originalName || r.name) === (product.originalName || product.name)
+          ? { ...r, isVisible: newVisibility }
+          : r
+      ));
+
       const productName = product.originalName || product.name || product._id;
       const response = await api.put('/admin/product', {
         productName: productName,
         isVisible: newVisibility
       });
-      await fetchRates(true); // Refresh rates
-      // Don't show alert for visibility toggle to avoid spam
+
+      // Update with actual response data if available
+      if (response.data?.product) {
+        const updatedProduct = response.data.product;
+        setRates(prevRates => prevRates.map(r =>
+          (r.originalName || r.name) === updatedProduct.name
+            ? { ...r, ...updatedProduct }
+            : r
+        ));
+      }
     } catch (error) {
+      // ROLLBACK on error
+      setRates(prevRates => prevRates.map(r =>
+        (r.originalName || r.name) === (product.originalName || product.name)
+          ? { ...r, isVisible: originalVisibility }
+          : r
+      ));
       alert(error.response?.data?.message || 'Failed to update product visibility');
       console.error('Toggle visibility error:', error);
     } finally {
