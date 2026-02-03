@@ -21,11 +21,17 @@ const fetchManualAdjustments = async (rateNames) => {
 
     const adjustments = await SilverRate.find({
       location: 'Andhra Pradesh',
-      name: { $in: rateNames }
-    }).select('name manualAdjustment').lean();
+      $or: [
+        { name: { $in: rateNames } },
+        { originalName: { $in: rateNames } }
+      ]
+    }).select('name originalName manualAdjustment').lean();
 
     adjustments.forEach(adj => {
-      adjustmentsMap[adj.name] = adj.manualAdjustment || 0;
+      // Store by name
+      if (adj.name) adjustmentsMap[adj.name] = adj.manualAdjustment || 0;
+      // Also store by originalName so we can look it up by the static definition name
+      if (adj.originalName) adjustmentsMap[adj.originalName] = adj.manualAdjustment || 0;
     });
   } catch (error) {
     console.warn('Could not fetch manual adjustments from MongoDB, using defaults:', error.message);
@@ -631,14 +637,14 @@ router.get('/', async (req, res) => {
       if (token) {
         jwt.verify(token, process.env.JWT_SECRET || 'jain_silver_secret_key_2024_change_in_production');
       }
-    } catch (e) {}
+    } catch (e) { }
 
     let showAsItIs = req.query.showAsItIs === 'true' || req.query.showAsItIs === true;
     if (!showAsItIs && Settings) {
-       try {
-         const setting = await Settings.getSetting('showAsItIs');
-         if (setting) showAsItIs = setting.value;
-       } catch(e){}
+      try {
+        const setting = await Settings.getSetting('showAsItIs');
+        if (setting) showAsItIs = setting.value;
+      } catch (e) { }
     }
 
     let mongoRates = [];
@@ -652,23 +658,23 @@ router.get('/', async (req, res) => {
     } catch (e) { console.error('DB fetch failed:', e.message); }
 
     if (mongoRates.length > 0) {
-       const latestRate = mongoRates.reduce((l, r) => (r.lastUpdated > l.lastUpdated ? r : l), mongoRates[0]);
-       const mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
-       
-       if (mongoAge > 1000) {
-         setImmediate(() => updateRatesHandler(req, null).catch(e => {}));
-       }
+      const latestRate = mongoRates.reduce((l, r) => (r.lastUpdated > l.lastUpdated ? r : l), mongoRates[0]);
+      const mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
 
-       const finalRates = await applyManualAdjustments(mongoRates, isAdmin, true);
-       const ratesWithUSD = finalRates.map(r => ({ ...r, usdInrRate: cachedBaseRate.usdInrRate || 89.25 }));
-       
-       res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' });
-       return res.json(ratesWithUSD);
+      if (mongoAge > 1000) {
+        setImmediate(() => updateRatesHandler(req, null).catch(e => { }));
+      }
+
+      const finalRates = await applyManualAdjustments(mongoRates, isAdmin, true);
+      const ratesWithUSD = finalRates.map(r => ({ ...r, usdInrRate: cachedBaseRate.usdInrRate || 89.25 }));
+
+      res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' });
+      return res.json(ratesWithUSD);
     } else {
-       // Fallback to cache if no DB rates
-       const calculatedOriginalRates = await getOriginalRates(cachedBaseRate.ratePerGram);
-       const finalRates = calculatedOriginalRates.map(r => ({ ...r, usdInrRate: cachedBaseRate.usdInrRate || 89.25 }));
-       return res.json(finalRates);
+      // Fallback to cache if no DB rates
+      const calculatedOriginalRates = await getOriginalRates(cachedBaseRate.ratePerGram);
+      const finalRates = calculatedOriginalRates.map(r => ({ ...r, usdInrRate: cachedBaseRate.usdInrRate || 89.25 }));
+      return res.json(finalRates);
     }
   } catch (error) {
     console.error('Final /rates error:', error.message);
