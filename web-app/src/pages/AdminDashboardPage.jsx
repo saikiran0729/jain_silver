@@ -668,30 +668,67 @@ function AdminDashboardPage() {
         payload.itemName = itemNameToSend;
       }
 
+      // OPTIMISTIC UPDATE: Update local rates state immediately
+      const amountValue = finalValue;
+      const isPercentage = adjustValueType === 'percentage';
+
+      setRates(prevRates => {
+        return prevRates.map(r => {
+          // Check if this rate should be adjusted
+          let shouldAdjust = false;
+          if (selectedItem === 'all') {
+            shouldAdjust = true;
+          } else if (selectedItem === 'category:gold') {
+            shouldAdjust = r.type === 'gold';
+          } else if (selectedItem === 'category:silver') {
+            shouldAdjust = r.type !== 'gold';
+          } else if ((r.originalName || r.name) === itemNameToSend) {
+            shouldAdjust = true;
+          }
+
+          if (shouldAdjust) {
+            // Normalize adjustment amount (copied logic from backend)
+            let normalizedDelta = amountValue;
+            if (!isPercentage) {
+              if (r.type === 'gold') {
+                normalizedDelta = amountValue / 10;
+              } else {
+                normalizedDelta = amountValue / 1000;
+              }
+            }
+
+            const currentNormalPrice = (r.ratePerGram || 0) - (r.manualAdjustment || 0);
+            const delta = isPercentage ? (currentNormalPrice * normalizedDelta / 100) : normalizedDelta;
+            const newManualAdjustment = (r.manualAdjustment || 0) + delta;
+            const newRatePerGram = Math.max(0, currentNormalPrice + newManualAdjustment);
+
+            let weightFactor = r.weight?.value || 1;
+            if (r.weight?.unit === 'kg') weightFactor *= 1000;
+
+            return {
+              ...r,
+              manualAdjustment: newManualAdjustment,
+              ratePerGram: newRatePerGram,
+              rate: newRatePerGram * weightFactor
+            };
+          }
+          return r;
+        });
+      });
+
+      setAdjustDialogOpen(false);
+      setAdjustValue('');
+
       const response = await api.post('/admin/adjust-rates', payload, {
         timeout: 60000 // 60 seconds timeout
       });
 
-      let unitLabel = '';
-      if (adjustValueType === 'amount') {
-        // Find if it's gold or silver based on selection
-        let isGold = selectedItem === 'category:gold';
-        if (!isGold && selectedItem !== 'all' && !selectedItem.startsWith('category:')) {
-          const selRate = rates.find(r => (r.originalName || r.name) === itemNameToSend);
-          isGold = selRate?.type === 'gold';
-        }
-        unitLabel = isGold ? ' per 10g' : ' per kg';
-      }
-
-      const message = response.data?.message || `Rates adjusted successfully`;
-      alert(message);
-      setAdjustDialogOpen(false);
-      setAdjustValue('');
-      setSelectedItem('all');
-      setAdjustValueType('amount');
-      // Refresh rates to show updated values - skip update to avoid timeout
+      // Update with actual response data if needed, but fetchRates(true) will handle it
+      // For now, refreshing with fetchRates(true) is safer to ensure absolute sync
       await fetchRates(true);
     } catch (error) {
+      // Refresh rates on error to rollback optimistic changes
+      await fetchRates(true);
       const errorMsg = error.response?.data?.message || error.response?.data?.error || 'Failed to adjust rates';
       alert(errorMsg);
       console.error('Adjust rates error:', error);
@@ -699,1154 +736,1155 @@ function AdminDashboardPage() {
       setLoadingAction(false);
     }
   };
+};
 
-  const handleLogout = async () => {
-    await logout();
-    navigate('/admin/login');
-  };
+const handleLogout = async () => {
+  await logout();
+  navigate('/admin/login');
+};
 
-  const fetchNews = async () => {
-    try {
-      setLoadingNews(true);
-      const response = await api.get('/news/admin/all');
-      console.log('News response:', response.data);
-      setNewsPosts(response.data?.news || []);
-      if (response.data?.news?.length === 0) {
-        console.log('No news posts found in database');
-      }
-    } catch (error) {
-      console.error('Error fetching news:', error);
-      console.error('Error response:', error.response?.data);
-      setNewsPosts([]);
-      alert(error.response?.data?.message || 'Failed to fetch news posts. Please check console for details.');
-    } finally {
-      setLoadingNews(false);
+const fetchNews = async () => {
+  try {
+    setLoadingNews(true);
+    const response = await api.get('/news/admin/all');
+    console.log('News response:', response.data);
+    setNewsPosts(response.data?.news || []);
+    if (response.data?.news?.length === 0) {
+      console.log('No news posts found in database');
     }
-  };
+  } catch (error) {
+    console.error('Error fetching news:', error);
+    console.error('Error response:', error.response?.data);
+    setNewsPosts([]);
+    alert(error.response?.data?.message || 'Failed to fetch news posts. Please check console for details.');
+  } finally {
+    setLoadingNews(false);
+  }
+};
 
-  const fetchStoreInfo = async () => {
-    try {
-      setLoadingStore(true);
-      const response = await api.get('/store/info');
-      const storeData = response.data || {};
-      setStoreInfo(storeData);
-      // Preserve all fields including storeTimings and bankDetails
-      setStoreForm({
-        welcomeMessage: storeData.welcomeMessage || '',
-        address: storeData.address || '',
-        phoneNumber: storeData.phoneNumber || '',
-        instagram: storeData.instagram || '',
-        facebook: storeData.facebook || '',
-        youtube: storeData.youtube || '',
-        storeTimings: storeData.storeTimings || [],
-        bankDetails: storeData.bankDetails || []
-      });
-    } catch (error) {
-      console.error('Error fetching store info:', error);
-      alert('Failed to fetch store information');
-    } finally {
-      setLoadingStore(false);
-    }
-  };
-
-  const handleCreateNews = () => {
-    setEditingNews(null);
-    setNewsForm({ title: '', content: '', image: '', category: 'general', tags: '', published: false });
-    setNewsDialogOpen(true);
-  };
-
-  const handleEditNews = (news) => {
-    setEditingNews(news);
-    setNewsForm({
-      title: news.title,
-      content: news.content,
-      image: news.image || '',
-      category: news.category || 'general',
-      tags: news.tags?.join(', ') || '',
-      published: news.published || false
+const fetchStoreInfo = async () => {
+  try {
+    setLoadingStore(true);
+    const response = await api.get('/store/info');
+    const storeData = response.data || {};
+    setStoreInfo(storeData);
+    // Preserve all fields including storeTimings and bankDetails
+    setStoreForm({
+      welcomeMessage: storeData.welcomeMessage || '',
+      address: storeData.address || '',
+      phoneNumber: storeData.phoneNumber || '',
+      instagram: storeData.instagram || '',
+      facebook: storeData.facebook || '',
+      youtube: storeData.youtube || '',
+      storeTimings: storeData.storeTimings || [],
+      bankDetails: storeData.bankDetails || []
     });
-    setNewsDialogOpen(true);
-  };
+  } catch (error) {
+    console.error('Error fetching store info:', error);
+    alert('Failed to fetch store information');
+  } finally {
+    setLoadingStore(false);
+  }
+};
 
-  const handleSaveNews = async () => {
-    if (!newsForm.title || !newsForm.content) {
-      alert('Title and content are required');
+const handleCreateNews = () => {
+  setEditingNews(null);
+  setNewsForm({ title: '', content: '', image: '', category: 'general', tags: '', published: false });
+  setNewsDialogOpen(true);
+};
+
+const handleEditNews = (news) => {
+  setEditingNews(news);
+  setNewsForm({
+    title: news.title,
+    content: news.content,
+    image: news.image || '',
+    category: news.category || 'general',
+    tags: news.tags?.join(', ') || '',
+    published: news.published || false
+  });
+  setNewsDialogOpen(true);
+};
+
+const handleSaveNews = async () => {
+  if (!newsForm.title || !newsForm.content) {
+    alert('Title and content are required');
+    return;
+  }
+  try {
+    setLoadingAction(true);
+    const payload = {
+      ...newsForm,
+      tags: newsForm.tags ? newsForm.tags.split(',').map(t => t.trim()).filter(t => t) : []
+    };
+    if (editingNews) {
+      await api.put(`/news/${editingNews._id}`, payload);
+      alert('News post updated successfully');
+    } else {
+      await api.post('/news', payload);
+      alert('News post created successfully');
+    }
+    setNewsDialogOpen(false);
+    setNewsForm({ title: '', content: '', image: '', category: 'general', tags: '', published: false });
+    await fetchNews(); // Refresh news list
+  } catch (error) {
+    alert(error.response?.data?.message || 'Failed to save news post');
+  } finally {
+    setLoadingAction(false);
+  }
+};
+
+const handleDeleteNews = async (id) => {
+  if (!window.confirm('Are you sure you want to delete this news post?')) return;
+  try {
+    setLoadingAction(true);
+    await api.delete(`/news/${id}`);
+    alert('News post deleted successfully');
+    await fetchNews(); // Refresh news list
+  } catch (error) {
+    alert(error.response?.data?.message || 'Failed to delete news post');
+  } finally {
+    setLoadingAction(false);
+  }
+};
+
+const handleSaveStoreInfo = async () => {
+  try {
+    setLoadingAction(true);
+
+    // Prepare the data to send - ensure arrays are properly formatted
+    const dataToSend = {
+      welcomeMessage: storeForm.welcomeMessage || '',
+      address: storeForm.address || '',
+      phoneNumber: storeForm.phoneNumber || '',
+      instagram: storeForm.instagram || '',
+      facebook: storeForm.facebook || '',
+      youtube: storeForm.youtube || '',
+      storeTimings: Array.isArray(storeForm.storeTimings) ? storeForm.storeTimings : [],
+      bankDetails: Array.isArray(storeForm.bankDetails) ? storeForm.bankDetails : []
+    };
+
+    // Validate data before sending
+    if (!dataToSend.welcomeMessage && !dataToSend.address && !dataToSend.phoneNumber) {
+      alert('Please fill in at least one field (Welcome Message, Address, or Phone Number)');
       return;
     }
-    try {
-      setLoadingAction(true);
-      const payload = {
-        ...newsForm,
-        tags: newsForm.tags ? newsForm.tags.split(',').map(t => t.trim()).filter(t => t) : []
-      };
-      if (editingNews) {
-        await api.put(`/news/${editingNews._id}`, payload);
-        alert('News post updated successfully');
-      } else {
-        await api.post('/news', payload);
-        alert('News post created successfully');
+
+    console.log('Saving store info:', JSON.stringify(dataToSend, null, 2));
+    console.log('Request URL:', '/store/info');
+    console.log('Request method:', 'PUT');
+
+    const response = await api.put('/store/info', dataToSend, {
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json'
       }
-      setNewsDialogOpen(false);
-      setNewsForm({ title: '', content: '', image: '', category: 'general', tags: '', published: false });
-      await fetchNews(); // Refresh news list
-    } catch (error) {
-      alert(error.response?.data?.message || 'Failed to save news post');
-    } finally {
-      setLoadingAction(false);
-    }
-  };
+    });
+    console.log('Store info saved response:', response.data);
 
-  const handleDeleteNews = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this news post?')) return;
-    try {
-      setLoadingAction(true);
-      await api.delete(`/news/${id}`);
-      alert('News post deleted successfully');
-      await fetchNews(); // Refresh news list
-    } catch (error) {
-      alert(error.response?.data?.message || 'Failed to delete news post');
-    } finally {
-      setLoadingAction(false);
-    }
-  };
-
-  const handleSaveStoreInfo = async () => {
-    try {
-      setLoadingAction(true);
-
-      // Prepare the data to send - ensure arrays are properly formatted
-      const dataToSend = {
-        welcomeMessage: storeForm.welcomeMessage || '',
-        address: storeForm.address || '',
-        phoneNumber: storeForm.phoneNumber || '',
-        instagram: storeForm.instagram || '',
-        facebook: storeForm.facebook || '',
-        youtube: storeForm.youtube || '',
-        storeTimings: Array.isArray(storeForm.storeTimings) ? storeForm.storeTimings : [],
-        bankDetails: Array.isArray(storeForm.bankDetails) ? storeForm.bankDetails : []
-      };
-
-      // Validate data before sending
-      if (!dataToSend.welcomeMessage && !dataToSend.address && !dataToSend.phoneNumber) {
-        alert('Please fill in at least one field (Welcome Message, Address, or Phone Number)');
-        return;
-      }
-
-      console.log('Saving store info:', JSON.stringify(dataToSend, null, 2));
-      console.log('Request URL:', '/store/info');
-      console.log('Request method:', 'PUT');
-
-      const response = await api.put('/store/info', dataToSend, {
-        timeout: 30000,
-        headers: {
-          'Content-Type': 'application/json'
-        }
+    if (response.data && response.data.storeInfo) {
+      // Update local state with the response data
+      setStoreInfo(response.data.storeInfo);
+      setStoreForm({
+        welcomeMessage: response.data.storeInfo.welcomeMessage || '',
+        address: response.data.storeInfo.address || '',
+        phoneNumber: response.data.storeInfo.phoneNumber || '',
+        instagram: response.data.storeInfo.instagram || '',
+        facebook: response.data.storeInfo.facebook || '',
+        youtube: response.data.storeInfo.youtube || '',
+        storeTimings: response.data.storeInfo.storeTimings || [],
+        bankDetails: response.data.storeInfo.bankDetails || []
       });
-      console.log('Store info saved response:', response.data);
-
-      if (response.data && response.data.storeInfo) {
-        // Update local state with the response data
-        setStoreInfo(response.data.storeInfo);
-        setStoreForm({
-          welcomeMessage: response.data.storeInfo.welcomeMessage || '',
-          address: response.data.storeInfo.address || '',
-          phoneNumber: response.data.storeInfo.phoneNumber || '',
-          instagram: response.data.storeInfo.instagram || '',
-          facebook: response.data.storeInfo.facebook || '',
-          youtube: response.data.storeInfo.youtube || '',
-          storeTimings: response.data.storeInfo.storeTimings || [],
-          bankDetails: response.data.storeInfo.bankDetails || []
-        });
-      }
-
-      alert('Store information updated successfully');
-      setStoreDialogOpen(false);
-      await fetchStoreInfo(); // Refresh store info display
-    } catch (error) {
-      console.error('Error saving store info:', error);
-      console.error('Error details:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        config: {
-          url: error.config?.url,
-          method: error.config?.method,
-          data: error.config?.data
-        }
-      });
-
-      let errorMessage = 'Failed to update store information.';
-      if (error.response?.data?.message) {
-        errorMessage = error.response.data.message;
-      } else if (error.response?.data?.error) {
-        errorMessage = error.response.data.error;
-      } else if (error.message) {
-        errorMessage = `Error: ${error.message}`;
-      }
-
-      if (error.response?.status === 401) {
-        errorMessage = 'Unauthorized. Please login again.';
-      } else if (error.response?.status === 403) {
-        errorMessage = 'Forbidden. Admin access required.';
-      } else if (error.response?.status === 503) {
-        errorMessage = 'Database connection unavailable. Please try again later.';
-      } else if (!error.response) {
-        errorMessage = 'Network error. Please check your connection and try again.';
-      }
-
-      alert(errorMessage);
-    } finally {
-      setLoadingAction(false);
     }
-  };
 
-  const usersToShow = activeTab === 0 ? pendingUsers : allUsers;
+    alert('Store information updated successfully');
+    setStoreDialogOpen(false);
+    await fetchStoreInfo(); // Refresh store info display
+  } catch (error) {
+    console.error('Error saving store info:', error);
+    console.error('Error details:', {
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      config: {
+        url: error.config?.url,
+        method: error.config?.method,
+        data: error.config?.data
+      }
+    });
 
-  return (
-    <Box sx={{ p: 3, maxWidth: 1400, mx: 'auto' }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" sx={{ fontWeight: 700 }}>
-          Admin Dashboard
-        </Typography>
-        <Button variant="contained" color="error" startIcon={<Logout />} onClick={handleLogout}>
-          Logout
-        </Button>
-      </Box>
+    let errorMessage = 'Failed to update store information.';
+    if (error.response?.data?.message) {
+      errorMessage = error.response.data.message;
+    } else if (error.response?.data?.error) {
+      errorMessage = error.response.data.error;
+    } else if (error.message) {
+      errorMessage = `Error: ${error.message}`;
+    }
 
-      {/* Main Navigation Tabs */}
-      <Tabs value={mainTab} onChange={(e, newValue) => setMainTab(newValue)} sx={{ mb: 3, borderBottom: 1, borderColor: 'divider' }}>
-        <Tab icon={<Person />} label="Users" />
-        <Tab icon={<Newspaper />} label="News" />
-        <Tab icon={<Store />} label="Profile/Store" />
-      </Tabs>
+    if (error.response?.status === 401) {
+      errorMessage = 'Unauthorized. Please login again.';
+    } else if (error.response?.status === 403) {
+      errorMessage = 'Forbidden. Admin access required.';
+    } else if (error.response?.status === 503) {
+      errorMessage = 'Database connection unavailable. Please try again later.';
+    } else if (!error.response) {
+      errorMessage = 'Network error. Please check your connection and try again.';
+    }
 
-      {/* Users Tab Content */}
-      {mainTab === 0 && (
-        <>
-          {/* Rate Adjustment Card */}
-          <Card sx={{ mb: 3 }}>
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 2, fontWeight: 700 }}>Rate Adjustment</Typography>
-              <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
-                Adjust silver rates per gram. Enter positive amount to increase or decrease rates.
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2 }}>
+    alert(errorMessage);
+  } finally {
+    setLoadingAction(false);
+  }
+};
+
+const usersToShow = activeTab === 0 ? pendingUsers : allUsers;
+
+return (
+  <Box sx={{ p: 3, maxWidth: 1400, mx: 'auto' }}>
+    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      <Typography variant="h4" sx={{ fontWeight: 700 }}>
+        Admin Dashboard
+      </Typography>
+      <Button variant="contained" color="error" startIcon={<Logout />} onClick={handleLogout}>
+        Logout
+      </Button>
+    </Box>
+
+    {/* Main Navigation Tabs */}
+    <Tabs value={mainTab} onChange={(e, newValue) => setMainTab(newValue)} sx={{ mb: 3, borderBottom: 1, borderColor: 'divider' }}>
+      <Tab icon={<Person />} label="Users" />
+      <Tab icon={<Newspaper />} label="News" />
+      <Tab icon={<Store />} label="Profile/Store" />
+    </Tabs>
+
+    {/* Users Tab Content */}
+    {mainTab === 0 && (
+      <>
+        {/* Rate Adjustment Card */}
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Typography variant="h6" sx={{ mb: 2, fontWeight: 700 }}>Rate Adjustment</Typography>
+            <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
+              Adjust silver rates per gram. Enter positive amount to increase or decrease rates.
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2 }}>
+              <Button
+                variant="contained"
+                color="error"
+                startIcon={<Remove />}
+                onClick={() => {
+                  setAdjustType('decrease');
+                  setAdjustValueType('amount');
+                  setAdjustValue('');
+                  setSelectedItem('all');
+                  setAdjustDialogOpen(true);
+                }}
+                disabled={loadingAction}
+              >
+                Decrease Rates
+              </Button>
+              <Button
+                variant="contained"
+                color="success"
+                startIcon={<Add />}
+                onClick={() => {
+                  setAdjustType('increase');
+                  setAdjustValueType('amount');
+                  setAdjustValue('');
+                  setSelectedItem('all');
+                  setAdjustDialogOpen(true);
+                }}
+                disabled={loadingAction}
+              >
+                Increase Rates
+              </Button>
+            </Box>
+          </CardContent>
+        </Card>
+
+        {/* Current Rates Display Card */}
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6" sx={{ fontWeight: 700 }}>Current Metal Rates</Typography>
+              <Box sx={{ display: 'flex', gap: 1 }}>
                 <Button
-                  variant="contained"
-                  color="error"
-                  startIcon={<Remove />}
-                  onClick={() => {
-                    setAdjustType('decrease');
-                    setAdjustValueType('amount');
-                    setAdjustValue('');
-                    setSelectedItem('all');
-                    setAdjustDialogOpen(true);
-                  }}
+                  size="small"
+                  variant={globalShowAsItIs ? "contained" : "outlined"}
+                  color={globalShowAsItIs ? "warning" : "primary"}
+                  onClick={toggleShowAsItIs}
                   disabled={loadingAction}
+                  sx={{ mr: 1 }}
                 >
-                  Decrease Rates
+                  {globalShowAsItIs ? 'Show Adjusted' : 'Show As It Is'}
                 </Button>
-                <Button
-                  variant="contained"
-                  color="success"
-                  startIcon={<Add />}
-                  onClick={() => {
-                    setAdjustType('increase');
-                    setAdjustValueType('amount');
-                    setAdjustValue('');
-                    setSelectedItem('all');
-                    setAdjustDialogOpen(true);
-                  }}
-                  disabled={loadingAction}
-                >
-                  Increase Rates
+                <Button size="small" onClick={() => fetchRates(false)} disabled={loadingRates}>
+                  Refresh
                 </Button>
               </Box>
-            </CardContent>
-          </Card>
-
-          {/* Current Rates Display Card */}
-          <Card sx={{ mb: 3 }}>
-            <CardContent>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h6" sx={{ fontWeight: 700 }}>Current Metal Rates</Typography>
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                  <Button
-                    size="small"
-                    variant={globalShowAsItIs ? "contained" : "outlined"}
-                    color={globalShowAsItIs ? "warning" : "primary"}
-                    onClick={toggleShowAsItIs}
-                    disabled={loadingAction}
-                    sx={{ mr: 1 }}
-                  >
-                    {globalShowAsItIs ? 'Show Adjusted' : 'Show As It Is'}
-                  </Button>
-                  <Button size="small" onClick={() => fetchRates(false)} disabled={loadingRates}>
-                    Refresh
-                  </Button>
-                </Box>
+            </Box>
+            {loadingRates && rates.length === 0 ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+                <CircularProgress size={24} />
               </Box>
-              {loadingRates && rates.length === 0 ? (
-                <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
-                  <CircularProgress size={24} />
-                </Box>
-              ) : rates.length > 0 ? (
-                <TableContainer>
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ fontWeight: 700 }}>Product</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>Live Price</TableCell>
-                        <TableCell align="center" sx={{ fontWeight: 700 }}>Visible</TableCell>
-                        <TableCell align="center" sx={{ fontWeight: 700 }}>Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {rates.map((rate) => {
+            ) : rates.length > 0 ? (
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontWeight: 700 }}>Product</TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700 }}>Live Price</TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 700 }}>Visible</TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 700 }}>Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {rates.map((rate) => {
 
-                        // Calculate weight in grams
-                        let weightInGrams = rate.weight?.value || 1;
-                        if (rate.weight?.unit === 'kg') {
-                          weightInGrams = weightInGrams * 1000;
-                        }
+                      // Calculate weight in grams
+                      let weightInGrams = rate.weight?.value || 1;
+                      if (rate.weight?.unit === 'kg') {
+                        weightInGrams = weightInGrams * 1000;
+                      }
 
-                        // Calculate original rate from RB Gold by subtracting manual adjustment
-                        // IMPORTANT: Always calculate original from current rate - adjustment
-                        // The backend may store incorrect originalRatePerGram, so we calculate it ourselves
-                        // Original Rate = Current Rate - Manual Adjustment
-                        // This gives us the true original price from the source (RB Gold) without any adjustments
-                        const currentRatePerGram = rate.ratePerGram || 0;
-                        const currentTotalRate = rate.rate || 0;
+                      // Calculate original rate from RB Gold by subtracting manual adjustment
+                      // IMPORTANT: Always calculate original from current rate - adjustment
+                      // The backend may store incorrect originalRatePerGram, so we calculate it ourselves
+                      // Original Rate = Current Rate - Manual Adjustment
+                      // This gives us the true original price from the source (RB Gold) without any adjustments
+                      const currentRatePerGram = rate.ratePerGram || 0;
+                      const currentTotalRate = rate.rate || 0;
 
-                        // Calculate Normal Price = EXACT RB Gold price (with purity adjustments only, NO manual adjustments)
-                        // ALWAYS use base rate from RB Gold source for Normal Price
-                        // CRITICAL FIX: Use rates directly from backend instead of re-calculating from Silver base rate
-                        // This ensures Gold products show Gold rates and Silver show Silver rates.
-                        const originalRatePerGram = rate.originalRatePerGram || rate.normalPrice || 0;
-                        const finalAdjustedRatePerGram = rate.ratePerGram || 0;
-                        const originalTotalPrice = originalRatePerGram * weightInGrams;
-                        const finalAdjustedPrice = finalAdjustedRatePerGram * weightInGrams;
-                        const manualAdjustment = rate.manualAdjustment || 0;
+                      // Calculate Normal Price = EXACT RB Gold price (with purity adjustments only, NO manual adjustments)
+                      // ALWAYS use base rate from RB Gold source for Normal Price
+                      // CRITICAL FIX: Use rates directly from backend instead of re-calculating from Silver base rate
+                      // This ensures Gold products show Gold rates and Silver show Silver rates.
+                      const originalRatePerGram = rate.originalRatePerGram || rate.normalPrice || 0;
+                      const finalAdjustedRatePerGram = rate.ratePerGram || 0;
+                      const originalTotalPrice = originalRatePerGram * weightInGrams;
+                      const finalAdjustedPrice = finalAdjustedRatePerGram * weightInGrams;
+                      const manualAdjustment = rate.manualAdjustment || 0;
 
-                        // Compute adjustment as the difference between adjusted rate and calculated original rate.
-                        // Since we're calculating adjusted price from normal price + manual adjustment,
-                        // the displayed adjustment is simply the manual adjustment value
-                        const displayedAdjustment = manualAdjustment;
-                        const EPS = 0.0001;
-                        const hasAdjustment = Math.abs(displayedAdjustment) > EPS;
+                      // Compute adjustment as the difference between adjusted rate and calculated original rate.
+                      // Since we're calculating adjusted price from normal price + manual adjustment,
+                      // the displayed adjustment is simply the manual adjustment value
+                      const displayedAdjustment = manualAdjustment;
+                      const EPS = 0.0001;
+                      const hasAdjustment = Math.abs(displayedAdjustment) > EPS;
 
-                        // Get price change indicators for smooth animations
-                        const rateKey = rate._id?.toString() || rate.name;
-                        const prevRate = previousRates[rateKey] || {};
-                        const originalPriceChanged = prevRate.oldOriginalTotalPrice !== undefined &&
-                          Math.abs((prevRate.oldOriginalTotalPrice || 0) - (originalTotalPrice || 0)) > 0.01;
-                        const adjustedPriceChanged = prevRate.oldAdjustedPrice !== undefined &&
-                          Math.abs((prevRate.oldAdjustedPrice || 0) - (finalAdjustedPrice || 0)) > 0.01;
+                      // Get price change indicators for smooth animations
+                      const rateKey = rate._id?.toString() || rate.name;
+                      const prevRate = previousRates[rateKey] || {};
+                      const originalPriceChanged = prevRate.oldOriginalTotalPrice !== undefined &&
+                        Math.abs((prevRate.oldOriginalTotalPrice || 0) - (originalTotalPrice || 0)) > 0.01;
+                      const adjustedPriceChanged = prevRate.oldAdjustedPrice !== undefined &&
+                        Math.abs((prevRate.oldAdjustedPrice || 0) - (finalAdjustedPrice || 0)) > 0.01;
 
-                        const originalPriceIsUp = originalPriceChanged && (originalTotalPrice || 0) > (prevRate.oldOriginalTotalPrice || 0);
-                        const originalPriceIsDown = originalPriceChanged && (originalTotalPrice || 0) < (prevRate.oldOriginalTotalPrice || 0);
-                        const adjustedPriceIsUp = adjustedPriceChanged && (finalAdjustedPrice || 0) > (prevRate.oldAdjustedPrice || 0);
-                        const adjustedPriceIsDown = adjustedPriceChanged && (finalAdjustedPrice || 0) < (prevRate.oldAdjustedPrice || 0);
+                      const originalPriceIsUp = originalPriceChanged && (originalTotalPrice || 0) > (prevRate.oldOriginalTotalPrice || 0);
+                      const originalPriceIsDown = originalPriceChanged && (originalTotalPrice || 0) < (prevRate.oldOriginalTotalPrice || 0);
+                      const adjustedPriceIsUp = adjustedPriceChanged && (finalAdjustedPrice || 0) > (prevRate.oldAdjustedPrice || 0);
+                      const adjustedPriceIsDown = adjustedPriceChanged && (finalAdjustedPrice || 0) < (prevRate.oldAdjustedPrice || 0);
 
-                        // Standard view: show only final live price as requested
-                        // Formula: base rate + adjustment (done by backend)
+                      // Standard view: show only final live price as requested
+                      // Formula: base rate + adjustment (done by backend)
 
-                        // Show ONLY live prices as requested
-                        return (
-                          <TableRow
-                            key={rate._id || rate.name}
-                            sx={{
-                              backgroundColor: adjustedPriceChanged
-                                ? (adjustedPriceIsUp ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)')
-                                : 'transparent',
-                              transition: 'background-color 0.3s ease-in-out'
-                            }}
-                          >
-                            <TableCell>
-                              <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                                {rate.name}
-                              </Typography>
-                              <Typography variant="caption" sx={{ color: colors.textSecondary }}>
-                                {rate.purity} • {rate.weight?.value} {rate.weight?.unit}
-                              </Typography>
-                            </TableCell>
-                            <TableCell align="right">
-                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
-                                {adjustedPriceChanged && (
-                                  adjustedPriceIsUp ? (
-                                    <TrendingUp sx={{ fontSize: 12, color: colors.success }} />
-                                  ) : (
-                                    <TrendingDown sx={{ fontSize: 12, color: colors.error }} />
-                                  )
-                                )}
-                                <Typography
-                                  variant="body2"
-                                  sx={{
-                                    fontWeight: 600,
-                                    color: colors.textPrimary,
-                                  }}
-                                >
-                                  {rate.type === 'gold'
-                                    ? `₹${Number((finalAdjustedRatePerGram || 0) * 10).toFixed(2)}/10g`
-                                    : `₹${Number((finalAdjustedRatePerGram || 0) * 1000).toFixed(2)}/kg`
-                                  }
-                                </Typography>
-                              </Box>
+                      // Show ONLY live prices as requested
+                      return (
+                        <TableRow
+                          key={rate._id || rate.name}
+                          sx={{
+                            backgroundColor: adjustedPriceChanged
+                              ? (adjustedPriceIsUp ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)')
+                              : 'transparent',
+                            transition: 'background-color 0.3s ease-in-out'
+                          }}
+                        >
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                              {rate.name}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: colors.textSecondary }}>
+                              {rate.purity} • {rate.weight?.value} {rate.weight?.unit}
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                              {adjustedPriceChanged && (
+                                adjustedPriceIsUp ? (
+                                  <TrendingUp sx={{ fontSize: 12, color: colors.success }} />
+                                ) : (
+                                  <TrendingDown sx={{ fontSize: 12, color: colors.error }} />
+                                )
+                              )}
                               <Typography
-                                variant="caption"
+                                variant="body2"
                                 sx={{
-                                  color: colors.textSecondary,
-                                  display: 'block'
+                                  fontWeight: 600,
+                                  color: colors.textPrimary,
                                 }}
                               >
-                                ₹{Number(finalAdjustedPrice || 0).toFixed(2)}
+                                {rate.type === 'gold'
+                                  ? `₹${Number((finalAdjustedRatePerGram || 0) * 10).toFixed(2)}/10g`
+                                  : `₹${Number((finalAdjustedRatePerGram || 0) * 1000).toFixed(2)}/kg`
+                                }
                               </Typography>
-                            </TableCell>
-                            <TableCell align="center">
-                              <Switch
-                                checked={rate.isVisible !== undefined ? rate.isVisible : true}
-                                onChange={() => handleToggleVisibility(rate)}
-                                size="small"
-                                disabled={loadingAction}
-                              />
-                            </TableCell>
-                            <TableCell align="center">
-                              <IconButton
-                                size="small"
-                                onClick={() => handleEditProduct(rate)}
-                                disabled={loadingAction}
-                                color="primary"
-                              >
-                                <Edit fontSize="small" />
-                              </IconButton>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              ) : (
-                <Typography variant="body2" sx={{ color: colors.textSecondary, textAlign: 'center', p: 2 }}>
-                  No rates available
-                </Typography>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Users Table Card */}
-          <Card>
-            <CardContent>
-              <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)} sx={{ mb: 2 }}>
-                <Tab label={`Pending Users (${pendingUsers.length})`} />
-                <Tab label={`All Users (${allUsers.length})`} />
-              </Tabs>
-
-              {loading ? (
-                <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-                  <CircularProgress />
-                </Box>
-              ) : usersToShow.length === 0 ? (
-                <Alert severity="info">No users found</Alert>
-              ) : (
-                <TableContainer component={Paper}>
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ fontWeight: 700 }}>Name</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Email</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Phone</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {usersToShow.map((userItem) => (
-                        <TableRow key={userItem._id}>
-                          <TableCell>{userItem.name}</TableCell>
-                          <TableCell>{userItem.email}</TableCell>
-                          <TableCell>{userItem.phone}</TableCell>
-                          <TableCell>
-                            <Chip
-                              label={userItem.status || 'pending'}
-                              color={userItem.status === 'approved' ? 'success' : userItem.status === 'rejected' ? 'error' : 'warning'}
+                            </Box>
+                            <Typography
+                              variant="caption"
+                              sx={{
+                                color: colors.textSecondary,
+                                display: 'block'
+                              }}
+                            >
+                              ₹{Number(finalAdjustedPrice || 0).toFixed(2)}
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="center">
+                            <Switch
+                              checked={rate.isVisible !== undefined ? rate.isVisible : true}
+                              onChange={() => handleToggleVisibility(rate)}
                               size="small"
+                              disabled={loadingAction}
                             />
                           </TableCell>
-                          <TableCell>
-                            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                              {userItem.status === 'pending' && (
-                                <>
-                                  <Button
-                                    size="small"
-                                    color="success"
-                                    startIcon={<CheckCircle />}
-                                    onClick={() => handleApprove(userItem._id)}
-                                    disabled={loadingAction}
-                                    variant="contained"
-                                  >
-                                    Approve
-                                  </Button>
-                                  <Button
-                                    size="small"
-                                    color="error"
-                                    startIcon={<Cancel />}
-                                    onClick={() => handleReject(userItem._id)}
-                                    disabled={loadingAction}
-                                    variant="contained"
-                                  >
-                                    Reject
-                                  </Button>
-                                </>
-                              )}
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                startIcon={<Visibility />}
-                                onClick={() => handleViewDocuments(userItem._id)}
-                              >
-                                View Docs
-                              </Button>
-                            </Box>
+                          <TableCell align="center">
+                            <IconButton
+                              size="small"
+                              onClick={() => handleEditProduct(rate)}
+                              disabled={loadingAction}
+                              color="primary"
+                            >
+                              <Edit fontSize="small" />
+                            </IconButton>
                           </TableCell>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              )}
-            </CardContent>
-          </Card>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            ) : (
+              <Typography variant="body2" sx={{ color: colors.textSecondary, textAlign: 'center', p: 2 }}>
+                No rates available
+              </Typography>
+            )}
+          </CardContent>
+        </Card>
 
-          {/* Adjust Rates Dialog */}
-          <Dialog
-            open={adjustDialogOpen}
-            onClose={() => {
+        {/* Users Table Card */}
+        <Card>
+          <CardContent>
+            <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)} sx={{ mb: 2 }}>
+              <Tab label={`Pending Users (${pendingUsers.length})`} />
+              <Tab label={`All Users (${allUsers.length})`} />
+            </Tabs>
+
+            {loading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                <CircularProgress />
+              </Box>
+            ) : usersToShow.length === 0 ? (
+              <Alert severity="info">No users found</Alert>
+            ) : (
+              <TableContainer component={Paper}>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontWeight: 700 }}>Name</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Email</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Phone</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {usersToShow.map((userItem) => (
+                      <TableRow key={userItem._id}>
+                        <TableCell>{userItem.name}</TableCell>
+                        <TableCell>{userItem.email}</TableCell>
+                        <TableCell>{userItem.phone}</TableCell>
+                        <TableCell>
+                          <Chip
+                            label={userItem.status || 'pending'}
+                            color={userItem.status === 'approved' ? 'success' : userItem.status === 'rejected' ? 'error' : 'warning'}
+                            size="small"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                            {userItem.status === 'pending' && (
+                              <>
+                                <Button
+                                  size="small"
+                                  color="success"
+                                  startIcon={<CheckCircle />}
+                                  onClick={() => handleApprove(userItem._id)}
+                                  disabled={loadingAction}
+                                  variant="contained"
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="small"
+                                  color="error"
+                                  startIcon={<Cancel />}
+                                  onClick={() => handleReject(userItem._id)}
+                                  disabled={loadingAction}
+                                  variant="contained"
+                                >
+                                  Reject
+                                </Button>
+                              </>
+                            )}
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              startIcon={<Visibility />}
+                              onClick={() => handleViewDocuments(userItem._id)}
+                            >
+                              View Docs
+                            </Button>
+                          </Box>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Adjust Rates Dialog */}
+        <Dialog
+          open={adjustDialogOpen}
+          onClose={() => {
+            setAdjustDialogOpen(false);
+            setAdjustValue('');
+            setAdjustValueType('amount');
+            setSelectedItem('all');
+          }}
+          maxWidth="sm"
+          fullWidth
+          disableEnforceFocus={false}
+          disableAutoFocus={false}
+          keepMounted={false}
+          aria-labelledby="adjust-rates-dialog-title"
+        >
+          <DialogTitle id="adjust-rates-dialog-title">
+            {adjustType === 'decrease' ? 'Decrease Rates' : 'Increase Rates'}
+          </DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
+              Choose adjustment type and enter the value to {adjustType === 'decrease' ? 'decrease' : 'increase'} rates.
+              {adjustValueType === 'amount'
+                ? ` Example: Enter 100 to ${adjustType === 'decrease' ? 'decrease' : 'increase'} by ₹100/gram.`
+                : ` Example: Enter 5 to ${adjustType === 'decrease' ? 'decrease' : 'increase'} by 5%.`
+              }
+            </Typography>
+            <FormControl fullWidth margin="normal">
+              <InputLabel>Select Item</InputLabel>
+              <Select
+                value={selectedItem}
+                onChange={(e) => setSelectedItem(e.target.value)}
+                label="Select Item/Category"
+              >
+                <MenuItem value="all">All Items</MenuItem>
+                <MenuItem value="category:gold">All Gold Items</MenuItem>
+                <MenuItem value="category:silver">All Silver Items</MenuItem>
+                {rates.map((rate) => {
+                  const originalName = rate.originalName || rate.name;
+                  const displayName = rate.displayName || rate.name;
+                  return (
+                    <MenuItem key={rate._id || originalName} value={originalName}>
+                      {displayName}
+                    </MenuItem>
+                  );
+                })}
+              </Select>
+            </FormControl>
+            <FormControl fullWidth margin="normal">
+              <InputLabel>Adjustment Type</InputLabel>
+              <Select
+                value={adjustValueType}
+                onChange={(e) => setAdjustValueType(e.target.value)}
+                label="Adjustment Type"
+              >
+                <MenuItem value="amount">Amount (₹/gram)</MenuItem>
+                <MenuItem value="percentage">Percentage (%)</MenuItem>
+              </Select>
+            </FormControl>
+            <TextField
+              fullWidth
+              label={adjustValueType === 'amount'
+                ? `Amount (₹) to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`
+                : `Percentage (%) to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`
+              }
+              type="number"
+              value={adjustValue}
+              onChange={(e) => setAdjustValue(e.target.value)}
+              margin="normal"
+              helperText={adjustValueType === 'amount' ? (() => {
+                if (selectedItem === 'category:gold') return "Adjusting per 10g";
+                if (selectedItem === 'category:silver') return "Adjusting per kg";
+                if (selectedItem === 'all') return "Adjusting Gold (10g) and Silver (kg)";
+                const selRate = rates.find(r => (r.originalName || r.name) === selectedItem);
+                return selRate?.type === 'gold' ? "Adjusting per 10g" : "Adjusting per kg";
+              })() : ""}
+              placeholder={adjustValueType === 'amount' ? 'e.g., 100' : 'e.g., 5'}
+              inputProps={{ min: 0, step: 0.01 }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => {
               setAdjustDialogOpen(false);
               setAdjustValue('');
               setAdjustValueType('amount');
               setSelectedItem('all');
-            }}
-            maxWidth="sm"
-            fullWidth
-            disableEnforceFocus={false}
-            disableAutoFocus={false}
-            keepMounted={false}
-            aria-labelledby="adjust-rates-dialog-title"
-          >
-            <DialogTitle id="adjust-rates-dialog-title">
-              {adjustType === 'decrease' ? 'Decrease Rates' : 'Increase Rates'}
-            </DialogTitle>
-            <DialogContent>
-              <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
-                Choose adjustment type and enter the value to {adjustType === 'decrease' ? 'decrease' : 'increase'} rates.
-                {adjustValueType === 'amount'
-                  ? ` Example: Enter 100 to ${adjustType === 'decrease' ? 'decrease' : 'increase'} by ₹100/gram.`
-                  : ` Example: Enter 5 to ${adjustType === 'decrease' ? 'decrease' : 'increase'} by 5%.`
-                }
-              </Typography>
-              <FormControl fullWidth margin="normal">
-                <InputLabel>Select Item</InputLabel>
-                <Select
-                  value={selectedItem}
-                  onChange={(e) => setSelectedItem(e.target.value)}
-                  label="Select Item/Category"
-                >
-                  <MenuItem value="all">All Items</MenuItem>
-                  <MenuItem value="category:gold">All Gold Items</MenuItem>
-                  <MenuItem value="category:silver">All Silver Items</MenuItem>
-                  {rates.map((rate) => {
-                    const originalName = rate.originalName || rate.name;
-                    const displayName = rate.displayName || rate.name;
-                    return (
-                      <MenuItem key={rate._id || originalName} value={originalName}>
-                        {displayName}
-                      </MenuItem>
-                    );
-                  })}
-                </Select>
-              </FormControl>
-              <FormControl fullWidth margin="normal">
-                <InputLabel>Adjustment Type</InputLabel>
-                <Select
-                  value={adjustValueType}
-                  onChange={(e) => setAdjustValueType(e.target.value)}
-                  label="Adjustment Type"
-                >
-                  <MenuItem value="amount">Amount (₹/gram)</MenuItem>
-                  <MenuItem value="percentage">Percentage (%)</MenuItem>
-                </Select>
-              </FormControl>
-              <TextField
-                fullWidth
-                label={adjustValueType === 'amount'
-                  ? `Amount (₹) to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`
-                  : `Percentage (%) to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`
-                }
-                type="number"
-                value={adjustValue}
-                onChange={(e) => setAdjustValue(e.target.value)}
-                margin="normal"
-                helperText={adjustValueType === 'amount' ? (() => {
-                  if (selectedItem === 'category:gold') return "Adjusting per 10g";
-                  if (selectedItem === 'category:silver') return "Adjusting per kg";
-                  if (selectedItem === 'all') return "Adjusting Gold (10g) and Silver (kg)";
-                  const selRate = rates.find(r => (r.originalName || r.name) === selectedItem);
-                  return selRate?.type === 'gold' ? "Adjusting per 10g" : "Adjusting per kg";
-                })() : ""}
-                placeholder={adjustValueType === 'amount' ? 'e.g., 100' : 'e.g., 5'}
-                inputProps={{ min: 0, step: 0.01 }}
-              />
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => {
-                setAdjustDialogOpen(false);
-                setAdjustValue('');
-                setAdjustValueType('amount');
-                setSelectedItem('all');
-              }} disabled={loadingAction}>
-                Cancel
-              </Button>
-              <Button
-                onClick={handleAdjustRates}
-                variant="contained"
-                color={adjustType === 'decrease' ? 'error' : 'success'}
-                disabled={loadingAction || !adjustValue}
-              >
-                {loadingAction ? 'Applying...' : adjustType === 'decrease' ? 'Decrease' : 'Increase'}
-              </Button>
-            </DialogActions>
-          </Dialog>
+            }} disabled={loadingAction}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAdjustRates}
+              variant="contained"
+              color={adjustType === 'decrease' ? 'error' : 'success'}
+              disabled={loadingAction || !adjustValue}
+            >
+              {loadingAction ? 'Applying...' : adjustType === 'decrease' ? 'Decrease' : 'Increase'}
+            </Button>
+          </DialogActions>
+        </Dialog>
 
-          {/* Edit Product Dialog */}
-          <Dialog
-            open={editProductDialogOpen}
-            onClose={() => {
+        {/* Edit Product Dialog */}
+        <Dialog
+          open={editProductDialogOpen}
+          onClose={() => {
+            setEditProductDialogOpen(false);
+            setEditingProduct(null);
+            setEditProductName('');
+          }}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>Edit Product</DialogTitle>
+          <DialogContent>
+            {editingProduct && (
+              <>
+                <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
+                  Original Name: <strong>{editingProduct.originalName || editingProduct.name}</strong>
+                </Typography>
+                <TextField
+                  fullWidth
+                  label="Display Name"
+                  value={editProductName}
+                  onChange={(e) => setEditProductName(e.target.value)}
+                  margin="normal"
+                  placeholder="Leave empty to use original name"
+                  helperText="Leave empty to show the original product name to users"
+                />
+              </>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => {
               setEditProductDialogOpen(false);
               setEditingProduct(null);
               setEditProductName('');
-            }}
-            maxWidth="sm"
-            fullWidth
-          >
-            <DialogTitle>Edit Product</DialogTitle>
-            <DialogContent>
-              {editingProduct && (
-                <>
-                  <Typography variant="body2" sx={{ mb: 2, color: colors.textSecondary }}>
-                    Original Name: <strong>{editingProduct.originalName || editingProduct.name}</strong>
-                  </Typography>
-                  <TextField
-                    fullWidth
-                    label="Display Name"
-                    value={editProductName}
-                    onChange={(e) => setEditProductName(e.target.value)}
-                    margin="normal"
-                    placeholder="Leave empty to use original name"
-                    helperText="Leave empty to show the original product name to users"
-                  />
-                </>
-              )}
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => {
-                setEditProductDialogOpen(false);
-                setEditingProduct(null);
-                setEditProductName('');
-              }} disabled={loadingAction}>
-                Cancel
+            }} disabled={loadingAction}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveProduct} variant="contained" disabled={loadingAction}>
+              {loadingAction ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+      </>
+    )
+    }
+
+    {/* News Tab Content */}
+    {
+      mainTab === 1 && (
+        <Card>
+          <CardContent>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6" sx={{ fontWeight: 700 }}>News Posts</Typography>
+              <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreateNews}>
+                New Post
               </Button>
-              <Button onClick={handleSaveProduct} variant="contained" disabled={loadingAction}>
-                {loadingAction ? 'Saving...' : 'Save'}
-              </Button>
-            </DialogActions>
-          </Dialog>
-        </>
-      )
-      }
-
-      {/* News Tab Content */}
-      {
-        mainTab === 1 && (
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h6" sx={{ fontWeight: 700 }}>News Posts</Typography>
-                <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreateNews}>
-                  New Post
-                </Button>
+            </Box>
+            {loadingNews ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                <CircularProgress />
               </Box>
-              {loadingNews ? (
-                <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-                  <CircularProgress />
-                </Box>
-              ) : newsPosts.length === 0 ? (
-                <Alert severity="info">No news posts found. Create your first post!</Alert>
-              ) : (
-                <TableContainer>
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ fontWeight: 700 }}>Title</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Category</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Views</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Created</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {newsPosts.map((post) => (
-                        <TableRow key={post._id}>
-                          <TableCell>{post.title}</TableCell>
-                          <TableCell>
-                            <Chip label={post.category} size="small" />
-                          </TableCell>
-                          <TableCell>
-                            <Chip
-                              label={post.published ? 'Published' : 'Draft'}
-                              color={post.published ? 'success' : 'default'}
-                              size="small"
-                            />
-                          </TableCell>
-                          <TableCell>{post.views || 0}</TableCell>
-                          <TableCell>{new Date(post.createdAt).toLocaleDateString()}</TableCell>
-                          <TableCell>
-                            <IconButton size="small" onClick={() => handleEditNews(post)}>
-                              <Edit />
-                            </IconButton>
-                            <IconButton size="small" color="error" onClick={() => handleDeleteNews(post._id)}>
-                              <Delete />
-                            </IconButton>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              )}
-            </CardContent>
-          </Card>
-        )
-      }
-
-      {/* Profile/Store Tab Content */}
-      {
-        mainTab === 2 && (
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h6" sx={{ fontWeight: 700 }}>Store Information</Typography>
-                <Button variant="contained" onClick={() => setStoreDialogOpen(true)}>
-                  Edit Store Info
-                </Button>
-              </Box>
-              {loadingStore ? (
-                <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-                  <CircularProgress />
-                </Box>
-              ) : storeInfo ? (
-                <Grid container spacing={2}>
-                  <Grid item xs={12} md={6}>
-                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Welcome Message</Typography>
-                    <Typography variant="body1" sx={{ mb: 2 }}>{storeInfo.welcomeMessage || 'N/A'}</Typography>
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Phone Number</Typography>
-                    <Typography variant="body1" sx={{ mb: 2 }}>{storeInfo.phoneNumber || 'N/A'}</Typography>
-                  </Grid>
-                  <Grid item xs={12}>
-                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Address</Typography>
-                    <Typography variant="body1" sx={{ mb: 2 }}>{storeInfo.address || 'N/A'}</Typography>
-                  </Grid>
-                  <Grid item xs={12} md={4}>
-                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Instagram</Typography>
-                    <Typography variant="body2" sx={{ mb: 2, wordBreak: 'break-all' }}>{storeInfo.instagram || 'N/A'}</Typography>
-                  </Grid>
-                  <Grid item xs={12} md={4}>
-                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Facebook</Typography>
-                    <Typography variant="body2" sx={{ mb: 2, wordBreak: 'break-all' }}>{storeInfo.facebook || 'N/A'}</Typography>
-                  </Grid>
-                  <Grid item xs={12} md={4}>
-                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>YouTube</Typography>
-                    <Typography variant="body2" sx={{ mb: 2, wordBreak: 'break-all' }}>{storeInfo.youtube || 'N/A'}</Typography>
-                  </Grid>
-                  {storeInfo.storeTimings && storeInfo.storeTimings.length > 0 && (
-                    <Grid item xs={12}>
-                      <Typography variant="subtitle2" sx={{ color: colors.textSecondary, mb: 1 }}>Store Timings</Typography>
-                      {storeInfo.storeTimings.map((timing, index) => (
-                        <Box key={index} sx={{ mb: 1, p: 1, backgroundColor: colors.primaryVeryLight, borderRadius: 1 }}>
-                          <Typography variant="body2">
-                            <strong>{timing.day}:</strong> {timing.isClosed ? 'Closed' : `${timing.openTime} - ${timing.closeTime}`}
-                          </Typography>
-                        </Box>
-                      ))}
-                    </Grid>
-                  )}
-                  {storeInfo.bankDetails && storeInfo.bankDetails.length > 0 && (
-                    <Grid item xs={12}>
-                      <Typography variant="subtitle2" sx={{ color: colors.textSecondary, mb: 1 }}>Bank Details</Typography>
-                      {storeInfo.bankDetails.map((bank, index) => (
-                        <Box key={index} sx={{ mb: 2, p: 2, backgroundColor: colors.primaryVeryLight, borderRadius: 1 }}>
-                          <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>{bank.bankName}</Typography>
-                          <Typography variant="body2">Account: {bank.accountNumber}</Typography>
-                          <Typography variant="body2">IFSC: {bank.ifscCode}</Typography>
-                          <Typography variant="body2">Holder: {bank.accountHolderName}</Typography>
-                          <Typography variant="body2">Branch: {bank.branch}</Typography>
-                        </Box>
-                      ))}
-                    </Grid>
-                  )}
-                </Grid>
-              ) : (
-                <Alert severity="info">No store information available</Alert>
-              )}
-            </CardContent>
-          </Card>
-        )
-      }
-
-      {/* News Dialog */}
-      <Dialog
-        open={newsDialogOpen}
-        onClose={() => setNewsDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-        disableEnforceFocus={false}
-        disableAutoFocus={false}
-        keepMounted={false}
-        aria-labelledby="news-dialog-title"
-      >
-        <DialogTitle id="news-dialog-title">{editingNews ? 'Edit News Post' : 'Create News Post'}</DialogTitle>
-        <DialogContent>
-          <TextField
-            fullWidth
-            label="Title"
-            value={newsForm.title}
-            onChange={(e) => setNewsForm({ ...newsForm, title: e.target.value })}
-            margin="normal"
-            required
-          />
-          <FormControl fullWidth margin="normal">
-            <InputLabel>Category</InputLabel>
-            <Select
-              value={newsForm.category}
-              onChange={(e) => setNewsForm({ ...newsForm, category: e.target.value })}
-              label="Category"
-            >
-              <MenuItem value="general">General</MenuItem>
-              <MenuItem value="announcement">Announcement</MenuItem>
-              <MenuItem value="update">Update</MenuItem>
-              <MenuItem value="offer">Offer</MenuItem>
-            </Select>
-          </FormControl>
-          <TextField
-            fullWidth
-            label="Image URL (optional)"
-            value={newsForm.image}
-            onChange={(e) => setNewsForm({ ...newsForm, image: e.target.value })}
-            margin="normal"
-            placeholder="https://example.com/image.jpg"
-          />
-          <TextField
-            fullWidth
-            label="Tags (comma separated)"
-            value={newsForm.tags}
-            onChange={(e) => setNewsForm({ ...newsForm, tags: e.target.value })}
-            margin="normal"
-            placeholder="silver, news, update"
-          />
-          <Box sx={{ mt: 2 }}>
-            <Typography variant="body2" sx={{ mb: 1 }}>Content</Typography>
-            <TextareaAutosize
-              minRows={6}
-              style={{ width: '100%', padding: '8px', fontFamily: 'inherit', fontSize: '14px' }}
-              value={newsForm.content}
-              onChange={(e) => setNewsForm({ ...newsForm, content: e.target.value })}
-              placeholder="Enter news content..."
-            />
-          </Box>
-          <Box sx={{ mt: 2, display: 'flex', alignItems: 'center' }}>
-            <input
-              type="checkbox"
-              id="published"
-              checked={newsForm.published}
-              onChange={(e) => setNewsForm({ ...newsForm, published: e.target.checked })}
-            />
-            <label htmlFor="published" style={{ marginLeft: '8px' }}>Publish immediately</label>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setNewsDialogOpen(false)} disabled={loadingAction}>
-            Cancel
-          </Button>
-          <Button onClick={handleSaveNews} variant="contained" disabled={loadingAction}>
-            {loadingAction ? 'Saving...' : editingNews ? 'Update' : 'Create'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Store Info Dialog */}
-      <Dialog
-        open={storeDialogOpen}
-        onClose={() => setStoreDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-        disableEnforceFocus={false}
-        disableAutoFocus={false}
-        keepMounted={false}
-        aria-labelledby="store-info-dialog-title"
-      >
-        <DialogTitle id="store-info-dialog-title">Edit Store Information</DialogTitle>
-        <DialogContent>
-          <TextField
-            fullWidth
-            label="Welcome Message"
-            value={storeForm.welcomeMessage || ''}
-            onChange={(e) => setStoreForm({ ...storeForm, welcomeMessage: e.target.value })}
-            margin="normal"
-            multiline
-            rows={3}
-          />
-          <TextField
-            fullWidth
-            label="Phone Number"
-            value={storeForm.phoneNumber || ''}
-            onChange={(e) => setStoreForm({ ...storeForm, phoneNumber: e.target.value })}
-            margin="normal"
-          />
-          <TextField
-            fullWidth
-            label="Address"
-            value={storeForm.address || ''}
-            onChange={(e) => setStoreForm({ ...storeForm, address: e.target.value })}
-            margin="normal"
-            multiline
-            rows={2}
-          />
-          <TextField
-            fullWidth
-            label="Instagram URL"
-            value={storeForm.instagram || ''}
-            onChange={(e) => setStoreForm({ ...storeForm, instagram: e.target.value })}
-            margin="normal"
-          />
-          <TextField
-            fullWidth
-            label="Facebook URL"
-            value={storeForm.facebook || ''}
-            onChange={(e) => setStoreForm({ ...storeForm, facebook: e.target.value })}
-            margin="normal"
-          />
-          <TextField
-            fullWidth
-            label="YouTube URL"
-            value={storeForm.youtube || ''}
-            onChange={(e) => setStoreForm({ ...storeForm, youtube: e.target.value })}
-            margin="normal"
-          />
-
-          {/* Store Timings */}
-          <Accordion sx={{ mt: 2 }}>
-            <AccordionSummary expandIcon={<ExpandMore />}>
-              <Typography variant="h6">Store Timings</Typography>
-            </AccordionSummary>
-            <AccordionDetails>
-              {(storeForm.storeTimings || []).map((timing, index) => (
-                <Box key={index} sx={{ mb: 2, p: 2, border: `1px solid ${colors.divider}`, borderRadius: 1 }}>
-                  <Grid container spacing={2}>
-                    <Grid item xs={12} sm={3}>
-                      <TextField
-                        fullWidth
-                        label="Day"
-                        value={timing.day || ''}
-                        onChange={(e) => {
-                          const newTimings = [...(storeForm.storeTimings || [])];
-                          newTimings[index].day = e.target.value;
-                          setStoreForm({ ...storeForm, storeTimings: newTimings });
-                        }}
-                        size="small"
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={3}>
-                      <TextField
-                        fullWidth
-                        label="Open Time"
-                        value={timing.openTime || ''}
-                        onChange={(e) => {
-                          const newTimings = [...(storeForm.storeTimings || [])];
-                          newTimings[index].openTime = e.target.value;
-                          setStoreForm({ ...storeForm, storeTimings: newTimings });
-                        }}
-                        size="small"
-                        placeholder="11:00 AM"
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={3}>
-                      <TextField
-                        fullWidth
-                        label="Close Time"
-                        value={timing.closeTime || ''}
-                        onChange={(e) => {
-                          const newTimings = [...(storeForm.storeTimings || [])];
-                          newTimings[index].closeTime = e.target.value;
-                          setStoreForm({ ...storeForm, storeTimings: newTimings });
-                        }}
-                        size="small"
-                        placeholder="08:30 PM"
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={3}>
-                      <FormControlLabel
-                        control={
-                          <Checkbox
-                            checked={timing.isClosed || false}
-                            onChange={(e) => {
-                              const newTimings = [...(storeForm.storeTimings || [])];
-                              newTimings[index].isClosed = e.target.checked;
-                              setStoreForm({ ...storeForm, storeTimings: newTimings });
-                            }}
+            ) : newsPosts.length === 0 ? (
+              <Alert severity="info">No news posts found. Create your first post!</Alert>
+            ) : (
+              <TableContainer>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontWeight: 700 }}>Title</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Category</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Views</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Created</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {newsPosts.map((post) => (
+                      <TableRow key={post._id}>
+                        <TableCell>{post.title}</TableCell>
+                        <TableCell>
+                          <Chip label={post.category} size="small" />
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={post.published ? 'Published' : 'Draft'}
+                            color={post.published ? 'success' : 'default'}
+                            size="small"
                           />
-                        }
-                        label="Closed"
-                      />
-                    </Grid>
-                  </Grid>
-                </Box>
-              ))}
-              <Button
-                startIcon={<Add />}
-                onClick={() => {
-                  const newTimings = [...(storeForm.storeTimings || []), { day: '', openTime: '', closeTime: '', isClosed: false }];
-                  setStoreForm({ ...storeForm, storeTimings: newTimings });
-                }}
-                size="small"
-              >
-                Add Timing
-              </Button>
-            </AccordionDetails>
-          </Accordion>
+                        </TableCell>
+                        <TableCell>{post.views || 0}</TableCell>
+                        <TableCell>{new Date(post.createdAt).toLocaleDateString()}</TableCell>
+                        <TableCell>
+                          <IconButton size="small" onClick={() => handleEditNews(post)}>
+                            <Edit />
+                          </IconButton>
+                          <IconButton size="small" color="error" onClick={() => handleDeleteNews(post._id)}>
+                            <Delete />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </CardContent>
+        </Card>
+      )
+    }
 
-          {/* Bank Details */}
-          <Accordion sx={{ mt: 2 }}>
-            <AccordionSummary expandIcon={<ExpandMore />}>
-              <Typography variant="h6">Bank Details</Typography>
-            </AccordionSummary>
-            <AccordionDetails>
-              {(storeForm.bankDetails || []).map((bank, index) => (
-                <Box key={index} sx={{ mb: 2, p: 2, border: `1px solid ${colors.divider}`, borderRadius: 1 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                    <Typography variant="subtitle2">Bank {index + 1}</Typography>
-                    <IconButton
+    {/* Profile/Store Tab Content */}
+    {
+      mainTab === 2 && (
+        <Card>
+          <CardContent>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6" sx={{ fontWeight: 700 }}>Store Information</Typography>
+              <Button variant="contained" onClick={() => setStoreDialogOpen(true)}>
+                Edit Store Info
+              </Button>
+            </Box>
+            {loadingStore ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                <CircularProgress />
+              </Box>
+            ) : storeInfo ? (
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                  <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Welcome Message</Typography>
+                  <Typography variant="body1" sx={{ mb: 2 }}>{storeInfo.welcomeMessage || 'N/A'}</Typography>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Phone Number</Typography>
+                  <Typography variant="body1" sx={{ mb: 2 }}>{storeInfo.phoneNumber || 'N/A'}</Typography>
+                </Grid>
+                <Grid item xs={12}>
+                  <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Address</Typography>
+                  <Typography variant="body1" sx={{ mb: 2 }}>{storeInfo.address || 'N/A'}</Typography>
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Instagram</Typography>
+                  <Typography variant="body2" sx={{ mb: 2, wordBreak: 'break-all' }}>{storeInfo.instagram || 'N/A'}</Typography>
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>Facebook</Typography>
+                  <Typography variant="body2" sx={{ mb: 2, wordBreak: 'break-all' }}>{storeInfo.facebook || 'N/A'}</Typography>
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <Typography variant="subtitle2" sx={{ color: colors.textSecondary }}>YouTube</Typography>
+                  <Typography variant="body2" sx={{ mb: 2, wordBreak: 'break-all' }}>{storeInfo.youtube || 'N/A'}</Typography>
+                </Grid>
+                {storeInfo.storeTimings && storeInfo.storeTimings.length > 0 && (
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary, mb: 1 }}>Store Timings</Typography>
+                    {storeInfo.storeTimings.map((timing, index) => (
+                      <Box key={index} sx={{ mb: 1, p: 1, backgroundColor: colors.primaryVeryLight, borderRadius: 1 }}>
+                        <Typography variant="body2">
+                          <strong>{timing.day}:</strong> {timing.isClosed ? 'Closed' : `${timing.openTime} - ${timing.closeTime}`}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Grid>
+                )}
+                {storeInfo.bankDetails && storeInfo.bankDetails.length > 0 && (
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" sx={{ color: colors.textSecondary, mb: 1 }}>Bank Details</Typography>
+                    {storeInfo.bankDetails.map((bank, index) => (
+                      <Box key={index} sx={{ mb: 2, p: 2, backgroundColor: colors.primaryVeryLight, borderRadius: 1 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>{bank.bankName}</Typography>
+                        <Typography variant="body2">Account: {bank.accountNumber}</Typography>
+                        <Typography variant="body2">IFSC: {bank.ifscCode}</Typography>
+                        <Typography variant="body2">Holder: {bank.accountHolderName}</Typography>
+                        <Typography variant="body2">Branch: {bank.branch}</Typography>
+                      </Box>
+                    ))}
+                  </Grid>
+                )}
+              </Grid>
+            ) : (
+              <Alert severity="info">No store information available</Alert>
+            )}
+          </CardContent>
+        </Card>
+      )
+    }
+
+    {/* News Dialog */}
+    <Dialog
+      open={newsDialogOpen}
+      onClose={() => setNewsDialogOpen(false)}
+      maxWidth="md"
+      fullWidth
+      disableEnforceFocus={false}
+      disableAutoFocus={false}
+      keepMounted={false}
+      aria-labelledby="news-dialog-title"
+    >
+      <DialogTitle id="news-dialog-title">{editingNews ? 'Edit News Post' : 'Create News Post'}</DialogTitle>
+      <DialogContent>
+        <TextField
+          fullWidth
+          label="Title"
+          value={newsForm.title}
+          onChange={(e) => setNewsForm({ ...newsForm, title: e.target.value })}
+          margin="normal"
+          required
+        />
+        <FormControl fullWidth margin="normal">
+          <InputLabel>Category</InputLabel>
+          <Select
+            value={newsForm.category}
+            onChange={(e) => setNewsForm({ ...newsForm, category: e.target.value })}
+            label="Category"
+          >
+            <MenuItem value="general">General</MenuItem>
+            <MenuItem value="announcement">Announcement</MenuItem>
+            <MenuItem value="update">Update</MenuItem>
+            <MenuItem value="offer">Offer</MenuItem>
+          </Select>
+        </FormControl>
+        <TextField
+          fullWidth
+          label="Image URL (optional)"
+          value={newsForm.image}
+          onChange={(e) => setNewsForm({ ...newsForm, image: e.target.value })}
+          margin="normal"
+          placeholder="https://example.com/image.jpg"
+        />
+        <TextField
+          fullWidth
+          label="Tags (comma separated)"
+          value={newsForm.tags}
+          onChange={(e) => setNewsForm({ ...newsForm, tags: e.target.value })}
+          margin="normal"
+          placeholder="silver, news, update"
+        />
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="body2" sx={{ mb: 1 }}>Content</Typography>
+          <TextareaAutosize
+            minRows={6}
+            style={{ width: '100%', padding: '8px', fontFamily: 'inherit', fontSize: '14px' }}
+            value={newsForm.content}
+            onChange={(e) => setNewsForm({ ...newsForm, content: e.target.value })}
+            placeholder="Enter news content..."
+          />
+        </Box>
+        <Box sx={{ mt: 2, display: 'flex', alignItems: 'center' }}>
+          <input
+            type="checkbox"
+            id="published"
+            checked={newsForm.published}
+            onChange={(e) => setNewsForm({ ...newsForm, published: e.target.checked })}
+          />
+          <label htmlFor="published" style={{ marginLeft: '8px' }}>Publish immediately</label>
+        </Box>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setNewsDialogOpen(false)} disabled={loadingAction}>
+          Cancel
+        </Button>
+        <Button onClick={handleSaveNews} variant="contained" disabled={loadingAction}>
+          {loadingAction ? 'Saving...' : editingNews ? 'Update' : 'Create'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+
+    {/* Store Info Dialog */}
+    <Dialog
+      open={storeDialogOpen}
+      onClose={() => setStoreDialogOpen(false)}
+      maxWidth="md"
+      fullWidth
+      disableEnforceFocus={false}
+      disableAutoFocus={false}
+      keepMounted={false}
+      aria-labelledby="store-info-dialog-title"
+    >
+      <DialogTitle id="store-info-dialog-title">Edit Store Information</DialogTitle>
+      <DialogContent>
+        <TextField
+          fullWidth
+          label="Welcome Message"
+          value={storeForm.welcomeMessage || ''}
+          onChange={(e) => setStoreForm({ ...storeForm, welcomeMessage: e.target.value })}
+          margin="normal"
+          multiline
+          rows={3}
+        />
+        <TextField
+          fullWidth
+          label="Phone Number"
+          value={storeForm.phoneNumber || ''}
+          onChange={(e) => setStoreForm({ ...storeForm, phoneNumber: e.target.value })}
+          margin="normal"
+        />
+        <TextField
+          fullWidth
+          label="Address"
+          value={storeForm.address || ''}
+          onChange={(e) => setStoreForm({ ...storeForm, address: e.target.value })}
+          margin="normal"
+          multiline
+          rows={2}
+        />
+        <TextField
+          fullWidth
+          label="Instagram URL"
+          value={storeForm.instagram || ''}
+          onChange={(e) => setStoreForm({ ...storeForm, instagram: e.target.value })}
+          margin="normal"
+        />
+        <TextField
+          fullWidth
+          label="Facebook URL"
+          value={storeForm.facebook || ''}
+          onChange={(e) => setStoreForm({ ...storeForm, facebook: e.target.value })}
+          margin="normal"
+        />
+        <TextField
+          fullWidth
+          label="YouTube URL"
+          value={storeForm.youtube || ''}
+          onChange={(e) => setStoreForm({ ...storeForm, youtube: e.target.value })}
+          margin="normal"
+        />
+
+        {/* Store Timings */}
+        <Accordion sx={{ mt: 2 }}>
+          <AccordionSummary expandIcon={<ExpandMore />}>
+            <Typography variant="h6">Store Timings</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            {(storeForm.storeTimings || []).map((timing, index) => (
+              <Box key={index} sx={{ mb: 2, p: 2, border: `1px solid ${colors.divider}`, borderRadius: 1 }}>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={3}>
+                    <TextField
+                      fullWidth
+                      label="Day"
+                      value={timing.day || ''}
+                      onChange={(e) => {
+                        const newTimings = [...(storeForm.storeTimings || [])];
+                        newTimings[index].day = e.target.value;
+                        setStoreForm({ ...storeForm, storeTimings: newTimings });
+                      }}
                       size="small"
-                      color="error"
-                      onClick={() => {
-                        const newBanks = storeForm.bankDetails.filter((_, i) => i !== index);
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={3}>
+                    <TextField
+                      fullWidth
+                      label="Open Time"
+                      value={timing.openTime || ''}
+                      onChange={(e) => {
+                        const newTimings = [...(storeForm.storeTimings || [])];
+                        newTimings[index].openTime = e.target.value;
+                        setStoreForm({ ...storeForm, storeTimings: newTimings });
+                      }}
+                      size="small"
+                      placeholder="11:00 AM"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={3}>
+                    <TextField
+                      fullWidth
+                      label="Close Time"
+                      value={timing.closeTime || ''}
+                      onChange={(e) => {
+                        const newTimings = [...(storeForm.storeTimings || [])];
+                        newTimings[index].closeTime = e.target.value;
+                        setStoreForm({ ...storeForm, storeTimings: newTimings });
+                      }}
+                      size="small"
+                      placeholder="08:30 PM"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={3}>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={timing.isClosed || false}
+                          onChange={(e) => {
+                            const newTimings = [...(storeForm.storeTimings || [])];
+                            newTimings[index].isClosed = e.target.checked;
+                            setStoreForm({ ...storeForm, storeTimings: newTimings });
+                          }}
+                        />
+                      }
+                      label="Closed"
+                    />
+                  </Grid>
+                </Grid>
+              </Box>
+            ))}
+            <Button
+              startIcon={<Add />}
+              onClick={() => {
+                const newTimings = [...(storeForm.storeTimings || []), { day: '', openTime: '', closeTime: '', isClosed: false }];
+                setStoreForm({ ...storeForm, storeTimings: newTimings });
+              }}
+              size="small"
+            >
+              Add Timing
+            </Button>
+          </AccordionDetails>
+        </Accordion>
+
+        {/* Bank Details */}
+        <Accordion sx={{ mt: 2 }}>
+          <AccordionSummary expandIcon={<ExpandMore />}>
+            <Typography variant="h6">Bank Details</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            {(storeForm.bankDetails || []).map((bank, index) => (
+              <Box key={index} sx={{ mb: 2, p: 2, border: `1px solid ${colors.divider}`, borderRadius: 1 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                  <Typography variant="subtitle2">Bank {index + 1}</Typography>
+                  <IconButton
+                    size="small"
+                    color="error"
+                    onClick={() => {
+                      const newBanks = storeForm.bankDetails.filter((_, i) => i !== index);
+                      setStoreForm({ ...storeForm, bankDetails: newBanks });
+                    }}
+                  >
+                    <DeleteIcon />
+                  </IconButton>
+                </Box>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Bank Name"
+                      value={bank.bankName || ''}
+                      onChange={(e) => {
+                        const newBanks = [...(storeForm.bankDetails || [])];
+                        newBanks[index].bankName = e.target.value;
                         setStoreForm({ ...storeForm, bankDetails: newBanks });
                       }}
-                    >
-                      <DeleteIcon />
-                    </IconButton>
-                  </Box>
-                  <Grid container spacing={2}>
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        label="Bank Name"
-                        value={bank.bankName || ''}
-                        onChange={(e) => {
-                          const newBanks = [...(storeForm.bankDetails || [])];
-                          newBanks[index].bankName = e.target.value;
-                          setStoreForm({ ...storeForm, bankDetails: newBanks });
-                        }}
-                        size="small"
-                        margin="normal"
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        label="Account Number"
-                        value={bank.accountNumber || ''}
-                        onChange={(e) => {
-                          const newBanks = [...(storeForm.bankDetails || [])];
-                          newBanks[index].accountNumber = e.target.value;
-                          setStoreForm({ ...storeForm, bankDetails: newBanks });
-                        }}
-                        size="small"
-                        margin="normal"
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        label="IFSC Code"
-                        value={bank.ifscCode || ''}
-                        onChange={(e) => {
-                          const newBanks = [...(storeForm.bankDetails || [])];
-                          newBanks[index].ifscCode = e.target.value;
-                          setStoreForm({ ...storeForm, bankDetails: newBanks });
-                        }}
-                        size="small"
-                        margin="normal"
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        label="Account Holder Name"
-                        value={bank.accountHolderName || ''}
-                        onChange={(e) => {
-                          const newBanks = [...(storeForm.bankDetails || [])];
-                          newBanks[index].accountHolderName = e.target.value;
-                          setStoreForm({ ...storeForm, bankDetails: newBanks });
-                        }}
-                        size="small"
-                        margin="normal"
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <TextField
-                        fullWidth
-                        label="Branch"
-                        value={bank.branch || ''}
-                        onChange={(e) => {
-                          const newBanks = [...(storeForm.bankDetails || [])];
-                          newBanks[index].branch = e.target.value;
-                          setStoreForm({ ...storeForm, bankDetails: newBanks });
-                        }}
-                        size="small"
-                        margin="normal"
-                      />
-                    </Grid>
+                      size="small"
+                      margin="normal"
+                    />
                   </Grid>
-                </Box>
-              ))}
-              <Button
-                startIcon={<Add />}
-                onClick={() => {
-                  const newBanks = [...(storeForm.bankDetails || []), { bankName: '', accountNumber: '', ifscCode: '', accountHolderName: '', branch: '' }];
-                  setStoreForm({ ...storeForm, bankDetails: newBanks });
-                }}
-                size="small"
-              >
-                Add Bank
-              </Button>
-            </AccordionDetails>
-          </Accordion>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setStoreDialogOpen(false)} disabled={loadingAction}>
-            Cancel
-          </Button>
-          <Button onClick={handleSaveStoreInfo} variant="contained" disabled={loadingAction}>
-            {loadingAction ? 'Saving...' : 'Save'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Box >
-  );
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Account Number"
+                      value={bank.accountNumber || ''}
+                      onChange={(e) => {
+                        const newBanks = [...(storeForm.bankDetails || [])];
+                        newBanks[index].accountNumber = e.target.value;
+                        setStoreForm({ ...storeForm, bankDetails: newBanks });
+                      }}
+                      size="small"
+                      margin="normal"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="IFSC Code"
+                      value={bank.ifscCode || ''}
+                      onChange={(e) => {
+                        const newBanks = [...(storeForm.bankDetails || [])];
+                        newBanks[index].ifscCode = e.target.value;
+                        setStoreForm({ ...storeForm, bankDetails: newBanks });
+                      }}
+                      size="small"
+                      margin="normal"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      label="Account Holder Name"
+                      value={bank.accountHolderName || ''}
+                      onChange={(e) => {
+                        const newBanks = [...(storeForm.bankDetails || [])];
+                        newBanks[index].accountHolderName = e.target.value;
+                        setStoreForm({ ...storeForm, bankDetails: newBanks });
+                      }}
+                      size="small"
+                      margin="normal"
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Branch"
+                      value={bank.branch || ''}
+                      onChange={(e) => {
+                        const newBanks = [...(storeForm.bankDetails || [])];
+                        newBanks[index].branch = e.target.value;
+                        setStoreForm({ ...storeForm, bankDetails: newBanks });
+                      }}
+                      size="small"
+                      margin="normal"
+                    />
+                  </Grid>
+                </Grid>
+              </Box>
+            ))}
+            <Button
+              startIcon={<Add />}
+              onClick={() => {
+                const newBanks = [...(storeForm.bankDetails || []), { bankName: '', accountNumber: '', ifscCode: '', accountHolderName: '', branch: '' }];
+                setStoreForm({ ...storeForm, bankDetails: newBanks });
+              }}
+              size="small"
+            >
+              Add Bank
+            </Button>
+          </AccordionDetails>
+        </Accordion>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setStoreDialogOpen(false)} disabled={loadingAction}>
+          Cancel
+        </Button>
+        <Button onClick={handleSaveStoreInfo} variant="contained" disabled={loadingAction}>
+          {loadingAction ? 'Saving...' : 'Save'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  </Box >
+);
 }
 
 export default AdminDashboardPage;

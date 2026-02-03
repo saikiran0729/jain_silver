@@ -509,7 +509,7 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
         normalPrice = (currentRate.ratePerGram || 0) - currentAdjustment;
       }
 
-      let newAdjustment = isPercentage ? (normalPrice * normalizedAmount) / 100 : normalizedAmount;
+      let newAdjustment = currentAdjustment + (isPercentage ? (normalPrice * normalizedAmount) / 100 : normalizedAmount);
 
       // Update calculations
       let weightInGrams = currentRate.weight?.value || 1;
@@ -540,7 +540,8 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
         itemName: rateName,
         type: itemType,
         normalizedAdjustment: newAdjustment,
-        percentageChange: isPercentage ? normalizedAmount : (normalPrice > 0 ? (newAdjustment / normalPrice) * 100 : 0)
+        delta: normalizedAmount,
+        percentageChange: isPercentage ? normalizedAmount : (normalPrice > 0 ? (normalizedAmount / normalPrice) * 100 : 0)
       });
     }
 
@@ -548,15 +549,19 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       await SilverRate.bulkWrite(bulkOps);
       console.log(`✅ Updated ${bulkOps.length} rate adjustments in MongoDB`);
 
-      // Trigger rate update
-      try {
-        const ratesRoute = require('./rates');
-        if (ratesRoute.updateRatesHandler) {
-          ratesRoute.updateRatesHandler(req, null).catch(e => console.error('Update handler error:', e.message));
+      // Trigger rate update - non-blocking
+      setImmediate(() => {
+        try {
+          const ratesRoute = require('./rates');
+          if (ratesRoute.updateRatesHandler) {
+            ratesRoute.updateRatesHandler(req, null).catch(e => {
+              if (Math.random() < 0.1) console.error('Background update handler error:', e.message);
+            });
+          }
+        } catch (e) {
+          console.warn('Could not trigger background rate update');
         }
-      } catch (e) {
-        console.warn('Could not trigger rate update handler');
-      }
+      });
     }
 
     const io = req.app.get('io');
