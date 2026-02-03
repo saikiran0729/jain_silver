@@ -386,7 +386,14 @@ function HomePage() {
       return '/silver-coin.jpg';
     }
     if (iconType === 'bar-image') {
-      return '/silver-bars.webp';
+      if (type === 'gold' || name?.toLowerCase().includes('gold')) {
+        return '/gold-bars.png';
+      }
+      return '/silver-bars.png';
+    }
+    // Fallback if type is gold but not caught by bar-image logic
+    if (type === 'gold' || name?.toLowerCase().includes('gold')) {
+      return '/gold-bars.png';
     }
     return null;
   };
@@ -527,8 +534,13 @@ function HomePage() {
                                 letterSpacing: '-0.5px'
                               }}
                             >
-                              {formatPrice(getKgPrice(rate.rate, rate.weight))}
-                              <Typography component="span" sx={{ fontSize: '0.8em', color: colors.textSecondary, fontWeight: 500, ml: 0.5 }}>/kg</Typography>
+                              {rate.type === 'gold'
+                                ? `${formatPrice(rate.ratePerGram * 10)}`
+                                : `${formatPrice(getKgPrice(rate.rate, rate.weight))}`
+                              }
+                              <Typography component="span" sx={{ fontSize: '0.8em', color: colors.textSecondary, fontWeight: 500, ml: 0.5 }}>
+                                {rate.type === 'gold' ? '/10g' : '/kg'}
+                              </Typography>
                             </Typography>
                           </Box>
                         </TableCell>
