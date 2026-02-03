@@ -4,6 +4,8 @@ const User = require('../models/User');
 const SilverRate = require('../models/SilverRate');
 const auth = require('../middleware/auth');
 const adminAuth = require('../middleware/adminAuth');
+const mongoose = require('mongoose');
+const { formatUserDocuments } = require('../utils/documentHelper');
 
 // Load Settings model with error handling
 let Settings;
@@ -29,7 +31,6 @@ const getSettingsModel = () => {
 // Root route - get admin dashboard data from MongoDB
 router.get('/', auth, adminAuth, async (req, res) => {
   try {
-    const mongoose = require('mongoose');
     // Check MongoDB connection
     if (mongoose.connection.readyState !== 1) {
       // Try to connect
@@ -138,7 +139,6 @@ router.get('/', auth, adminAuth, async (req, res) => {
 router.get('/pending-users', auth, adminAuth, async (req, res) => {
   try {
     // Check MongoDB connection
-    const mongoose = require('mongoose');
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({
         message: 'Database connection not available',
@@ -158,7 +158,6 @@ router.get('/pending-users', auth, adminAuth, async (req, res) => {
     // Format document URLs with CloudFront
     let formattedUsers = [];
     try {
-      const { formatUserDocuments } = require('../utils/documentHelper');
       formattedUsers = users.map(user => {
         try {
           return formatUserDocuments(user);
@@ -240,7 +239,6 @@ router.get('/pending-users', auth, adminAuth, async (req, res) => {
 router.get('/users', auth, adminAuth, async (req, res) => {
   try {
     // Check MongoDB connection
-    const mongoose = require('mongoose');
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({
         message: 'Database connection not available',
@@ -262,7 +260,6 @@ router.get('/users', auth, adminAuth, async (req, res) => {
     // Format document URLs with CloudFront
     let formattedUsers = [];
     try {
-      const { formatUserDocuments } = require('../utils/documentHelper');
       formattedUsers = users.map(user => {
         try {
           return formatUserDocuments(user);
