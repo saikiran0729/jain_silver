@@ -610,14 +610,29 @@ function AdminDashboardPage() {
         value: finalValue,
         adjustmentType: adjustValueType // 'amount' or 'percentage'
       };
-      if (itemNameToSend !== 'all') {
+
+      if (selectedItem.startsWith('category:')) {
+        payload.category = selectedItem.split(':')[1];
+      } else if (selectedItem !== 'all') {
         payload.itemName = itemNameToSend;
-        console.log(`📤 Sending adjust-rates request with itemName: "${itemNameToSend}"`);
       }
+
       const response = await api.post('/admin/adjust-rates', payload, {
-        timeout: 60000 // 60 seconds timeout - backend may trigger rate update
+        timeout: 60000 // 60 seconds timeout
       });
-      const message = response.data?.message || `Rates ${adjustType === 'decrease' ? 'decreased' : 'increased'} by ${adjustValueType === 'percentage' ? `${Math.abs(value)}%` : `₹${Math.abs(value)}/gram`}${selectedItem !== 'all' ? ` for ${selectedItem}` : ' for all items'} successfully`;
+
+      let unitLabel = '';
+      if (adjustValueType === 'amount') {
+        // Find if it's gold or silver based on selection
+        let isGold = selectedItem === 'category:gold';
+        if (!isGold && selectedItem !== 'all' && !selectedItem.startsWith('category:')) {
+          const selRate = rates.find(r => (r.originalName || r.name) === itemNameToSend);
+          isGold = selRate?.type === 'gold';
+        }
+        unitLabel = isGold ? ' per 10g' : ' per kg';
+      }
+
+      const message = response.data?.message || `Rates adjusted successfully`;
       alert(message);
       setAdjustDialogOpen(false);
       setAdjustValue('');
@@ -904,7 +919,7 @@ function AdminDashboardPage() {
           <Card sx={{ mb: 3 }}>
             <CardContent>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h6" sx={{ fontWeight: 700 }}>Current Silver Rates</Typography>
+                <Typography variant="h6" sx={{ fontWeight: 700 }}>Current Metal Rates</Typography>
                 <Box sx={{ display: 'flex', gap: 1 }}>
                   <Button
                     size="small"
@@ -1021,7 +1036,10 @@ function AdminDashboardPage() {
                                     color: colors.textPrimary,
                                   }}
                                 >
-                                  ₹{Number((finalAdjustedRatePerGram || 0) * 1000).toFixed(2)}/kg
+                                  {rate.type === 'gold'
+                                    ? `₹${Number((finalAdjustedRatePerGram || 0) * 10).toFixed(2)}/10g`
+                                    : `₹${Number((finalAdjustedRatePerGram || 0) * 1000).toFixed(2)}/kg`
+                                  }
                                 </Typography>
                               </Box>
                               <Typography
@@ -1182,21 +1200,14 @@ function AdminDashboardPage() {
                 <Select
                   value={selectedItem}
                   onChange={(e) => setSelectedItem(e.target.value)}
-                  label="Select Item"
+                  label="Select Item/Category"
                 >
                   <MenuItem value="all">All Items</MenuItem>
+                  <MenuItem value="category:gold">All Gold Items</MenuItem>
+                  <MenuItem value="category:silver">All Silver Items</MenuItem>
                   {rates.map((rate) => {
-                    // Use originalName for backend lookup, but show displayName or name to user
-                    // CRITICAL: Always use the database name (originalName) for the value
-                    // This ensures backend can find the rate even if displayName is changed
                     const originalName = rate.originalName || rate.name;
                     const displayName = rate.displayName || rate.name;
-
-                    // Debug log to verify we're sending the right value
-                    if (displayName !== originalName) {
-                      console.log(`🔍 Rate dropdown: "${displayName}" → sending originalName: "${originalName}"`);
-                    }
-
                     return (
                       <MenuItem key={rate._id || originalName} value={originalName}>
                         {displayName}
@@ -1219,15 +1230,22 @@ function AdminDashboardPage() {
               <TextField
                 fullWidth
                 label={adjustValueType === 'amount'
-                  ? `Amount (₹/gram) to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`
+                  ? `Amount (₹) to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`
                   : `Percentage (%) to ${adjustType === 'decrease' ? 'decrease' : 'increase'}`
                 }
                 type="number"
                 value={adjustValue}
                 onChange={(e) => setAdjustValue(e.target.value)}
                 margin="normal"
+                helperText={adjustValueType === 'amount' ? (() => {
+                  if (selectedItem === 'category:gold') return "Adjusting per 10g";
+                  if (selectedItem === 'category:silver') return "Adjusting per kg";
+                  if (selectedItem === 'all') return "Adjusting Gold (10g) and Silver (kg)";
+                  const selRate = rates.find(r => (r.originalName || r.name) === selectedItem);
+                  return selRate?.type === 'gold' ? "Adjusting per 10g" : "Adjusting per kg";
+                })() : ""}
                 placeholder={adjustValueType === 'amount' ? 'e.g., 100' : 'e.g., 5'}
-                inputProps={{ min: 0, step: adjustValueType === 'amount' ? 0.01 : 0.1 }}
+                inputProps={{ min: 0, step: 0.01 }}
               />
             </DialogContent>
             <DialogActions>

@@ -426,278 +426,107 @@ router.get('/user/:userId', auth, adminAuth, async (req, res) => {
 router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
   try {
     console.log('📝 Rate adjustment request:', JSON.stringify(req.body, null, 2));
-    console.log('📝 Received itemName:', req.body.itemName);
+    const { value, adjustmentType, itemName, category } = req.body;
 
-    const { value, adjustmentType, itemName } = req.body;
-
-    // Support both old format (amount) and new format (value + adjustmentType)
-    let amount = value;
+    let amount = parseFloat(value);
     let isPercentage = adjustmentType === 'percentage';
 
-    // Backward compatibility: if 'amount' is provided, use it
-    if (req.body.amount !== undefined && value === undefined) {
-      amount = req.body.amount;
-      isPercentage = false;
-    }
-
-    // Ensure amount is a number
-    if (amount !== undefined && amount !== null) {
-      amount = parseFloat(amount);
-    }
-
-    if (typeof amount !== 'number' || isNaN(amount)) {
-      console.error('❌ Invalid amount value:', amount, typeof amount);
+    if (isNaN(amount)) {
       return res.status(400).json({ message: 'Valid numeric value is required' });
     }
-
-    console.log(`📊 Processing adjustment: ${amount} (${isPercentage ? 'percentage' : 'amount'}) for ${itemName || 'all items'}`);
 
     if (isPercentage && (amount < -100 || amount > 100)) {
       return res.status(400).json({ message: 'Percentage must be between -100% and 100%' });
     }
 
-    // Get current rates from MongoDB to calculate percentage and update adjustments
+    // Get current rates from MongoDB
     const SilverRate = require('../models/SilverRate');
-    let currentRates = [];
-    try {
-      currentRates = await SilverRate.find({ location: 'Andhra Pradesh' });
-      console.log(`📊 Fetched ${currentRates.length} rates from MongoDB for adjustment`);
-      // Log all rates for debugging
-      currentRates.forEach(r => {
-        console.log(`   - Name: "${r.name}", DisplayName: "${r.displayName || 'none'}", Adjustment: ₹${r.manualAdjustment || 0}/gram`);
-      });
-    } catch (err) {
-      console.warn('Could not fetch current rates for percentage calculation:', err.message);
-      return res.status(500).json({ message: 'Failed to fetch current rates from database' });
+    let currentRates = await SilverRate.find({ location: 'Andhra Pradesh' });
+
+    // Identify which items to adjust
+    let itemsToAdjust = [];
+    if (itemName && itemName !== 'all') {
+      itemsToAdjust = [itemName];
+    } else if (category === 'gold') {
+      itemsToAdjust = currentRates.filter(r => r.type === 'gold').map(r => r.name);
+    } else if (category === 'silver') {
+      itemsToAdjust = currentRates.filter(r => r.type !== 'gold').map(r => r.name);
+    } else {
+      // Default to all items
+      itemsToAdjust = currentRates.map(r => r.name);
     }
 
-    const rateDefinitions = [
-      'Silver Coin 1 Gram',
-      'Silver Coin 5 Grams',
-      'Silver Coin 10 Grams',
-      'Silver Coin 50 Grams',
-      'Silver Coin 100 Grams',
-      'Silver Bar 100 Grams',
-      'Silver Bar 500 Grams',
-      'Silver Bar 1 Kg',
-      'Silver Jewelry 92.5%',
-      'Silver Jewelry 99.9%'
-    ];
+    console.log(`📊 Processing adjustment: ${amount} (${isPercentage ? 'percentage' : 'amount'}) for ${itemName || category || 'all items'}`);
 
     let modified = 0;
     const adjustments = [];
     const bulkOps = [];
 
-    // If itemName is provided, adjust only that item; otherwise adjust all
-    // itemName could be either the original name or displayName, so we need to find by both
-    const itemsToAdjust = itemName ? [itemName] : rateDefinitions;
-
-    console.log(`🔍 Adjusting rates for: ${itemName ? `"${itemName}"` : 'all items'}`);
-    console.log(`📊 Total rates in database: ${currentRates.length}`);
-
     for (const itemIdentifier of itemsToAdjust) {
-      console.log(`🔎 Looking up rate: "${itemIdentifier}"`);
-      // Try to find rate by original name first (most reliable)
-      let currentRate = currentRates.find(r => r.name === itemIdentifier);
-      let rateName = null;
+      // Find the rate in our fetched list
+      let currentRate = currentRates.find(r =>
+        r.name === itemIdentifier ||
+        r.displayName === itemIdentifier ||
+        (r._id && r._id.toString() === itemIdentifier)
+      );
 
-      if (currentRate) {
-        // Found by name - use it
-        rateName = currentRate.name;
-      } else {
-        // Try to find by displayName
-        currentRate = currentRates.find(r => r.displayName === itemIdentifier);
-        if (currentRate) {
-          // Found by displayName - use the original name for the update
-          rateName = currentRate.name;
-        } else {
-          // Try to find by _id if itemIdentifier looks like an ObjectId
-          if (itemIdentifier.match(/^[0-9a-fA-F]{24}$/)) {
-            currentRate = currentRates.find(r => r._id.toString() === itemIdentifier);
-            if (currentRate) {
-              rateName = currentRate.name;
-            }
-          }
-        }
-      }
-
-      // If still not found, try case-insensitive search by name
-      if (!rateName) {
-        currentRate = currentRates.find(r =>
-          r.name.toLowerCase() === itemIdentifier.toLowerCase()
-        );
-        if (currentRate) {
-          rateName = currentRate.name;
-        }
-      }
-
-      // If still not found, try case-insensitive search by displayName
-      if (!rateName) {
-        currentRate = currentRates.find(r =>
-          r.displayName && r.displayName.toLowerCase() === itemIdentifier.toLowerCase()
-        );
-        if (currentRate) {
-          rateName = currentRate.name;
-          console.log(`✅ Found rate by displayName (case-insensitive): "${itemIdentifier}" → "${rateName}"`);
-        }
-      }
-
-      // If still not found, try partial match on displayName (handles typos)
-      if (!rateName) {
-        currentRate = currentRates.find(r =>
-          r.displayName && r.displayName.toLowerCase().includes(itemIdentifier.toLowerCase())
-        );
-        if (currentRate) {
-          rateName = currentRate.name;
-          console.log(`✅ Found rate by displayName (partial match): "${itemIdentifier}" → "${rateName}"`);
-        }
-      }
-
-      // If still not found, try direct MongoDB query as last resort
-      if (!rateName) {
-        try {
-          const dbRate = await SilverRate.findOne({
-            $or: [
-              { name: itemIdentifier, location: 'Andhra Pradesh' },
-              { displayName: itemIdentifier, location: 'Andhra Pradesh' },
-              { name: { $regex: new RegExp(`^${itemIdentifier}$`, 'i') }, location: 'Andhra Pradesh' },
-              { displayName: { $regex: new RegExp(`^${itemIdentifier}$`, 'i') }, location: 'Andhra Pradesh' }
-            ]
-          });
-          if (dbRate) {
-            currentRate = dbRate;
-            rateName = dbRate.name;
-            console.log(`✅ Found rate via direct MongoDB query: "${itemIdentifier}" → "${rateName}"`);
-          }
-        } catch (dbError) {
-          console.warn(`⚠️ Direct MongoDB query failed:`, dbError.message);
-        }
-      }
-
-      // If still not found and itemIdentifier is in rateDefinitions, use it as the name
-      if (!rateName && rateDefinitions.includes(itemIdentifier)) {
-        rateName = itemIdentifier;
-        currentRate = currentRates.find(r => r.name === rateName);
-      }
-
-      // CRITICAL FIX: If we found a rate by displayName, don't require it to be in rateDefinitions
-      // This allows custom displayNames like "old silver" to work
-      if (!rateName || (!rateDefinitions.includes(rateName) && !currentRate)) {
-        console.error(`❌ Rate "${itemIdentifier}" not found in database.`);
-        console.error(`   Available rates: ${currentRates.map(r => `"${r.name}"${r.displayName ? ` (display: "${r.displayName}")` : ''}`).join(', ')}`);
-        continue;
-      }
-
-      // If we found a rate but it's not in rateDefinitions, that's OK - we found it by displayName
-      if (currentRate && !rateDefinitions.includes(rateName)) {
-        console.log(`⚠️ Rate "${rateName}" found by displayName "${itemIdentifier}" but not in standard rateDefinitions - proceeding anyway`);
+      // If not found, try case-insensitive or partial (reuse existing logic from admin.js if needed)
+      if (!currentRate) {
+        currentRate = await SilverRate.findOne({
+          $or: [
+            { name: itemIdentifier, location: 'Andhra Pradesh' },
+            { displayName: itemIdentifier, location: 'Andhra Pradesh' }
+          ]
+        });
       }
 
       if (!currentRate) {
-        console.warn(`❌ Rate "${rateName}" not found in database after lookup, skipping adjustment`);
+        console.error(`❌ Rate "${itemIdentifier}" not found.`);
         continue;
       }
 
-      console.log(`✅ Found rate for adjustment: "${itemIdentifier}" → "${rateName}" (displayName: "${currentRate.displayName || 'none'}")`);
-
-      // CRITICAL: Use normalPrice directly (immutable base price)
-      // The manual adjustment is applied relative to normalPrice, not the current adjusted price
-      // This ensures: adjustedPrice = normalPrice + silverDiff + manualAdjustment
+      const rateName = currentRate.name;
+      const itemType = currentRate.type;
       let normalPrice = currentRate.normalPrice;
       const currentAdjustment = currentRate.manualAdjustment || 0;
 
-      // If normalPrice is not set, we need to calculate it from current rate
-      // But ideally, normalPrice should already be set by the rate updater
-      if (normalPrice === null || normalPrice === undefined || normalPrice <= 0) {
-        console.warn(`⚠️ normalPrice not set for ${rateName}, attempting to calculate from current rate...`);
-        // Try to get it from live source
-        try {
-          const { fetchSilverRatesFromMultipleSources } = require('../utils/multiSourceRateFetcher');
-          const live = await Promise.race([
-            fetchSilverRatesFromMultipleSources(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Rate fetch timeout')), 3000))
-          ]);
-          if (live && live.ratePerGram && live.ratePerGram > 0) {
-            // Adjust base for purity
-            if (currentRate.purity === '92.5%') {
-              normalPrice = live.ratePerGram * 0.96;
-            } else if (currentRate.purity === '99.99%') {
-              normalPrice = live.ratePerGram * 1.005;
-            } else {
-              normalPrice = live.ratePerGram;
-            }
-            console.log(`✅ Calculated normalPrice for ${rateName}: ₹${normalPrice.toFixed(2)}/gram`);
-          } else {
-            // Last resort: use current ratePerGram - currentAdjustment (approximation)
-            normalPrice = (currentRate.ratePerGram || 0) - currentAdjustment;
-            console.warn(`⚠️ Using fallback normalPrice for ${rateName}: ₹${normalPrice.toFixed(2)}/gram`);
-          }
-        } catch (err) {
-          // Last resort fallback
-          normalPrice = (currentRate.ratePerGram || 0) - currentAdjustment;
-          console.warn(`⚠️ Could not fetch live rate, using fallback normalPrice for ${rateName}: ₹${normalPrice.toFixed(2)}/gram`);
+      // Normalize adjustment value based on item type and adjustment type
+      let normalizedAmount = amount;
+      if (!isPercentage) {
+        if (itemType === 'gold') {
+          // Input for gold is "per 10g", so divide by 10 to get "per gram"
+          normalizedAmount = amount / 10;
+          console.log(`🟡 Gold item detected: Normalized ${amount}/10g to ${normalizedAmount}/g`);
+        } else {
+          // Input for silver is "per kg", so divide by 1000 to get "per gram"
+          normalizedAmount = amount / 1000;
+          console.log(`⚪ Silver item detected: Normalized ${amount}/kg to ${normalizedAmount}/g`);
         }
       }
 
-      let adjustmentAmount = 0;
-      let actualPercentageChange = 0;
-
-      if (isPercentage) {
-        // Calculate amount based on percentage of normalPrice
-        adjustmentAmount = (normalPrice * amount) / 100;
-        actualPercentageChange = amount;
-      } else {
-        // For absolute amount adjustments, the provided amount IS the new adjustment (replaces previous)
-        // E.g., user enters +1 means manualAdjustment = +1 (replacing any previous adjustment)
-        adjustmentAmount = amount;
-        actualPercentageChange = normalPrice > 0
-          ? ((amount / normalPrice) * 100)
-          : 0;
+      // If normalPrice is missing, try to calculate or use fallback
+      if (!normalPrice || normalPrice <= 0) {
+        normalPrice = (currentRate.ratePerGram || 0) - currentAdjustment;
       }
 
-      // CRITICAL: The adjustmentAmount REPLACES the previous manualAdjustment
-      // This is the absolute value to store in the database
-      // When rate updater runs: adjustedPrice = normalPrice + silverDiff + adjustmentAmount
-      const newAdjustment = adjustmentAmount;
+      let newAdjustment = isPercentage ? (normalPrice * normalizedAmount) / 100 : normalizedAmount;
 
-      // CRITICAL: Log replacement logic to verify it's working
-      console.log(`\n🔧🔧🔧 ADJUSTMENT REPLACEMENT LOGIC 🔧🔧🔧`);
-      console.log(`Product: ${rateName}`);
-      console.log(`Input amount: ${amount} (${adjustmentType})`);
-      console.log(`Normal price (base): ₹${normalPrice.toFixed(2)}/gram`);
-      console.log(`Previous adjustment in DB: ₹${currentAdjustment.toFixed(2)}/gram`);
-      console.log(`NEW adjustment to store: ₹${newAdjustment.toFixed(2)}/gram (REPLACING previous ₹${currentAdjustment.toFixed(2)}, NOT adding)`);
-      console.log(`VERIFICATION: Previous (${currentAdjustment.toFixed(2)}) is being REPLACED by new (${newAdjustment.toFixed(2)}), NOT added`);
-      console.log(`Rate updater will calculate: adjustedPrice = normalPrice (${normalPrice.toFixed(2)}) + silverDiff + newAdjustment (${newAdjustment.toFixed(2)})`);
-      console.log(`🔧🔧🔧 END ADJUSTMENT LOGIC 🔧🔧🔧\n`);
-
-      // Calculate weight in grams for total rate
+      // Update calculations
       let weightInGrams = currentRate.weight?.value || 1;
       if (currentRate.weight?.unit === 'kg') {
-        weightInGrams = weightInGrams * 1000;
+        weightInGrams *= 1000;
       }
 
-      // CRITICAL: Calculate adjustedPrice immediately
-      // Formula: adjustedPrice = normalPrice + silverDiff + newAdjustment
-      // Note: silverDiff will be calculated by rate updater every second
-      // For immediate update, we'll use a simplified calculation that the rate updater will correct
-      // The rate updater runs every second and will recalculate correctly with: normalPrice + silverDiff + manualAdjustment
-      let adjustedPrice = normalPrice + newAdjustment; // Simplified for immediate update
-      let ratePerGram = Math.max(0, adjustedPrice);
+      // Note: base rates handled by rate updater, we just set the manualAdjustment
+      // and a temporary ratePerGram/rate which the updater will correct
+      let ratePerGram = Math.max(0, normalPrice + newAdjustment);
 
-      // Log the immediate update (rate updater will recalculate with silverDiff every second)
-      if (modified === 0) { // Log only for first rate to avoid spam
-        console.log(`💰 Immediate update: Normal ₹${normalPrice.toFixed(2)} + Adjustment ₹${newAdjustment.toFixed(2)} = Adjusted ₹${adjustedPrice.toFixed(2)} (rate updater will add silverDiff every second)`);
-      }
-
-      // Update MongoDB with new adjustment AND immediately recalculated adjustedPrice
       bulkOps.push({
         updateOne: {
           filter: { name: rateName, location: 'Andhra Pradesh' },
           update: {
             $set: {
               manualAdjustment: newAdjustment,
-              adjustedPrice: adjustedPrice,
               ratePerGram: ratePerGram,
               rate: Math.max(0, ratePerGram * weightInGrams),
               lastUpdated: new Date()
@@ -708,67 +537,35 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
 
       modified++;
       adjustments.push({
-        itemName: rateName, // Use original name for consistency
-        amount: adjustmentAmount,
-        normalPrice: normalPrice,
-        originalAdjustment: currentAdjustment,
-        newAdjustment: newAdjustment,
-        percentageChange: parseFloat(actualPercentageChange.toFixed(2))
+        itemName: rateName,
+        type: itemType,
+        normalizedAdjustment: newAdjustment,
+        percentageChange: isPercentage ? normalizedAmount : (normalPrice > 0 ? (newAdjustment / normalPrice) * 100 : 0)
       });
     }
 
-    // Execute bulk update to MongoDB
     if (bulkOps.length > 0) {
+      await SilverRate.bulkWrite(bulkOps);
+      console.log(`✅ Updated ${bulkOps.length} rate adjustments in MongoDB`);
+
+      // Trigger rate update
       try {
-        await SilverRate.bulkWrite(bulkOps);
-        console.log(`✅ Updated ${bulkOps.length} rate adjustments in MongoDB`);
-      } catch (bulkError) {
-        console.error('Error updating adjustments in MongoDB:', bulkError);
-        return res.status(500).json({ message: 'Failed to save adjustments to database', error: bulkError.message });
+        const ratesRoute = require('./rates');
+        if (ratesRoute.updateRatesHandler) {
+          ratesRoute.updateRatesHandler(req, null).catch(e => console.error('Update handler error:', e.message));
+        }
+      } catch (e) {
+        console.warn('Could not trigger rate update handler');
       }
     }
 
-    // Trigger immediate rate update to apply adjustments (adjustments are already in MongoDB)
-    try {
-      const updateRatesHandler = require('./rates').updateRatesHandler || null;
-      if (updateRatesHandler) {
-        updateRatesHandler(req, null).catch(err => {
-          console.error('⚠️ Failed to trigger rate update after adjustment:', err.message);
-        });
-        console.log('🔄 Triggered rate update to recalculate rates with new adjustments');
-      }
-    } catch (updateErr) {
-      console.warn('⚠️ Could not trigger rate update:', updateErr.message);
-    }
-
-    // Emit socket event for clients
     const io = req.app.get('io');
-    if (io) io.emit('manualAdjustment', { value: amount, adjustmentType: isPercentage ? 'percentage' : 'amount', itemName });
-
-    // Calculate average percentage if multiple items
-    const avgPercentage = adjustments.length > 0
-      ? (adjustments.reduce((sum, adj) => sum + adj.percentageChange, 0) / adjustments.length).toFixed(2)
-      : 0;
-
-    const adjustmentDescription = isPercentage
-      ? `${amount > 0 ? '+' : ''}${Math.abs(amount)}%`
-      : `₹${Math.abs(amount)}/gram`;
-
-    console.log(`✅ Admin adjusted rates: ${adjustmentDescription} applied to ${modified} rate(s)`);
-
-    const message = isPercentage
-      ? `Rates ${amount > 0 ? 'increased' : 'decreased'} by ${adjustmentDescription}`
-      : `Rates ${amount > 0 ? 'increased' : 'decreased'} by ${adjustmentDescription} (${amount > 0 ? '+' : ''}${avgPercentage}%)`;
+    if (io) io.emit('manualAdjustment', { value: amount, adjustmentType, itemName, category });
 
     res.json({
-      message,
+      message: `Rates adjusted successfully for ${modified} items`,
       modifiedCount: modified,
-      value: amount,
-      adjustmentType: isPercentage ? 'percentage' : 'amount',
-      percentageChange: parseFloat(avgPercentage),
-      adjustments: adjustments,
-      itemName: itemName || 'all',
-      note: 'Adjustment applied and rates are being updated in the database'
+      adjustments: adjustments
     });
   } catch (error) {
     console.error('Admin adjust rates error:', error);
