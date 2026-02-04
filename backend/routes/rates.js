@@ -301,9 +301,9 @@ const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false
 // Cache for live base rate (updated on every request)
 // This cache is updated frequently to ensure fresh rates
 let cachedBaseRate = {
-  ratePerGram: 350.0, // Default fallback rate (updated for current market rate ~₹350,000/kg)
-  ratePerKg: 350000,
-  source: 'cache',
+  ratePerGram: 285.0, // Updated for Feb 2026 market rate (~₹285,000/kg)
+  ratePerKg: 285000,
+  source: 'fallback-default',
   lastUpdated: new Date(),
   usdInrRate: 89.25
 };
@@ -537,7 +537,6 @@ router.get('/', async (req, res) => {
         syncRatesWithSource().catch(() => { });
       }
     }
-
     if (mongoRates.length > 0) {
       const finalRates = await applyManualAdjustments(mongoRates, isAdmin, skipUpdate);
       // Ensure all products are present for admin view
@@ -546,7 +545,8 @@ router.get('/', async (req, res) => {
       res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' });
       return res.json(completeRates);
     } else {
-      // Fallback to cache if no DB rates
+      // Fallback: If no DB rates, use the Last Known Good (cachedBaseRate)
+      console.log(`⚠️ No rates in DB, using LKG Cache (Source: ${cachedBaseRate.source})`);
       const calculatedOriginalRates = await getOriginalRates(cachedBaseRate.ratePerGram);
       const ratesWithUSD = calculatedOriginalRates.map(r => ({ ...r, usdInrRate: cachedBaseRate.usdInrRate || 89.25 }));
       return res.json(ratesWithUSD);
@@ -695,7 +695,12 @@ router.put('/:id', auth, async (req, res) => {
       );
 
       // Trigger sync to update calculated rates
-      await syncRatesWithSource();
+      try {
+        await syncRatesWithSource();
+        console.log('✅ Rate adjustment triggered internal sync');
+      } catch (e) {
+        console.warn('⚠️ Post-update sync failed (will retry on next request):', e.message);
+      }
     }
 
     res.json({ message: 'Rate adjustment updated successfully' });
