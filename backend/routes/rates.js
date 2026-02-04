@@ -299,13 +299,12 @@ const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false
 };
 
 // Cache for live base rate (updated on every request)
-// This cache is updated frequently to ensure fresh rates
 let cachedBaseRate = {
-  ratePerGram: 285.0, // Updated for Feb 2026 market rate (~₹285,000/kg)
-  ratePerKg: 285000,
-  source: 'fallback-default',
-  lastUpdated: new Date(),
-  usdInrRate: 89.25
+  ratePerGram: 0,
+  ratePerKg: 0,
+  source: 'none',
+  lastUpdated: new Date(0), // Far past
+  usdInrRate: 0
 };
 
 // Rate history for smoothing (keep last 10 rates for averaging)
@@ -501,10 +500,11 @@ router.get('/base-rate', async (req, res) => {
       });
     }
 
-    // Fallback if no cache
-    return res.json({
-      baseRatePerGram: 350.0,
-      source: 'fallback'
+    // Fallback if no live cache
+    return res.status(503).json({
+      message: 'Live rates currently unavailable from source',
+      baseRatePerGram: 0,
+      source: 'unavailable'
     });
   } catch (error) {
     console.error('Error fetching base rate:', error.message);
@@ -545,11 +545,12 @@ router.get('/', async (req, res) => {
       res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' });
       return res.json(completeRates);
     } else {
-      // Fallback: If no DB rates, use the Last Known Good (cachedBaseRate)
-      console.log(`⚠️ No rates in DB, using LKG Cache (Source: ${cachedBaseRate.source})`);
-      const calculatedOriginalRates = await getOriginalRates(cachedBaseRate.ratePerGram);
-      const ratesWithUSD = calculatedOriginalRates.map(r => ({ ...r, usdInrRate: cachedBaseRate.usdInrRate || 89.25 }));
-      return res.json(ratesWithUSD);
+      // Strictly live: If no DB rates and live sync hasn't happened yet, return error or empty
+      console.log(`⚠️ Live rates not yet available or fetch failed.`);
+      return res.status(503).json({
+        message: 'Live market data currently unavailable',
+        rates: []
+      });
     }
   } catch (error) {
     console.error('Final /rates error:', error.message);
@@ -561,55 +562,25 @@ router.get('/', async (req, res) => {
 router.post('/handle-update', updateRatesHandler);
 router.get('/handle-update', updateRatesHandler);
 
-// Initialize rates - loads from MongoDB
+// Initialize rates - Strictly triggers live update only
 router.post('/initialize', async (req, res) => {
   try {
-    const mongoose = require('mongoose');
-    if (mongoose.connection.readyState === 1) {
-      const lastRate = await SilverRate.findOne({ location: 'Andhra Pradesh' }).sort({ lastUpdated: -1 });
-      if (lastRate && lastRate.ratePerGram) {
-        cachedBaseRate = {
-          ratePerGram: lastRate.ratePerGram,
-          ratePerKg: lastRate.ratePerGram * 1000,
-          source: 'mongodb',
-          lastUpdated: lastRate.lastUpdated || new Date(),
-          usdInrRate: 89.25
-        };
-        // Pre-populate rate history with MongoDB rate
-        rateHistory = [{ rate: lastRate.ratePerGram, timestamp: Date.now() }];
-        console.log(`✅ Loaded rate from MongoDB: ₹${lastRate.ratePerGram}/gram`);
-      }
-    }
+    console.log('🚀 [initialize] Triggering live rate fetch...');
+
+    // Reset to none to ensure no stale data is accidentally served during init
+    cachedBaseRate.source = 'none';
 
     // Trigger update
     updateRatesFromEndpoints().catch(() => { });
 
     res.json({
-      message: 'Rate system initialized.',
-      currentRate: cachedBaseRate.ratePerGram,
-      source: cachedBaseRate.source
+      message: 'Rate system initialization triggered (Live fetch started).',
+      status: 'pending'
     });
   } catch (fatalError) {
-    console.error('❌ FATAL ERROR in rates endpoint:', fatalError);
-    // Absolute failsafe fallback to prevent 500 loops
-    try {
-      if (!res.headersSent) {
-        res.status(200).json([
-          {
-            _id: 'fallback_silver_1kg',
-            name: 'Silver Bar 1 Kg',
-            rate: cachedBaseRate?.ratePerKg || 290000,
-            ratePerGram: cachedBaseRate?.ratePerGram || 290,
-            purity: '99.99%',
-            weight: { value: 1, unit: 'kg' },
-            type: 'bar',
-            isVisible: true,
-            location: 'Andhra Pradesh'
-          }
-        ]);
-      }
-    } catch (e) {
-      console.error('Failed to send failsafe response:', e);
+    console.error('❌ FATAL ERROR in rates initialization:', fatalError);
+    if (!res.headersSent) {
+      res.status(500).json({ message: 'Initialization failed', error: fatalError.message });
     }
   }
 });
