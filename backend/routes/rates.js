@@ -329,617 +329,43 @@ const calculateSmoothedRate = (newRate) => {
   return Math.round(newRate * 100) / 100;
 };
 
-// Update rates from endpoints (non-blocking)
-const updateRatesFromEndpoints = async () => {
-  // On Vercel production, triggering updates might be different, but for this specific user request
-  // we want to ensure 1-second updates if the process is running.
-
-  const now = Date.now();
-  const timeSinceLastAttempt = now - lastUpdateAttempt;
-
-  // STRICT 1-SECOND INTERVAL (User request: "fetch every second")
-  // We allow actual execution every ~1000ms
-  if (timeSinceLastAttempt < 1000) {
-    return;
-  }
-
-  lastUpdateAttempt = now;
-
-  // console.log(`📡 Fetching rates...`); // Reduced log spam
-
-  try {
-    // Fetch with SHORT timeout to prevent hanging the API request
-    // Backend fetch should be faster than frontend timeout (15s)
-    const liveRate = await Promise.race([
-      fetchSilverRatesFromMultipleSources(),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('RB Goldspot Timeout')), 3500)
-      )
-    ]);
-
-    if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0) {
-
-      // Update cache immediately
-      cachedBaseRate = {
-        ratePerGram: liveRate.ratePerGram,
-        ratePerKg: liveRate.ratePerKg,
-        source: 'rbgoldspot', // Hardcoded as we know it's RB
-        lastUpdated: new Date(),
-        usdInrRate: liveRate.usdInrRate || 89.25
-      };
-
-      // console.log(`✅ Rate updated: ₹${liveRate.ratePerGram.toFixed(2)}/gram`); // Reduced log spam
-
-      lastSuccessfulUpdate = Date.now();
-
-      // Update MongoDB with exact rate from source
-      await updateMongoDBRates(liveRate.ratePerGram, 'rbgoldspot', liveRate.gold999Rate);
-
-    } else {
-      console.warn('⚠️ Invalid rate received -> Keeping old rate');
-    }
-  } catch (error) {
-    console.error('❌ Rate fetch failed:', error.message);
-  }
-};
-
-const updateMongoDBRates = async (baseRatePerGram, source, goldRatePerGram = null) => {
-  try {
-    if (mongoose.connection.readyState !== 1) {
-      try {
-        await mongoose.connect(process.env.MONGODB_URI, {
-          useNewUrlParser: true,
-          useUnifiedTopology: true,
-          serverSelectionTimeoutMS: 5000,
-        });
-        console.log('✅ MongoDB connected for rate update');
-      } catch (connError) {
-        console.warn('⚠️ MongoDB connection failed:', connError.message);
-        return;
-      }
-    }
-
-    // Get ALL product definitions (Coins, Bars, Jewelry, AND Gold)
-    // Pass goldRatePerGram to include Gold products if available
-    const ratesList = await getOriginalRates(baseRatePerGram, goldRatePerGram);
-
-
-    // We need to re-map this to rateDefinitions format for the bulk update logic below
-    // getOriginalRates returns calculated objects, but the logic below expects definitions + calculation
-    // Actually, getOriginalRates returns the full object structure needed for the list response.
-    // But the bulk update logic below re-calculates everything from `rateDefinitions` array.
-    // So we should update `rateDefinitions` array inside this function too, or just reuse the logic from `getOriginalRates`?
-
-    // Let's redefine `rateDefinitions` here including Gold if applicable, consistent with getOriginalRates
-    const rateDefinitions = [
-      { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
-      { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
-      { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
-      { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
-      { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' }
-    ];
-
-    // Always add Gold products to ensure they exist in DB (default to 0 if rate not available)
-    rateDefinitions.push(
-      { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
-    );
-
-
-    // Fetch manual adjustments from MongoDB
-    const adjustmentsMap = await fetchManualAdjustments(rateDefinitions.map(r => r.name));
-
-    let updatedCount = 0;
-    const updatePromises = rateDefinitions.map(async (rateDef) => {
-      try {
-        let ratePerGram;
-        if (rateDef.type === 'gold') {
-          // CRITICAL FIX: Use Gold rate for Gold products
-          // Pass 0 if undefined to avoid NaN
-          ratePerGram = goldRatePerGram || 0;
-        } else {
-          // Use Silver rate for other products
-          ratePerGram = baseRatePerGram;
-          if (rateDef.purity === '92.5%') {
-            ratePerGram = baseRatePerGram * 0.96;
-          }
-        }
-        // Both 99.9% and 99.99% use base rate as-is (no multiplier)
-
-        // Only apply adjustment if we successfully fetched them
-        // If adjustmentsMap is null (fetch failed), preserve existing adjustment in DB by NOT including it in $set
-        const manualAdjustment = adjustmentsMap ? (adjustmentsMap[rateDef.name] || 0) : 0;
-
-        // If map is valid, apply adjustment to rate. If not, we can't accurately calculate rate with adjustment here.
-        // But we must update the rate. 
-        // Best approach: If we can't fetch adjustments, assume 0 for CALCULATION but don't overwrite in DB?
-        // Actually, if we use 0 for calculation, the displayed rate will drop.
-        // Ideally we should NOT update the rate if we can't fetch adjustments, to prevent price glitches.
-        // But preventing updates might lead to stale rates.
-        // Compromise: Use 0 for calculation (safe fallback) but DO NOT overwrite manualAdjustment field in DB.
-
-        ratePerGram = ratePerGram + manualAdjustment;
-        ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
-
-        let weightInGrams = rateDef.weight.value;
-        if (rateDef.weight.unit === 'kg') {
-          weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
-        }
-
-        // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
-        const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
-
-        const updatePayload = {
-          name: rateDef.name,
-          type: rateDef.type,
-          weight: rateDef.weight,
-          purity: rateDef.purity,
-          ratePerGram: ratePerGram,
-          rate: totalRate,
-          lastUpdated: new Date(),
-          location: 'Andhra Pradesh',
-          unit: 'INR',
-          source: 'rbgoldspot'
-        };
-
-        // Only update manualAdjustment if we successfully fetched the map
-        if (adjustmentsMap !== null) {
-          updatePayload.manualAdjustment = manualAdjustment;
-        }
-
-        await SilverRate.findOneAndUpdate(
-          { name: rateDef.name, location: 'Andhra Pradesh' },
-          {
-            $set: updatePayload,
-            $setOnInsert: {
-              // Set defaults only when inserting new documents (not when updating existing)
-              isVisible: true,
-              displayName: null
-            }
-          },
-          { upsert: true, new: true }
-        );
-        updatedCount++;
-      } catch (err) {
-        console.error(`❌ Failed to update ${rateDef.name}:`, err.message);
-      }
-    });
-
-    await Promise.all(updatePromises);
-
-    if (updatedCount > 0) {
-      console.log(`✅ MongoDB: Updated ${updatedCount} rates (base: ₹${baseRatePerGram.toFixed(2)}/gram)`);
-    }
-  } catch (error) {
-    console.error('❌ MongoDB rate update error:', error.message);
-  }
-};
-
-/**
- * @swagger
- * /rates:
- *   get:
- *     summary: Get all silver rates (Public)
- *     tags: [Rates]
- *     description: Returns current silver rates for all products with manual adjustments applied
- *     responses:
- *       200:
- *         description: List of silver rates
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/SilverRate'
- *       500:
- *         description: Server error
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- */
-// Get current base rate from source (without adjustments) - for "Show As It Is" feature
-router.get('/base-rate', async (req, res) => {
-  try {
-    // STALE-WHILE-REVALIDATE PATTERN
-    // 1. Return cached data immediately if available AND VALID (not anomalous)
-    // STALE-WHILE-REVALIDATE PATTERN for 1s real-time updates
-    if (cachedBaseRate && cachedBaseRate.ratePerGram > 0 && (Date.now() - cachedBaseRate.lastUpdated.getTime() < 2000)) {
-      // Return mostly fresh cache immediately to be fast
-      // User wants "every second", so 2s cache is acceptable buffer if system is busy
-      // But let's trigger a background update anyway to keep it super fresh
-      if (Date.now() - cachedBaseRate.lastUpdated.getTime() > 800) {
-        updateRatesFromEndpoints().catch(e => console.error(e));
-      }
-
-      return res.json({
-        baseRatePerGram: cachedBaseRate.ratePerGram,
-        baseRatePerKg: cachedBaseRate.ratePerKg,
-        source: cachedBaseRate.source,
-        lastUpdated: cachedBaseRate.lastUpdated,
-        usdInrRate: cachedBaseRate.usdInrRate
-      });
-    }
-
-    // Cold start or Stale Cache? Fetch Live in background and return fallback if needed
-    // DON'T block the main request
-    updateRatesFromEndpoints().catch(e => console.error('Background update failed:', e.message));
-
-    if (cachedBaseRate && cachedBaseRate.ratePerGram > 0) {
-      return res.json({
-        baseRatePerGram: cachedBaseRate.ratePerGram,
-        baseRatePerKg: cachedBaseRate.ratePerKg,
-        source: cachedBaseRate.source,
-        lastUpdated: cachedBaseRate.lastUpdated,
-        usdInrRate: cachedBaseRate.usdInrRate
-      });
-    }
-
-
-    // Fallback if update failed
-    return res.json({
-      baseRatePerGram: 350.0,
-      source: 'fallback'
-    });
-  } catch (error) {
-    console.error('Error fetching base rate:', error.message);
-    // Return cached base rate if we have it, even if it failed above (unlikely but safe)
-    if (cachedBaseRate && cachedBaseRate.ratePerGram > 0) {
-      return res.json({
-        baseRatePerGram: cachedBaseRate.ratePerGram,
-        baseRatePerKg: cachedBaseRate.ratePerKg,
-        source: cachedBaseRate.source,
-        lastUpdated: cachedBaseRate.lastUpdated
-      });
-    }
-
-    // Fallback if no cache
-    return res.json({
-      baseRatePerGram: 350.0, // Default fallback
-      source: 'fallback'
-    });
-  }
-});
-
-// Get all silver rates - First tries MongoDB, then live API
-router.get('/', async (req, res) => {
-  try {
-    let skipUpdate = req.query.skipUpdate === 'true' || req.query.skipUpdate === true;
-    const adminParam = req.query.admin === 'true' || req.query.admin === true;
-
-    if (skipUpdate) {
-      console.log('⚡ Fast path: skipUpdate=true, fetching from MongoDB only');
-      try {
-        if (mongoose.connection.readyState === 1) {
-          let mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' }).sort({ name: 1 }).lean();
-          updateRatesFromEndpoints().catch(e => console.error('Background update failed:', e.message));
-          if (mongoRates.length > 0) {
-            const isAdmin = isAdminUser(req) || adminParam;
-            const finalRates = await applyManualAdjustments(mongoRates, isAdmin, true);
-            return res.json(finalRates);
-          }
-        }
-      } catch (fastErr) {
-        console.warn('⚠️ Fast path failed:', fastErr.message);
-      }
-    }
-
-    const isAdminFromToken = isAdminUser(req);
-    const isAdmin = isAdminFromToken || adminParam;
-
-    try {
-      const token = req.headers.authorization?.replace('Bearer ', '');
-      if (token) {
-        jwt.verify(token, process.env.JWT_SECRET || 'jain_silver_secret_key_2024_change_in_production');
-      }
-    } catch (e) { }
-
-    let showAsItIs = req.query.showAsItIs === 'true' || req.query.showAsItIs === true;
-    if (!showAsItIs && Settings) {
-      try {
-        const setting = await Settings.getSetting('showAsItIs');
-        if (setting) showAsItIs = setting.value;
-      } catch (e) { }
-    }
-
-    let mongoRates = [];
-    try {
-      if (mongoose.connection.readyState !== 1) {
-        await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 3000 });
-      }
-      if (mongoose.connection.readyState === 1) {
-        mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' }).sort({ name: 1 }).lean();
-      }
-    } catch (e) { console.error('DB fetch failed:', e.message); }
-
-    if (mongoRates.length > 0) {
-      const latestRate = mongoRates.reduce((l, r) => (r.lastUpdated > l.lastUpdated ? r : l), mongoRates[0]);
-      const mongoAge = Date.now() - new Date(latestRate.lastUpdated).getTime();
-
-      if (mongoAge > 1000) {
-        setImmediate(() => updateRatesHandler(req, null).catch(e => { }));
-      }
-
-      const finalRates = await applyManualAdjustments(mongoRates, isAdmin, true);
-      const ratesWithUSD = finalRates.map(r => ({ ...r, usdInrRate: cachedBaseRate.usdInrRate || 89.25 }));
-
-      res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' });
-      return res.json(ratesWithUSD);
-    } else {
-      // Fallback to cache if no DB rates
-      const calculatedOriginalRates = await getOriginalRates(cachedBaseRate.ratePerGram);
-      const finalRates = calculatedOriginalRates.map(r => ({ ...r, usdInrRate: cachedBaseRate.usdInrRate || 89.25 }));
-      return res.json(finalRates);
-    }
-  } catch (error) {
-    console.error('Final /rates error:', error.message);
-    if (!res.headersSent) res.status(500).json({ error: error.message });
-  }
-});
-
-// Update silver rate (admin only) - Now saves to MongoDB
-router.put('/:id', auth, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { rate, manualAdjustment } = req.body;
-
-    const rateDefinitions = [
-      { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
-      { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
-      { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
-      { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
-      { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
-      { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
-    ];
-
-    const rateDef = rateDefinitions.find(r => {
-      const rateId = Buffer.from(r.name).toString('base64').substring(0, 24);
-      return rateId === id;
-    });
-
-    if (!rateDef) {
-      return res.status(404).json({ message: 'Rate not found' });
-    }
-
-    // Get current base rate (from cache or fetch fresh)
-    let baseRatePerGram = cachedBaseRate.ratePerGram;
-    try {
-      const liveRate = await Promise.race([
-        fetchSilverRatesFromMultipleSources(),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout after 5 seconds')), 5000)
-        )
-      ]);
-      if (liveRate && liveRate.ratePerGram && liveRate.ratePerGram > 0) {
-        baseRatePerGram = liveRate.ratePerGram;
-      }
-    } catch (fetchError) {
-      console.warn('Could not fetch fresh base rate for manual adjustment update, using cached:', fetchError.message);
-    }
-
-    // Calculate ratePerGram based on purity
-    let calculatedRatePerGram = baseRatePerGram;
-    if (rateDef.purity === '92.5%') {
-      calculatedRatePerGram = baseRatePerGram * 0.96;
-    } else if (rateDef.purity === '99.99%') {
-      calculatedRatePerGram = baseRatePerGram; // 99.99% uses base rate as-is
-    }
-
-    // Apply manual adjustment if provided
-    const finalManualAdjustment = manualAdjustment !== undefined ? manualAdjustment : 0;
-    calculatedRatePerGram = calculatedRatePerGram + finalManualAdjustment;
-    calculatedRatePerGram = Math.max(0, calculatedRatePerGram);
-
-    // Calculate total rate
-    let weightInGrams = rateDef.weight.value;
-    if (rateDef.weight.unit === 'kg') {
-      weightInGrams = rateDef.weight.value * 1000;
-    }
-    const totalRate = calculatedRatePerGram * weightInGrams;
-
-    // Update MongoDB with manual adjustment AND recalculated rates
-    const updateData = {
-      name: rateDef.name,
-      type: rateDef.type,
-      weight: rateDef.weight,
-      purity: rateDef.purity,
-      ratePerGram: calculatedRatePerGram,
-      rate: totalRate,
-      manualAdjustment: finalManualAdjustment,
-      lastUpdated: new Date(),
-      location: 'Andhra Pradesh',
-      unit: 'INR'
-    };
-
-    if (manualAdjustment !== undefined) {
-      await SilverRate.findOneAndUpdate(
-        { name: rateDef.name, location: 'Andhra Pradesh' },
-        {
-          $set: updateData
-        },
-        { upsert: true, new: true }
-      );
-
-      console.log(`✅ Updated ${rateDef.name}: ratePerGram=₹${calculatedRatePerGram.toFixed(2)}, total=₹${totalRate.toFixed(2)}, manualAdjustment=₹${finalManualAdjustment.toFixed(2)}`);
-    }
-
-    // Fetch updated rate from MongoDB
-    const updatedRate = await SilverRate.findOne({
-      name: rateDef.name,
-      location: 'Andhra Pradesh'
-    });
-
-    res.json({
-      message: 'Rate adjustment updated successfully',
-      rate: {
-        name: rateDef.name,
-        ratePerGram: updatedRate?.ratePerGram || calculatedRatePerGram,
-        rate: updatedRate?.rate || totalRate,
-        manualAdjustment: updatedRate?.manualAdjustment || finalManualAdjustment
-      }
-    });
-  } catch (error) {
-    console.error('Update rate error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-// Force rate update (admin only)
-router.post('/force-update', auth, async (req, res) => {
-  try {
-    lastUpdateAttempt = 0;
-    rateHistory = []; // Clear history for fresh start
-    await updateRatesFromEndpoints();
-    res.json({
-      message: 'Rate update triggered successfully.',
-      currentRate: cachedBaseRate.ratePerGram,
-      source: cachedBaseRate.source
-    });
-  } catch (error) {
-    console.error('Force update error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-// Dedicated endpoint for cron jobs to update rates (no auth required for cron)
-// This endpoint is designed to be called by Vercel Cron or external services
-// Also supports GET method for easy manual triggering
-// Can be called internally without response (for background updates)
-const updateRatesHandler = async (req, res = null) => {
+// Unified function to sync rates with source and save to MongoDB
+const syncRatesWithSource = async (retryCount = 0) => {
   const startTime = Date.now();
-  try {
-    console.log('🔄 Updating rates from live source...');
-    console.log(`📅 Update triggered at: ${new Date().toISOString()}`);
+  console.log(`🔄 [syncRatesWithSource] Starting sync (attempt ${retryCount + 1})...`);
 
-    // Fetch fresh rates with timeout (Vercel allows up to 120s, but use 30s for safety)
+  try {
+    // 1. Fetch live rates
     const liveRate = await Promise.race([
       fetchSilverRatesFromMultipleSources(),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Timeout after 30 seconds')), 30000)
+        setTimeout(() => reject(new Error('RB Goldspot Timeout')), 5000)
       )
     ]);
 
     if (!liveRate || !liveRate.ratePerGram || liveRate.ratePerGram <= 0) {
-      console.error('❌ Invalid rate received:', liveRate);
-      if (res) {
-        return res.status(500).json({
-          success: false,
-          message: 'Failed to fetch valid rate from endpoints',
-          timestamp: new Date().toISOString()
-        });
-      }
-      return; // If no response object, just return silently
+      throw new Error('Invalid or zero rate received from source');
     }
 
-    // ALWAYS log the fetched rate details (critical for debugging)
-    console.log(`📊 Fetched LIVE rate: ₹${liveRate.ratePerGram.toFixed(2)}/gram (₹${liveRate.ratePerKg}/kg)`);
-    console.log(`📊 Source: ${liveRate.source}, Raw Ask: ${liveRate.rawData?.ask || 'N/A'}, Raw High: ${liveRate.rawData?.high || 'N/A'}`);
-
-    // CRITICAL: Update cached base rate immediately so on-the-fly recalculation uses fresh data
+    // 2. Update Cache immediately for fast GET /rates/base-rate
     cachedBaseRate = {
       ratePerGram: liveRate.ratePerGram,
       ratePerKg: liveRate.ratePerKg,
-      source: liveRate.source || 'live',
+      source: liveRate.source || 'rbgoldspot',
       lastUpdated: new Date(),
-      usdInrRate: liveRate.usdInrRate || cachedBaseRate.usdInrRate || 89.25
+      usdInrRate: liveRate.usdInrRate || 89.25
     };
     lastSuccessfulUpdate = Date.now();
 
-    // Warn if rate seems too low (might be old/cached)
-    // Updated threshold: current rates are ~207 per gram, so flag anything below 100 as suspicious
-    if (liveRate.ratePerGram < 100) {
-      console.warn(`⚠️ WARNING: Fetched rate (₹${liveRate.ratePerGram.toFixed(2)}/gram) seems unusually low. Expected ~₹200-210/gram. Check source!`);
-    }
-
-    // Update MongoDB directly with fresh rate
-    // Ensure MongoDB connection (optimized for speed)
+    // 3. Ensure MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
-      const mongoURI = process.env.MONGODB_URI;
-      if (mongoURI) {
-        // Use shorter timeout for faster connection
-        await Promise.race([
-          mongoose.connect(mongoURI, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-            serverSelectionTimeoutMS: 3000, // Reduced from 5000
-            socketTimeoutMS: 10000,
-            maxPoolSize: 1,
-            minPoolSize: 0
-          }),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('MongoDB connection timeout')), 5000)
-          )
-        ]);
-        console.log('✅ MongoDB connected for rate update');
-      } else {
-        console.error('❌ MONGODB_URI not set');
-        if (res) {
-          return res.status(500).json({
-            success: false,
-            message: 'MongoDB URI not configured',
-            timestamp: new Date().toISOString()
-          });
-        }
-        return; // If no response object, just return silently
-      }
+      console.log('🔌 Connecting to MongoDB for sync...');
+      await mongoose.connect(process.env.MONGODB_URI, {
+        serverSelectionTimeoutMS: 5000,
+        socketTimeoutMS: 10000
+      });
     }
 
-    // Use EXACT rate from source (no smoothing, no rounding of base rate)
-    const baseRatePerGram = liveRate.ratePerGram;
-    const baseRatePerKg = liveRate.ratePerKg; // Use exact value from source
-
-    // Extract Gold 999 rate with fallback defaults
-    // Usually Gold is ~75,000 per 10g. Need to normalize to per gram.
-    let goldRatePerGram = 0;
-    if (liveRate.gold999Rate && liveRate.gold999Rate > 0) {
-      if (liveRate.gold999Rate > 500000) {
-        // Assume per kg (e.g. 75,00,000)
-        goldRatePerGram = liveRate.gold999Rate / 1000;
-      } else if (liveRate.gold999Rate > 5000) {
-        // Assume per 10g (e.g. 75,000) - Standard Indian Tola/10g price
-        goldRatePerGram = liveRate.gold999Rate / 10;
-      } else {
-        // Assume per gram (e.g. 7,500)
-        goldRatePerGram = liveRate.gold999Rate;
-      }
-      console.log(`✨ Gold Rate: ₹${liveRate.gold999Rate} (Calculated: ₹${goldRatePerGram.toFixed(2)}/gram)`);
-    } else {
-      console.warn('⚠️ No Gold rate found in live data, defaulting to 0');
-    }
-
-    // Get or set baseSilverPrice using SilverPriceTracker collection
-    let baseSilverPrice = null;
-    try {
-      baseSilverPrice = await SilverPriceTracker.getOrCreateBasePrice('Andhra Pradesh');
-    } catch (err) {
-      console.warn('Could not fetch baseSilverPrice from tracker:', err.message);
-    }
-
-    if (baseSilverPrice === null) {
-      // Set baseSilverPrice to current baseRatePerGram (stored once only)
-      try {
-        await SilverPriceTracker.setBasePriceIfNotExists(baseRatePerGram, 'Andhra Pradesh');
-        baseSilverPrice = baseRatePerGram;
-        console.log(`🔧 Set baseSilverPrice to ₹${baseSilverPrice.toFixed(2)}/gram`);
-      } catch (err) {
-        console.error('Could not set baseSilverPrice:', err.message);
-        baseSilverPrice = baseRatePerGram; // Use current rate as fallback
-      }
-    }
-
-    // ALWAYS log MongoDB update (critical for debugging)
-    console.log(`💾 Updating MongoDB with LIVE base rate: ₹${baseRatePerGram.toFixed(2)}/gram (₹${baseRatePerKg}/kg)`);
     const rateDefinitions = [
       { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
       { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
@@ -955,103 +381,62 @@ const updateRatesHandler = async (req, res = null) => {
       { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
     ];
 
-    // Fetch existing rates from MongoDB to get normalPrice and manualAdjustment
-    let existingRatesMap = {};
-    try {
-      const existingRates = await SilverRate.find({
-        location: 'Andhra Pradesh',
-        name: { $in: rateDefinitions.map(r => r.name) }
-      });
+    // 4. Fetch existing adjustments
+    // CRITICAL: If this fails, we MUST NOT proceed to updateMongoDBRates as it would reset adjustments to zero
+    const adjustmentsMap = await fetchManualAdjustments(rateDefinitions.map(r => r.name));
 
-      existingRates.forEach(rate => {
-        existingRatesMap[rate.name] = {
-          normalPrice: rate.normalPrice,
-          manualAdjustment: rate.manualAdjustment || 0
-        };
-      });
-    } catch (fetchError) {
-      console.warn('Could not fetch existing rates from MongoDB, using defaults:', fetchError.message);
+    if (adjustmentsMap === null) {
+      console.warn('⚠️ Manual adjustments fetch returned null (DB issue). Aborting DB update to prevent overwriting adjustments.');
+      return false;
     }
 
-    let updatedCount = 0;
-    // Use bulk write for faster MongoDB updates (more efficient than individual updates)
-    const bulkOps = rateDefinitions.map((rateDef) => {
-      // Calculate rate per gram based on purity
-      let ratePerGramForPurity;
+    // 5. Prepare Gold Rate
+    let goldRatePerGram = liveRate.gold999Rate || 0;
+    if (goldRatePerGram > 500000) goldRatePerGram /= 1000;
+    else if (goldRatePerGram > 5000) goldRatePerGram /= 10;
 
+    // 6. Execute Bulk Update
+    const bulkOps = rateDefinitions.map(rateDef => {
+      let baseRate;
       if (rateDef.type === 'gold') {
-        // For Gold, use the passed goldRatePerGram
-        ratePerGramForPurity = goldRatePerGram;
-        // If goldRatePerGram missing (shouldn't happen if pushed to list), fallback to 0 or safe default
-        if (!ratePerGramForPurity) ratePerGramForPurity = 0;
+        baseRate = goldRatePerGram;
       } else {
-        // Silver logic
-        ratePerGramForPurity = baseRatePerGram;
+        baseRate = liveRate.ratePerGram;
+        // Standardize multipliers for transparency
         if (rateDef.purity === '92.5%') {
-          ratePerGramForPurity = baseRatePerGram * 0.96;
+          baseRate *= 0.96; // 92.5% silver + making charges/wastage buffer
+        } else if (rateDef.purity === '99.9%') {
+          baseRate *= 1.0; // Standard parity for 99.9%
         } else if (rateDef.purity === '99.99%') {
-          ratePerGramForPurity = baseRatePerGram; // 99.99% uses base rate as-is
+          baseRate *= 1.0; // Standard parity for 99.99%
         }
       }
 
-      // Get existing rate data (normalPrice and manualAdjustment)
-      const existingRate = existingRatesMap[rateDef.name] || {};
-      const manualAdjustment = existingRate.manualAdjustment || 0;
-
-      // CRITICAL: normalPrice should ALWAYS be the current market rate (updates every second)
-      // This ensures that when normalPrice increases/decreases, adjustedPrice also increases/decreases accordingly
-      // Set normalPrice to current market rate for this purity level
-      let normalPrice = ratePerGramForPurity;
-
-      // If this is the first time (normalPrice doesn't exist), use current rate
-      // Otherwise, always update normalPrice to current market rate
-      if (existingRate.normalPrice === null || existingRate.normalPrice === undefined) {
-        normalPrice = rateDef.name.includes('236') ? 236 : ratePerGramForPurity;
-      } else {
-        // Always update normalPrice to current market rate
-        normalPrice = ratePerGramForPurity;
-      }
-
-      // CRITICAL: Calculate adjustedPrice = normalPrice (current market rate) + manualAdjustment
-      // When normalPrice increases by ₹1, adjustedPrice also increases by ₹1 (keeping manualAdjustment constant)
-      const adjustedPrice = normalPrice + manualAdjustment;
-      const ratePerGram = Math.max(0, adjustedPrice); // Ensure non-negative
-
-      // Log adjustment application for first rate (to verify adjustments are being applied)
-      if (rateDef.name === rateDefinitions[0]?.name) {
-        console.log(`💰 updateRatesHandler: Normal ₹${normalPrice.toFixed(2)}/gram (current market rate) + Manual ₹${manualAdjustment.toFixed(2)}/gram = Adjusted ₹${adjustedPrice.toFixed(2)}/gram`);
-      }
+      const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
+      const ratePerGram = Math.max(0, baseRate + manualAdjustment);
 
       let weightInGrams = rateDef.weight.value;
-      if (rateDef.weight.unit === 'kg') {
-        weightInGrams = rateDef.weight.value * 1000; // 1kg = 1000g
-      }
-
-      // CRITICAL: Calculate total rate exactly: ratePerGram × weightInGrams
-      // For Silver Bar 1kg (99.99%): If ratePerGram = ₹208.5, then total = ₹208.5 × 1000 = ₹208,500
-      const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
+      if (rateDef.weight.unit === 'kg') weightInGrams *= 1000;
+      const totalRate = ratePerGram * weightInGrams;
 
       return {
         updateOne: {
           filter: { name: rateDef.name, location: 'Andhra Pradesh' },
           update: {
             $set: {
-              name: rateDef.name,
               type: rateDef.type,
               weight: rateDef.weight,
               purity: rateDef.purity,
               ratePerGram: ratePerGram,
               rate: totalRate,
-              normalPrice: normalPrice,
-              adjustedPrice: adjustedPrice,
-              lastUpdated: new Date(),
-              location: 'Andhra Pradesh',
-              unit: 'INR',
+              normalPrice: baseRate,
+              adjustedPrice: ratePerGram,
               manualAdjustment: manualAdjustment,
-              source: liveRate.source || 'cron-update'
+              originalName: rateDef.name,
+              lastUpdated: new Date(),
+              source: liveRate.source || 'rbgoldspot'
             },
             $setOnInsert: {
-              // Set defaults only when inserting new documents (not when updating existing)
               isVisible: true,
               displayName: null
             }
@@ -1061,223 +446,45 @@ const updateRatesHandler = async (req, res = null) => {
       };
     });
 
-    // Execute bulk write (much faster than individual updates)
-    try {
-      console.log(`🔄 Executing bulk write for ${bulkOps.length} rates...`);
-      const bulkResult = await SilverRate.bulkWrite(bulkOps, {
-        ordered: false,
-        writeConcern: { w: 1 } // Ensure write is acknowledged
-      });
-      updatedCount = bulkResult.modifiedCount + bulkResult.upsertedCount;
-
-      // ALWAYS log bulk update result (critical for debugging)
-      console.log(`✅ MongoDB bulk update: ${updatedCount} rates updated (${bulkResult.modifiedCount} modified, ${bulkResult.upsertedCount} upserted) from base ₹${baseRatePerGram.toFixed(2)}/gram`);
-      console.log(`📊 Bulk write details: matched=${bulkResult.matchedCount}, modified=${bulkResult.modifiedCount}, upserted=${bulkResult.upsertedCount}`);
-
-      // Warn if not all rates were updated
-      if (updatedCount < rateDefinitions.length) {
-        console.warn(`⚠️ WARNING: Only ${updatedCount}/${rateDefinitions.length} rates were updated! Some rates may be stale.`);
-      }
-
-      // Verify write actually happened
-      if (bulkResult.modifiedCount === 0 && bulkResult.upsertedCount === 0) {
-        console.error('❌ CRITICAL: Bulk write returned 0 updates! MongoDB may not be saving changes.');
-        console.error('   This could indicate: connection issue, write permission issue, or filter mismatch');
-        console.error('   Attempting individual updates as fallback...');
-        // Fall through to individual update fallback
-        throw new Error('Bulk write failed - no documents updated');
-      }
-
-      // Log first rate for verification
-      if (rateDefinitions.length > 0) {
-        const firstRate = rateDefinitions[0];
-        const existingFirstRate = existingRatesMap[firstRate.name] || {};
-        // Use current market rate as normalPrice (updates every second)
-        let firstRatePerGramForPurity = baseRatePerGram;
-        if (firstRate.purity === '92.5%') {
-          firstRatePerGramForPurity = baseRatePerGram * 0.96;
-        } else if (firstRate.purity === '99.99%') {
-          firstRatePerGramForPurity = baseRatePerGram * 1.005;
-        }
-        const firstNormalPrice = firstRatePerGramForPurity; // Current market rate
-        const firstManualAdj = existingFirstRate.manualAdjustment || 0;
-        const firstAdjustedPrice = firstNormalPrice + firstManualAdj;
-        let weightInGrams = firstRate.weight.value;
-        if (firstRate.weight.unit === 'kg') {
-          weightInGrams = firstRate.weight.value * 1000;
-        }
-        const totalRate = firstAdjustedPrice * weightInGrams;
-        console.log(`✅ Sample update: ${firstRate.name} = ₹${firstAdjustedPrice.toFixed(2)}/gram (₹${totalRate.toFixed(2)}/total, normal: ₹${firstNormalPrice.toFixed(2)}, manual: ₹${firstManualAdj.toFixed(2)})`);
-      }
-    } catch (bulkErr) {
-      console.error('❌ Bulk update failed, falling back to individual updates:', bulkErr.message);
-      // Fallback to individual updates if bulk write fails
-      const updatePromises = rateDefinitions.map(async (rateDef) => {
-        try {
-          // Calculate rate per gram based on purity
-          let ratePerGramForPurity = baseRatePerGram;
-          if (rateDef.purity === '92.5%') {
-            ratePerGramForPurity = baseRatePerGram * 0.96;
-          } else if (rateDef.purity === '99.99%') {
-            ratePerGramForPurity = baseRatePerGram * 1.005;
-          }
-
-          // Get existing rate data
-          const existingRate = existingRatesMap[rateDef.name] || {};
-          const manualAdjustment = existingRate.manualAdjustment || 0;
-
-          // CRITICAL: normalPrice = current market rate (updates every second)
-          const normalPrice = rateDef.name.includes('236') ? 236 : ratePerGramForPurity;
-
-          // CRITICAL: adjustedPrice = normalPrice + manualAdjustment
-          let ratePerGram = normalPrice + manualAdjustment;
-          ratePerGram = Math.max(0, ratePerGram); // No rounding - keep exact value
-
-          let weightInGrams = rateDef.weight.value;
-          if (rateDef.weight.unit === 'kg') {
-            weightInGrams = rateDef.weight.value * 1000;
-          }
-
-          const totalRate = ratePerGram * weightInGrams; // No rounding - keep exact value
-
-          const updateResult = await SilverRate.findOneAndUpdate(
-            { name: rateDef.name, location: 'Andhra Pradesh' },
-            {
-              $set: {
-                name: rateDef.name,
-                type: rateDef.type,
-                weight: rateDef.weight,
-                purity: rateDef.purity,
-                ratePerGram: ratePerGram,
-                rate: totalRate,
-                normalPrice: normalPrice,
-                adjustedPrice: ratePerGram,
-                lastUpdated: new Date(),
-                location: 'Andhra Pradesh',
-                unit: 'INR',
-                manualAdjustment: manualAdjustment,
-                source: liveRate.source || 'cron-update'
-              }
-            },
-            { upsert: true, new: true, runValidators: true }
-          );
-
-          if (!updateResult) {
-            console.error(`❌ Failed to update ${rateDef.name}: findOneAndUpdate returned null`);
-          } else {
-            console.log(`✅ Updated ${rateDef.name}: ₹${ratePerGram.toFixed(2)}/gram`);
-          }
-          updatedCount++;
-        } catch (err) {
-          console.error(`❌ Failed to update ${rateDef.name}:`, err.message);
-        }
-      });
-      await Promise.all(updatePromises);
-    }
-
+    const result = await SilverRate.bulkWrite(bulkOps, { ordered: false });
     const duration = Date.now() - startTime;
+    console.log(`✅ [syncRatesWithSource] Sync complete: ${result.modifiedCount} updated, ${result.upsertedCount} inserted (${duration}ms)`);
+    return true;
 
-    // ALWAYS log completion (critical for debugging)
-    console.log(`✅ Rate update COMPLETED: Updated ${updatedCount} rates in MongoDB`);
-    console.log(`   Base Rate: ₹${baseRatePerGram.toFixed(2)}/gram (₹${baseRatePerKg}/kg)`);
-    console.log(`   Source: ${liveRate.source}`);
-    console.log(`   Duration: ${duration}ms`);
-    console.log(`   Timestamp: ${new Date().toISOString()}`);
-
-    // ALWAYS verify rates were actually updated in MongoDB
-    console.log(`🔍 Verifying MongoDB updates...`);
-    const allRatesAfterUpdate = await SilverRate.find({ location: 'Andhra Pradesh' }).sort({ lastUpdated: -1 });
-
-    if (allRatesAfterUpdate && allRatesAfterUpdate.length > 0) {
-      const verifyRate = allRatesAfterUpdate[0];
-      const verifyAge = Date.now() - new Date(verifyRate.lastUpdated).getTime();
-      console.log(`✅ VERIFICATION: Found ${allRatesAfterUpdate.length} rates in MongoDB`);
-      console.log(`✅ Latest rate "${verifyRate.name}" = ₹${verifyRate.ratePerGram}/gram (updated ${Math.round(verifyAge / 1000)}s ago)`);
-
-      // Check if any rates are still old (not updated)
-      const oldRates = allRatesAfterUpdate.filter(rate => {
-        const age = Date.now() - new Date(rate.lastUpdated).getTime();
-        return age > 5000; // Older than 5 seconds
-      });
-
-      if (oldRates.length > 0) {
-        console.warn(`⚠️ WARNING: ${oldRates.length} rates are still old (>5s): ${oldRates.map(r => r.name).join(', ')}`);
-      }
-
-      // Calculate expected rate for this specific rate type (accounting for purity adjustments)
-      let expectedRatePerGram = baseRatePerGram;
-      if (verifyRate.purity === '92.5%') {
-        expectedRatePerGram = baseRatePerGram * 0.96;
-      } else if (verifyRate.purity === '99.99%') {
-        expectedRatePerGram = baseRatePerGram; // 99.99% uses base rate as-is
-      }
-      // Fetch adjustment for verification rate
-      const verifyAdjustments = await fetchManualAdjustments([verifyRate.name]);
-      const manualAdj = verifyAdjustments[verifyRate.name] || 0;
-      expectedRatePerGram = expectedRatePerGram + manualAdj;
-      expectedRatePerGram = Math.round(expectedRatePerGram * 100) / 100;
-
-      // Warn if verified rate doesn't match expected rate (with tolerance for rounding)
-      const difference = Math.abs(verifyRate.ratePerGram - expectedRatePerGram);
-      if (difference > 0.1) { // Allow 0.1 difference for rounding
-        console.warn(`⚠️ WARNING: Verified rate "${verifyRate.name}" (₹${verifyRate.ratePerGram}/gram) doesn't match expected (₹${expectedRatePerGram.toFixed(2)}/gram, base: ₹${baseRatePerGram.toFixed(2)}/gram, diff: ₹${difference.toFixed(2)})!`);
-      } else {
-        console.log(`✅ VERIFICATION PASSED: Rate matches expected value (₹${verifyRate.ratePerGram}/gram = ₹${expectedRatePerGram.toFixed(2)}/gram)`);
-      }
-
-      // Verify all 10 rates exist and are recent
-      if (allRatesAfterUpdate.length < 10) {
-        console.warn(`⚠️ WARNING: Only ${allRatesAfterUpdate.length}/10 rates found in MongoDB!`);
-      }
-    } else {
-      console.error('❌ VERIFICATION FAILED: No rates found in MongoDB after update!');
-      console.error('   This indicates MongoDB write failed or connection issue');
-    }
-
-    // ALWAYS send response (even for cron) so we can see if updates are working
-    if (res) {
-      res.json({
-        success: true,
-        message: `Successfully updated ${updatedCount} rates`,
-        baseRate: baseRatePerGram,
-        baseRatePerKg: baseRatePerKg,
-        ratePerKg: liveRate.ratePerKg,
-        source: liveRate.source,
-        updatedCount: updatedCount,
-        duration: `${duration}ms`,
-        timestamp: new Date().toISOString(),
-        rawData: {
-          ask: liveRate.rawData?.ask || null,
-          high: liveRate.rawData?.high || null,
-          bid: liveRate.rawData?.bid || null
-        }
-      });
-    } else {
-      // For cron jobs, log success even without response object
-      console.log(`✅ Cron update completed: ${updatedCount} rates updated in ${duration}ms`);
-    }
   } catch (error) {
-    const duration = Date.now() - startTime;
-    console.error(`❌ Rate update FAILED (${duration}ms):`, error.message);
-    if (error.stack) {
-      console.error(`❌ Error stack:`, error.stack.substring(0, 500));
+    console.error(`❌ [syncRatesWithSource] Sync failed: ${error.message}`);
+    if (retryCount < 2) {
+      console.log(`🔄 Retrying sync in 1s...`);
+      await new Promise(r => setTimeout(r, 1000));
+      return syncRatesWithSource(retryCount + 1);
     }
-    if (res) {
-      res.status(500).json({
-        success: false,
-        message: 'Rate update failed',
-        error: error.message,
-        duration: `${duration}ms`,
-        timestamp: new Date().toISOString()
-      });
-    }
-    // If no response object, error is already logged, just return
+    return false;
   }
 };
 
+// Legacy function maintainers for background interval
+const updateRatesFromEndpoints = async () => {
+  const now = Date.now();
+  if (now - lastUpdateAttempt < 1000) return;
+  lastUpdateAttempt = now;
+  return syncRatesWithSource();
+};
+
+const updateRatesHandler = async (req, res = null) => {
+  const success = await syncRatesWithSource();
+  if (res) {
+    if (success) {
+      res.json({ success: true, message: 'Rates updated successfully', baseRate: cachedBaseRate.ratePerGram });
+    } else {
+      res.status(500).json({ success: false, message: 'Failed to update rates' });
+    }
+  }
+};
+
+
 // Support both POST and GET for manual triggering
-router.post('/update', updateRatesHandler);
-router.get('/update', updateRatesHandler);
+router.post('/handle-update', updateRatesHandler);
+router.get('/handle-update', updateRatesHandler);
 
 // Initialize rates - loads from MongoDB
 router.post('/initialize', async (req, res) => {
@@ -1378,5 +585,6 @@ module.exports = router;
 // No longer using in-memory storage - all adjustments persist to database
 module.exports.updateRatesHandler = updateRatesHandler;
 module.exports.updateRatesFromEndpoints = updateRatesFromEndpoints;
+module.exports.syncRatesWithSource = syncRatesWithSource;
 module.exports.getCachedBaseRate = () => cachedBaseRate;
 module.exports.setCachedBaseRate = (rate) => { cachedBaseRate = rate; };

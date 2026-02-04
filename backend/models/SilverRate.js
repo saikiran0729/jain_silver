@@ -71,6 +71,11 @@ const silverRateSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Formally support originalName for lookups when displayName is set
+  originalName: {
+    type: String,
+    default: null
+  },
   // Whether this product should be visible to users
   isVisible: {
     type: Boolean,

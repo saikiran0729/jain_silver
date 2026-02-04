@@ -546,33 +546,33 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       await SilverRate.bulkWrite(bulkOps);
       console.log(`✅ Updated ${bulkOps.length} rate adjustments in MongoDB`);
 
-      // Trigger rate update - non-blocking
-      setImmediate(() => {
+      // Trigger rate update - non-blocking and using the NEW unified sync
+      setImmediate(async () => {
         try {
           const ratesRoute = require('./rates');
-          if (ratesRoute.updateRatesHandler) {
-            ratesRoute.updateRatesHandler(req, null).catch(e => {
-              if (Math.random() < 0.1) console.error('Background update handler error:', e.message);
-            });
+          if (ratesRoute.syncRatesWithSource) {
+            await ratesRoute.syncRatesWithSource();
+            console.log('✅ Unified rate sync triggered after adjustment');
           }
         } catch (e) {
-          console.warn('Could not trigger background rate update');
+          console.warn('Could not trigger background rate update:', e.message);
         }
       });
     }
+  }
 
     const io = req.app.get('io');
-    if (io) io.emit('manualAdjustment', { value: amount, adjustmentType, itemName, category });
+  if (io) io.emit('manualAdjustment', { value: amount, adjustmentType, itemName, category });
 
-    res.json({
-      message: `Rates adjusted successfully for ${modified} items`,
-      modifiedCount: modified,
-      adjustments: adjustments
-    });
-  } catch (error) {
-    console.error('Admin adjust rates error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
+  res.json({
+    message: `Rates adjusted successfully for ${modified} items`,
+    modifiedCount: modified,
+    adjustments: adjustments
+  });
+} catch (error) {
+  console.error('Admin adjust rates error:', error);
+  res.status(500).json({ message: 'Server error', error: error.message });
+}
 });
 
 // Get showAsItIs setting
