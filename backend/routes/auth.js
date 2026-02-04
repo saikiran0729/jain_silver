@@ -108,7 +108,7 @@ try {
 
 // Generate JWT token
 const generateToken = (userId) => {
-  return jwt.sign({ userId }, process.env.JWT_SECRET || 'your_jwt_secret_key_here', {
+  return jwt.sign({ userId }, process.env.JWT_SECRET || 'jain_silver_secret_key_2024_change_in_production', {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d'
   });
 };
