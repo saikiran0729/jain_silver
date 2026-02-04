@@ -559,20 +559,18 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
         }
       });
     }
-  }
-
     const io = req.app.get('io');
-  if (io) io.emit('manualAdjustment', { value: amount, adjustmentType, itemName, category });
+    if (io) io.emit('manualAdjustment', { value: amount, adjustmentType, itemName, category });
 
-  res.json({
-    message: `Rates adjusted successfully for ${modified} items`,
-    modifiedCount: modified,
-    adjustments: adjustments
-  });
-} catch (error) {
-  console.error('Admin adjust rates error:', error);
-  res.status(500).json({ message: 'Server error', error: error.message });
-}
+    res.json({
+      message: `Rates adjusted successfully for ${modified} items`,
+      modifiedCount: modified,
+      adjustments: adjustments
+    });
+  } catch (error) {
+    console.error('Admin adjust rates error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
 });
 
 // Get showAsItIs setting

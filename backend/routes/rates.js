@@ -482,6 +482,81 @@ const updateRatesHandler = async (req, res = null) => {
 };
 
 
+// Get current base rate from source (without adjustments) - for "Show As It Is" feature
+router.get('/base-rate', async (req, res) => {
+  try {
+    // Return cached base rate immediately for speed
+    if (cachedBaseRate && cachedBaseRate.ratePerGram > 0) {
+      // Trigger background update if cache is older than 800ms
+      if (Date.now() - cachedBaseRate.lastUpdated.getTime() > 800) {
+        syncRatesWithSource().catch(e => console.error(e));
+      }
+
+      return res.json({
+        baseRatePerGram: cachedBaseRate.ratePerGram,
+        baseRatePerKg: cachedBaseRate.ratePerKg,
+        source: cachedBaseRate.source,
+        lastUpdated: cachedBaseRate.lastUpdated,
+        usdInrRate: cachedBaseRate.usdInrRate || 89.25
+      });
+    }
+
+    // Fallback if no cache
+    return res.json({
+      baseRatePerGram: 350.0,
+      source: 'fallback'
+    });
+  } catch (error) {
+    console.error('Error fetching base rate:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all silver rates - First tries MongoDB, then live API
+router.get('/', async (req, res) => {
+  try {
+    const skipUpdate = req.query.skipUpdate === 'true' || req.query.skipUpdate === true;
+    const adminParam = req.query.admin === 'true' || req.query.admin === true;
+
+    // Check if user is admin
+    const isAdmin = isAdminUser(req) || adminParam;
+
+    let mongoRates = [];
+    try {
+      if (mongoose.connection.readyState === 1) {
+        mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' }).sort({ name: 1 }).lean();
+      }
+    } catch (e) { console.error('DB fetch failed:', e.message); }
+
+    // Trigger background update if not skipping and data is old
+    if (!skipUpdate) {
+      const latestRate = mongoRates.length > 0 ? mongoRates.reduce((l, r) => (r.lastUpdated > l.lastUpdated ? r : l), mongoRates[0]) : null;
+      const mongoAge = latestRate ? Date.now() - new Date(latestRate.lastUpdated).getTime() : 999999;
+
+      if (mongoAge > 1000) {
+        syncRatesWithSource().catch(() => { });
+      }
+    }
+
+    if (mongoRates.length > 0) {
+      const finalRates = await applyManualAdjustments(mongoRates, isAdmin, skipUpdate);
+      // Ensure all products are present for admin view
+      const completeRates = ensureAllProductsForAdmin(finalRates, isAdmin, cachedBaseRate.ratePerGram, skipUpdate);
+
+      res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' });
+      return res.json(completeRates);
+    } else {
+      // Fallback to cache if no DB rates
+      const calculatedOriginalRates = await getOriginalRates(cachedBaseRate.ratePerGram);
+      const ratesWithUSD = calculatedOriginalRates.map(r => ({ ...r, usdInrRate: cachedBaseRate.usdInrRate || 89.25 }));
+      return res.json(ratesWithUSD);
+    }
+  } catch (error) {
+    console.error('Final /rates error:', error.message);
+    if (!res.headersSent) res.status(500).json({ error: error.message });
+  }
+});
+
 // Support both POST and GET for manual triggering
 router.post('/handle-update', updateRatesHandler);
 router.get('/handle-update', updateRatesHandler);
@@ -561,7 +636,7 @@ router.post('/adjust', auth, async (req, res) => {
     };
 
     // Update MongoDB with adjusted rate
-    await updateMongoDBRates(cachedBaseRate);
+    await syncRatesWithSource();
 
     console.log(`🔧 Admin adjusted rate: ₹${oldRate.toFixed(2)} → ₹${cachedBaseRate.ratePerGram.toFixed(2)}/gram (${adjustment > 0 ? '+' : ''}${adjustment}/kg)`);
 
@@ -577,7 +652,77 @@ router.post('/adjust', auth, async (req, res) => {
   }
 });
 
+// Update individual rate (admin only)
+router.put('/:id', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { manualAdjustment } = req.body;
 
+    const rateDefinitions = [
+      { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
+      { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
+      { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
+      { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
+      { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+      { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
+    ];
+
+    const rateDef = rateDefinitions.find(r => {
+      const rateId = Buffer.from(r.name).toString('base64').substring(0, 24);
+      return rateId === id;
+    });
+
+    if (!rateDef) {
+      return res.status(404).json({ message: 'Rate not found' });
+    }
+
+    if (manualAdjustment !== undefined) {
+      await SilverRate.findOneAndUpdate(
+        { name: rateDef.name, location: 'Andhra Pradesh' },
+        {
+          $set: {
+            manualAdjustment: manualAdjustment,
+            lastUpdated: new Date()
+          }
+        },
+        { upsert: true }
+      );
+
+      // Trigger sync to update calculated rates
+      await syncRatesWithSource();
+    }
+
+    res.json({ message: 'Rate adjustment updated successfully' });
+  } catch (error) {
+    console.error('Update rate error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Force rate update (admin only)
+router.post('/force-update', auth, async (req, res) => {
+  try {
+    const success = await syncRatesWithSource();
+    if (success) {
+      res.json({
+        message: 'Rate update triggered successfully.',
+        currentRate: cachedBaseRate.ratePerGram,
+        source: cachedBaseRate.source
+      });
+    } else {
+      res.status(500).json({ message: 'Rate update failed' });
+    }
+  } catch (error) {
+    console.error('Force update error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
 
 module.exports = router;
 
