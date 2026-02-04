@@ -500,11 +500,12 @@ router.get('/base-rate', async (req, res) => {
       });
     }
 
-    // Fallback if no live cache
-    return res.status(503).json({
-      message: 'Live rates currently unavailable from source',
+    // Safe failure for frontend stability
+    return res.status(200).json({
+      message: 'Live market rates currently unavailable',
       baseRatePerGram: 0,
-      source: 'unavailable'
+      source: 'unavailable',
+      unavailable: true
     });
   } catch (error) {
     console.error('Error fetching base rate:', error.message);
@@ -545,11 +546,12 @@ router.get('/', async (req, res) => {
       res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' });
       return res.json(completeRates);
     } else {
-      // Strictly live: If no DB rates and live sync hasn't happened yet, return error or empty
-      console.log(`⚠️ Live rates not yet available or fetch failed.`);
-      return res.status(503).json({
+      // Return 200 with empty array to prevent frontend crashes/logouts
+      console.log(`⚠️ Live rates not yet available. Returning empty response for stability.`);
+      return res.status(200).json({
         message: 'Live market data currently unavailable',
-        rates: []
+        rates: [],
+        unavailable: true
       });
     }
   } catch (error) {

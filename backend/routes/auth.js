@@ -1084,7 +1084,7 @@ router.post('/verify-reset-otp',
       // Generate reset token (valid for 15 minutes)
       const resetToken = jwt.sign(
         { userId: user._id, type: 'password-reset' },
-        process.env.JWT_SECRET || 'your_jwt_secret_key_here',
+        process.env.JWT_SECRET || 'jain_silver_secret_key_2024_change_in_production',
         { expiresIn: '15m' }
       );
 
@@ -1123,7 +1123,7 @@ router.post('/reset-password',
       try {
         decoded = jwt.verify(
           resetToken,
-          process.env.JWT_SECRET || 'your_jwt_secret_key_here'
+          process.env.JWT_SECRET || 'jain_silver_secret_key_2024_change_in_production'
         );
       } catch (error) {
         return res.status(400).json({ message: 'Invalid or expired reset token' });
