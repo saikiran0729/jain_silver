@@ -199,17 +199,24 @@ function AdminDashboardPage() {
       }
       // Update rates only if data actually changed to prevent unnecessary re-renders and UI flickering
       setRates(prevRates => {
-        const newRates = response.data || [];
+        let newRates = response.data || [];
+
+        // Handle object response with rates property (fallback from backend)
+        if (newRates && !Array.isArray(newRates) && Array.isArray(newRates.rates)) {
+          console.log('ℹ️ Received market metadata object, extracting rates array.');
+          newRates = newRates.rates;
+        }
 
         // CRITICAL FIX: Ensure newRates is an array before iterating
-        // Use empty array if response.data is not an array (e.g. error object)
         const safeRates = Array.isArray(newRates) ? newRates : [];
 
         if (!Array.isArray(newRates)) {
-          console.error('❌ Expected array of rates but got:', typeof newRates, newRates);
+          // Only log error if it's not the known fallback object structure
+          if (!(response.data && response.data.unavailable)) {
+            console.error('❌ Expected array of rates but got:', typeof newRates, newRates);
+          }
           // If polling, just return previous rates to avoid UI disruption
           if (isPolling) return prevRates;
-          // If manual fetch, keep previous rates but log error
         }
 
         // Compare all rates to detect any changes in adjustedPrice or ratePerGram
@@ -697,10 +704,23 @@ function AdminDashboardPage() {
               }
             }
 
-            const currentNormalPrice = (r.ratePerGram || 0) - (r.manualAdjustment || 0);
-            const delta = isPercentage ? (currentNormalPrice * normalizedDelta / 100) : normalizedDelta;
-            const newManualAdjustment = (r.manualAdjustment || 0) + delta;
-            const newRatePerGram = Math.max(0, currentNormalPrice + newManualAdjustment);
+            const currentPercentage = r.manualAdjustmentPercentage || 0;
+            const currentAdjustment = r.manualAdjustment || 0;
+            const currentRatePerGram = r.ratePerGram || 0;
+
+            // Derive the market base price (Normal Price) from stored values
+            const currentNormalPrice = (currentRatePerGram - currentAdjustment) / (1 + currentPercentage / 100);
+
+            let newManualAdjustment = currentAdjustment;
+            let newPercentage = currentPercentage;
+
+            if (isPercentage) {
+              newPercentage += amountValue; // Use amountValue here, not 'amount'
+            } else {
+              newManualAdjustment += normalizedDelta;
+            }
+
+            const newRatePerGram = Math.max(0, currentNormalPrice * (1 + newPercentage / 100) + newManualAdjustment);
 
             let weightFactor = r.weight?.value || 1;
             if (r.weight?.unit === 'kg') weightFactor *= 1000;
@@ -708,6 +728,7 @@ function AdminDashboardPage() {
             return {
               ...r,
               manualAdjustment: newManualAdjustment,
+              manualAdjustmentPercentage: newPercentage,
               ratePerGram: newRatePerGram,
               rate: newRatePerGram * weightFactor
             };
@@ -1007,7 +1028,23 @@ function AdminDashboardPage() {
           <Card sx={{ mb: 3 }}>
             <CardContent>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h6" sx={{ fontWeight: 700 }}>Current Metal Rates</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography variant="h6" sx={{ fontWeight: 700 }}>Current Metal Rates</Typography>
+                  <Box
+                    sx={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      backgroundColor: colors.success,
+                      animation: 'pulse 2s infinite',
+                      '@keyframes pulse': {
+                        '0%': { transform: 'scale(0.95)', boxShadow: '0 0 0 0 rgba(76, 175, 80, 0.7)' },
+                        '70%': { transform: 'scale(1)', boxShadow: '0 0 0 4px rgba(76, 175, 80, 0)' },
+                        '100%': { transform: 'scale(0.95)', boxShadow: '0 0 0 0 rgba(76, 175, 80, 0)' }
+                      }
+                    }}
+                  />
+                </Box>
                 <Box sx={{ display: 'flex', gap: 1 }}>
                   <Button
                     size="small"
@@ -1035,6 +1072,7 @@ function AdminDashboardPage() {
                       <TableRow>
                         <TableCell sx={{ fontWeight: 700 }}>Product</TableCell>
                         <TableCell align="right" sx={{ fontWeight: 700 }}>Live Price</TableCell>
+                        <TableCell align="center" sx={{ fontWeight: 700 }}>Adjustment</TableCell>
                         <TableCell align="center" sx={{ fontWeight: 700 }}>Visible</TableCell>
                         <TableCell align="center" sx={{ fontWeight: 700 }}>Actions</TableCell>
                       </TableRow>
@@ -1066,10 +1104,9 @@ function AdminDashboardPage() {
                         const finalAdjustedPrice = finalAdjustedRatePerGram * weightInGrams;
                         const manualAdjustment = rate.manualAdjustment || 0;
 
-                        // Compute adjustment as the difference between adjusted rate and calculated original rate.
-                        // Since we're calculating adjusted price from normal price + manual adjustment,
-                        // the displayed adjustment is simply the manual adjustment value
-                        const displayedAdjustment = manualAdjustment;
+                        // Compute adjustment as the difference between adjusted price and original price per gram.
+                        // This correctly reflects both percentage and fixed amount adjustments.
+                        const displayedAdjustment = finalAdjustedRatePerGram - originalRatePerGram;
                         const EPS = 0.0001;
                         const hasAdjustment = Math.abs(displayedAdjustment) > EPS;
 
@@ -1121,12 +1158,14 @@ function AdminDashboardPage() {
                                   variant="body2"
                                   sx={{
                                     fontWeight: 600,
-                                    color: colors.textPrimary,
+                                    color: showOriginalRates ? colors.textSecondary : colors.textPrimary,
+                                    textDecoration: !showOriginalRates && hasAdjustment ? 'underline' : 'none',
+                                    textDecorationColor: displayedAdjustment > 0 ? colors.success : colors.error
                                   }}
                                 >
                                   {rate.type === 'gold'
-                                    ? `₹${Number((finalAdjustedRatePerGram || 0) * 10).toFixed(2)}/10g`
-                                    : `₹${Number((finalAdjustedRatePerGram || 0) * 1000).toFixed(2)}/kg`
+                                    ? `₹${Number((showOriginalRates ? originalRatePerGram : finalAdjustedRatePerGram) * 10).toFixed(2)}/10g`
+                                    : `₹${Number((showOriginalRates ? originalRatePerGram : finalAdjustedRatePerGram) * 1000).toFixed(2)}/kg`
                                   }
                                 </Typography>
                               </Box>
@@ -1137,8 +1176,33 @@ function AdminDashboardPage() {
                                   display: 'block'
                                 }}
                               >
-                                ₹{Number(finalAdjustedPrice || 0).toFixed(2)}
+                                ₹{Number(showOriginalRates ? originalTotalPrice : finalAdjustedPrice).toFixed(2)}
                               </Typography>
+                            </TableCell>
+                            <TableCell align="center">
+                              {hasAdjustment ? (
+                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                  <Chip
+                                    label={`${displayedAdjustment > 0 ? '+' : ''}${rate.type === 'gold' ? (displayedAdjustment * 10).toFixed(2) : (displayedAdjustment * 1000).toFixed(0)}`}
+                                    size="small"
+                                    sx={{
+                                      height: 20,
+                                      fontSize: '0.65rem',
+                                      fontWeight: 700,
+                                      backgroundColor: displayedAdjustment > 0 ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)',
+                                      color: displayedAdjustment > 0 ? colors.success : colors.error,
+                                      border: `1px solid ${displayedAdjustment > 0 ? colors.success : colors.error}`
+                                    }}
+                                  />
+                                  <Typography variant="caption" sx={{ fontSize: '0.6rem', mt: 0.5, color: colors.textSecondary }}>
+                                    {rate.type === 'gold' ? 'per 10g' : 'per kg'}
+                                  </Typography>
+                                </Box>
+                              ) : (
+                                <Typography variant="caption" sx={{ color: colors.textSecondary }}>
+                                  —
+                                </Typography>
+                              )}
                             </TableCell>
                             <TableCell align="center">
                               <Switch

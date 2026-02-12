@@ -25,13 +25,18 @@ const fetchManualAdjustments = async (rateNames) => {
         { name: { $in: rateNames } },
         { originalName: { $in: rateNames } }
       ]
-    }).select('name originalName manualAdjustment').lean();
+    }).select('name originalName manualAdjustment manualAdjustmentPercentage').lean();
 
     adjustments.forEach(adj => {
+      const adjData = {
+        amount: adj.manualAdjustment || 0,
+        percentage: adj.manualAdjustmentPercentage || 0
+      };
+
       // Store by name
-      if (adj.name) adjustmentsMap[adj.name] = adj.manualAdjustment || 0;
+      if (adj.name) adjustmentsMap[adj.name] = adjData;
       // Also store by originalName so we can look it up by the static definition name
-      if (adj.originalName) adjustmentsMap[adj.originalName] = adj.manualAdjustment || 0;
+      if (adj.originalName) adjustmentsMap[adj.originalName] = adjData;
     });
   } catch (error) {
     console.warn('Could not fetch manual adjustments from MongoDB, using defaults:', error.message);
@@ -250,50 +255,51 @@ const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false
   return filteredRates.map(rate => {
     // Use originalName to fetch adjustment if available, otherwise use name
     const productName = rate.originalName || rate.name;
-    const manualAdjustment = adjustmentsMap[productName] || rate.manualAdjustment || 0;
+    const adjData = adjustmentsMap[productName] || {
+      amount: rate.manualAdjustment || 0,
+      percentage: rate.manualAdjustmentPercentage || 0
+    };
 
-    // IMPORTANT: rate.ratePerGram in MongoDB already includes adjustments
-    // So original = current - adjustment
+    const manualAdjustment = adjData.amount;
+    const manualAdjustmentPercentage = adjData.percentage;
+
+    // Recalculate everything from current market values
+    // rate.ratePerGram from DB is just a snapshot - we should really re-calc from normalPrice
+    // but normalPrice in DB is also baseRate.
     const currentRatePerGram = rate.ratePerGram || 0;
-    const originalRatePerGram = currentRatePerGram - manualAdjustment;
+
+    // originalRatePerGram = (current - adjustmentAmount) / (1 + percentage/100)
+    const originalRatePerGram = (currentRatePerGram - manualAdjustment) / (1 + manualAdjustmentPercentage / 100);
 
     // Calculate original total rate
     let weightInGrams = rate.weight.value;
     if (rate.weight.unit === 'kg') {
       weightInGrams = rate.weight.value * 1000;
     }
-    const originalTotalRate = originalRatePerGram * weightInGrams; // No rounding - keep exact value
+    const originalTotalRate = originalRatePerGram * weightInGrams;
 
-    // Current rate (already has adjustments) is what customers see
-    // Always recalculate from ratePerGram to ensure accuracy (don't rely on stored rate which might be stale)
+    // adjustedTotalRate is what's in the DB usually, but let's be consistent
     const adjustedRatePerGram = currentRatePerGram;
-    const adjustedTotalRate = adjustedRatePerGram * weightInGrams; // No rounding - keep exact value
+    const adjustedTotalRate = adjustedRatePerGram * weightInGrams;
 
     // Use displayName if set, otherwise use name
     const displayName = rate.displayName || rate.name;
-    // Preserve originalName if it exists (from ensureAllProductsForAdmin), otherwise use name
     const originalName = rate.originalName || rate.name;
 
-    // CRITICAL: Preserve isVisible exactly as it is in MongoDB (false means disabled)
-    // Do NOT default to true if it's explicitly false
     const isVisible = rate.isVisible !== undefined ? rate.isVisible : true;
-
-    // Log disabled products for debugging
-    if (isAdmin && !isVisible) {
-      console.log(`🚫 applyManualAdjustments: Including disabled product: ${rate.name} (isVisible: ${isVisible})`);
-    }
 
     return {
       ...rate,
-      name: displayName, // Use displayName for the name field in response (what users see)
-      originalName: originalName, // Keep original name for admin reference
-      displayName: displayName, // Also include it as displayName
-      isVisible: isVisible, // Preserve exact value from MongoDB
-      ratePerGram: adjustedRatePerGram, // Current rate with adjustments (what customers see)
+      name: displayName,
+      originalName: originalName,
+      displayName: displayName,
+      isVisible: isVisible,
+      ratePerGram: adjustedRatePerGram,
       rate: adjustedTotalRate,
-      originalRatePerGram: Math.max(0, originalRatePerGram), // Original without adjustments
+      originalRatePerGram: Math.max(0, originalRatePerGram),
       originalRate: Math.max(0, originalTotalRate),
-      manualAdjustment: manualAdjustment
+      manualAdjustment: manualAdjustment,
+      manualAdjustmentPercentage: manualAdjustmentPercentage
     };
   });
 };
@@ -411,8 +417,12 @@ const syncRatesWithSource = async (retryCount = 0) => {
         }
       }
 
-      const manualAdjustment = adjustmentsMap[rateDef.name] || 0;
-      const ratePerGram = Math.max(0, baseRate + manualAdjustment);
+      const adjData = adjustmentsMap[rateDef.name] || { amount: 0, percentage: 0 };
+      const manualAdjustment = adjData.amount;
+      const manualAdjustmentPercentage = adjData.percentage;
+
+      // NEW FORMULA: baseRate * (1 + percentage/100) + amount
+      const ratePerGram = Math.max(0, baseRate * (1 + manualAdjustmentPercentage / 100) + manualAdjustment);
 
       let weightInGrams = rateDef.weight.value;
       if (rateDef.weight.unit === 'kg') weightInGrams *= 1000;
@@ -431,6 +441,7 @@ const syncRatesWithSource = async (retryCount = 0) => {
               normalPrice: baseRate,
               adjustedPrice: ratePerGram,
               manualAdjustment: manualAdjustment,
+              manualAdjustmentPercentage: manualAdjustmentPercentage,
               originalName: rateDef.name,
               lastUpdated: new Date(),
               source: liveRate.source || 'rbgoldspot'

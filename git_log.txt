@@ -1,0 +1,29 @@
+commit f915720d2f759863e7ffebfea2bb55c2aa52132c
+Author: Your Name <saikirankonapala26@gmail.com>
+Date:   Wed Feb 4 21:59:46 2026 +0530
+
+    Fix admin auto-logout: standardize JWT secrets and soften rate API errors
+
+commit 554c51bc665f704a0fa4518aa15b1eeba20c0a3a
+Author: Your Name <saikirankonapala26@gmail.com>
+Date:   Wed Feb 4 21:50:59 2026 +0530
+
+    Enforce strictly live rates: removed all fallbacks and LKG logic
+
+commit 54cc64c95ab4e283312fea4e370702efba0f1a58
+Author: Your Name <saikirankonapala26@gmail.com>
+Date:   Wed Feb 4 21:43:56 2026 +0530
+
+    Optimize fallback rates and improve sync reliability (LKG logic)
+
+commit fae6cab68d5ecabfa44de637a77228d557b5638e
+Author: Your Name <saikirankonapala26@gmail.com>
+Date:   Wed Feb 4 21:19:28 2026 +0530
+
+    Standardize JWT_SECRET fallback consistency to resolve 401 issues
+
+commit 4959ee631e089f13b1d9a1344bc5a7c66e3cdf80
+Author: Your Name <saikirankonapala26@gmail.com>
+Date:   Wed Feb 4 21:13:19 2026 +0530
+
+    Fix admin syntax error and restore missing rates routes

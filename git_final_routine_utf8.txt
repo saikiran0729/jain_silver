@@ -1,0 +1,26 @@
+﻿git : Author identity unknown
+At line:1 char:59
++ ... utine.txt ; git commit -m 'feat_scaling_final' --no-verify 2>&1 | Out ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Author identity unknown:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+*** Please tell me who you are.
+
+Run
+
+  git config --global user.email "you@example.com"
+  git config --global user.name "Your Name"
+
+to set your account's default identity.
+Omit --global to set the identity only in this repository.
+
+fatal: unable to auto-detect email address (got 'ASUS@KONAPALA.(none)')
+git : Everything up-to-date
+At line:1 char:154
++ ... ile -Append git_final_routine.txt ; git push origin main 2>&1 | Out-F ...
++                                         ~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Everything up-to-date:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

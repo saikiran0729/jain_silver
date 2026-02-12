@@ -42,6 +42,12 @@ const silverRateSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Manual percentage adjustment (e.g. 50 for 50% increase)
+  // This scales automatically with the market price
+  manualAdjustmentPercentage: {
+    type: Number,
+    default: 0
+  },
   // Normal price (base price for automatic adjustments)
   normalPrice: {
     type: Number,

@@ -486,37 +486,44 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       const itemType = currentRate.type;
       let normalPrice = currentRate.normalPrice;
       const currentAdjustment = currentRate.manualAdjustment || 0;
+      const currentPercentage = currentRate.manualAdjustmentPercentage || 0;
 
-      // Normalize adjustment value based on item type and adjustment type
-      let normalizedAmount = amount;
+      // Normalize adjustment value based on item type (only for fixed amount adjustments)
+      let normalizedDelta = amount;
       if (!isPercentage) {
         if (itemType === 'gold') {
           // Input for gold is "per 10g", so divide by 10 to get "per gram"
-          normalizedAmount = amount / 10;
-          console.log(`🟡 Gold item detected: Normalized ${amount}/10g to ${normalizedAmount}/g`);
+          normalizedDelta = amount / 10;
+          console.log(`🟡 Gold item detected: Normalized ${amount}/10g to ${normalizedDelta}/g`);
         } else {
           // Input for silver is "per kg", so divide by 1000 to get "per gram"
-          normalizedAmount = amount / 1000;
-          console.log(`⚪ Silver item detected: Normalized ${amount}/kg to ${normalizedAmount}/g`);
+          normalizedDelta = amount / 1000;
+          console.log(`⚪ Silver item detected: Normalized ${amount}/kg to ${normalizedDelta}/g`);
         }
       }
 
       // If normalPrice is missing, try to calculate or use fallback
       if (!normalPrice || normalPrice <= 0) {
-        normalPrice = (currentRate.ratePerGram || 0) - currentAdjustment;
+        normalPrice = (currentRate.ratePerGram || 0) / (1 + currentPercentage / 100) - currentAdjustment;
       }
 
-      let newAdjustment = currentAdjustment + (isPercentage ? (normalPrice * normalizedAmount) / 100 : normalizedAmount);
+      // Calculate new persistent adjustment values
+      let newAdjustment = currentAdjustment;
+      let newPercentage = currentPercentage;
 
-      // Update calculations
+      if (isPercentage) {
+        newPercentage += amount; // e.g. if it was 10% and user adds 5%, it becomes 15%
+      } else {
+        newAdjustment += normalizedDelta;
+      }
+
+      // Update calculations for immediate response (updater will correct it properly)
       let weightInGrams = currentRate.weight?.value || 1;
       if (currentRate.weight?.unit === 'kg') {
         weightInGrams *= 1000;
       }
 
-      // Note: base rates handled by rate updater, we just set the manualAdjustment
-      // and a temporary ratePerGram/rate which the updater will correct
-      let ratePerGram = Math.max(0, normalPrice + newAdjustment);
+      const ratePerGram = Math.max(0, normalPrice * (1 + newPercentage / 100) + newAdjustment);
 
       bulkOps.push({
         updateOne: {
@@ -524,6 +531,7 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
           update: {
             $set: {
               manualAdjustment: newAdjustment,
+              manualAdjustmentPercentage: newPercentage,
               ratePerGram: ratePerGram,
               rate: Math.max(0, ratePerGram * weightInGrams),
               lastUpdated: new Date()
@@ -536,9 +544,10 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       adjustments.push({
         itemName: rateName,
         type: itemType,
-        normalizedAdjustment: newAdjustment,
-        delta: normalizedAmount,
-        percentageChange: isPercentage ? normalizedAmount : (normalPrice > 0 ? (normalizedAmount / normalPrice) * 100 : 0)
+        newPercentage: newPercentage,
+        newAdjustmentAmount: newAdjustment,
+        delta: isPercentage ? `${amount}%` : `₹${normalizedDelta}/g`,
+        effectiveRatePerGram: ratePerGram
       });
     }
 

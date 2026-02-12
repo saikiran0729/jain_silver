@@ -1,0 +1,42 @@
+f915720 Fix admin auto-logout: standardize JWT secrets and soften rate API errors
+554c51b Enforce strictly live rates: removed all fallbacks and LKG logic
+54cc64c Optimize fallback rates and improve sync reliability (LKG logic)
+fae6cab Standardize JWT_SECRET fallback consistency to resolve 401 issues
+4959ee6 Fix admin syntax error and restore missing rates routes
+origin	https://github.com/saikiran0729/jain_silver.git (fetch)
+origin	https://github.com/saikiran0729/jain_silver.git (push)
+suresh	https://github.com/sureshkonda988/jain_silver.git (fetch)
+suresh	https://github.com/sureshkonda988/jain_silver.git (push)
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	modified:   backend/models/SilverRate.js
+	modified:   backend/routes/admin.js
+	modified:   backend/routes/rates.js
+	modified:   web-app/src/pages/AdminDashboardPage.jsx
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+  (commit or discard the untracked or modified content in submodules)
+	modified:   mobile-app (modified content)
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	branch_name.txt
+	check_push_log.txt
+	commit_msg.txt
+	commit_out.txt
+	final_check.txt
+	git_config.txt
+	git_log.txt
+	git_status.txt
+	output.txt
+	push_out.txt
+	push_suresh_out.txt
+	remote.txt
+	remote_info.txt
+	remote_utf8.txt
+
