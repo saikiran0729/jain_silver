@@ -852,6 +852,39 @@ router.post('/toggle-show-as-it-is', auth, adminAuth, async (req, res) => {
   }
 });
 
+// Reset ALL manual adjustments to zero
+router.post('/reset-all-adjustments', auth, adminAuth, async (req, res) => {
+  try {
+    const result = await SilverRate.updateMany(
+      { location: 'Andhra Pradesh' },
+      { $set: { manualAdjustment: 0, manualAdjustmentPercentage: 0, lastUpdated: new Date() } }
+    );
+
+    console.log(`✅ Reset ${result.modifiedCount} rates to zero adjustments`);
+
+    // Trigger sync to recalculate rates with zero adjustments
+    try {
+      const ratesRoute = require('./rates');
+      if (ratesRoute.syncRatesWithSource) {
+        await Promise.race([
+          ratesRoute.syncRatesWithSource(),
+          new Promise((resolve) => setTimeout(resolve, 5000))
+        ]);
+      }
+    } catch (e) {
+      console.warn('⚠️ Post-reset sync failed:', e.message);
+    }
+
+    res.json({
+      message: `Reset ${result.modifiedCount} rates to zero adjustments`,
+      modifiedCount: result.modifiedCount
+    });
+  } catch (error) {
+    console.error('Reset adjustments error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 module.exports = router;
 
 

@@ -127,6 +127,20 @@ function AdminDashboardPage() {
     }
   };
 
+  const resetAllAdjustments = async () => {
+    if (!window.confirm('Reset ALL manual adjustments to zero? This cannot be undone.')) return;
+    try {
+      setLoadingAction(true);
+      await api.post('/admin/reset-all-adjustments');
+      await fetchRates(true);
+      alert('All adjustments reset to zero!');
+    } catch (error) {
+      alert('Failed to reset: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
   const fetchBaseRate = async () => {
     try {
       // Use dedicated endpoint to get just the base rate (faster)
@@ -1054,6 +1068,15 @@ function AdminDashboardPage() {
                   <Button size="small" onClick={() => fetchRates(false)} disabled={loadingRates}>
                     Refresh
                   </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="error"
+                    onClick={resetAllAdjustments}
+                    disabled={loadingAction}
+                  >
+                    Reset All
+                  </Button>
                 </Box>
               </Box>
               {loadingRates && rates.length === 0 ? (
@@ -1158,10 +1181,7 @@ function AdminDashboardPage() {
                                     textDecorationColor: displayedAdjustment > 0 ? colors.success : colors.error
                                   }}
                                 >
-                                  {rate.type === 'gold'
-                                    ? `₹${Number((showOriginalRates ? originalRatePerGram : finalAdjustedRatePerGram) * 10).toFixed(2)}/10g`
-                                    : `₹${Number((showOriginalRates ? originalRatePerGram : finalAdjustedRatePerGram) * 1000).toFixed(2)}/kg`
-                                  }
+                                  ₹{Number(showOriginalRates ? originalTotalPrice : finalAdjustedPrice).toFixed(2)}
                                 </Typography>
                               </Box>
                               <Typography
@@ -1171,7 +1191,10 @@ function AdminDashboardPage() {
                                   display: 'block'
                                 }}
                               >
-                                ₹{Number(showOriginalRates ? originalTotalPrice : finalAdjustedPrice).toFixed(2)}
+                                {rate.type === 'gold'
+                                  ? `₹${Number((showOriginalRates ? originalRatePerGram : finalAdjustedRatePerGram) * 10).toFixed(2)}/10g`
+                                  : `₹${Number((showOriginalRates ? originalRatePerGram : finalAdjustedRatePerGram) * 1000).toFixed(2)}/kg`
+                                }
                               </Typography>
                             </TableCell>
                             <TableCell align="center">
