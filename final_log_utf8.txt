@@ -1,0 +1,1 @@
+﻿f24292f feat: implement persistent scaling for both percentage and amount adjustments

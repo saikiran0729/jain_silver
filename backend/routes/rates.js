@@ -540,8 +540,11 @@ router.get('/', async (req, res) => {
       }
     } catch (e) { console.error('DB fetch failed:', e.message); }
 
-    // Trigger background update if not skipping and data is old
-    if (!skipUpdate) {
+    // ALWAYS trigger background sync if MongoDB data is older than 1 second
+    // This ensures live rates are ALWAYS fresh regardless of skipUpdate flag.
+    // skipUpdate=true just means "don't WAIT for sync, return cached data immediately"
+    // but we must still kick off a background sync so the next poll gets fresh data.
+    {
       const latestRate = mongoRates.length > 0 ? mongoRates.reduce((l, r) => (r.lastUpdated > l.lastUpdated ? r : l), mongoRates[0]) : null;
       const mongoAge = latestRate ? Date.now() - new Date(latestRate.lastUpdated).getTime() : 999999;
 

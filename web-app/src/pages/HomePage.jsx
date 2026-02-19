@@ -23,7 +23,7 @@ import api from '../config/api';
 import axios from 'axios';
 import colors from '../theme/colors';
 
-const POLLING_INTERVAL = 5000;
+const POLLING_INTERVAL = 1000; // Update every 1 second for live metal rates
 
 // Helper to determine icon type
 const getTypeIcon = (type, name, weight) => {

@@ -1,0 +1,17 @@
+﻿On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+  (commit or discard the untracked or modified content in submodules)
+	modified:   mobile-app (modified content)
+	modified:   web-app/src/pages/AdminDashboardPage.jsx
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	final_log_utf8.txt
+	git_stat.txt
+	remote_check_utf8.txt
+
+no changes added to commit (use "git add" and/or "git commit -a")

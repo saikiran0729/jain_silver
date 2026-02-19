@@ -174,7 +174,6 @@ function AdminDashboardPage() {
           setLoadingRates(true);
         }
       }
-      console.log('📡 Fetching rates from /rates endpoint...', skipUpdate ? '(skipping update)' : '(allowing update)');
 
       // ONLY fetch base rate if we are doing a full update (skipUpdate=false)
       // This saves time during metadata updates (name/visibility)
@@ -192,7 +191,6 @@ function AdminDashboardPage() {
         },
         timeout: 30000 // Increased to 30 seconds to handle network variability
       });
-      console.log('✅ Rates fetched successfully:', response.data?.length || 0, 'rates');
       // Only clear loading if we set it (not during polling)
       if (!isPolling) {
         setLoadingRates(false);
@@ -203,6 +201,12 @@ function AdminDashboardPage() {
 
         // Handle object response with rates property (fallback from backend)
         if (newRates && !Array.isArray(newRates) && Array.isArray(newRates.rates)) {
+          // If the backend says data is temporarily unavailable (e.g. syncing), 
+          // PRESERVE the existing rates in state to prevent UI flickering/disappearance.
+          if (newRates.unavailable && prevRates.length > 0) {
+            console.log('ℹ️ Market data temporarily syncing. Preserving current prices.');
+            return prevRates;
+          }
           console.log('ℹ️ Received market metadata object, extracting rates array.');
           newRates = newRates.rates;
         }
@@ -216,7 +220,7 @@ function AdminDashboardPage() {
             console.error('❌ Expected array of rates but got:', typeof newRates, newRates);
           }
           // If polling, just return previous rates to avoid UI disruption
-          if (isPolling) return prevRates;
+          if (isPolling || prevRates.length > 0) return prevRates;
         }
 
         // Compare all rates to detect any changes in adjustedPrice or ratePerGram
@@ -315,18 +319,9 @@ function AdminDashboardPage() {
         return newRates;
       });
 
-      // CRITICAL: Ensure base rate is available for Normal Price calculation
-      // Re-fetch if not available to ensure Normal Price shows exact RB Gold prices
+      // Ensure base rate is available for Normal Price calculation
       if (!baseRateFromSource || !baseRateFromSource.baseRatePerGram) {
-        console.warn('⚠️ Base rate not available after fetching rates, re-fetching...');
-        const baseRate = await fetchBaseRate();
-        if (baseRate && baseRate.baseRatePerGram) {
-          console.log(`✅ Base rate now available: ₹${baseRate.baseRatePerGram}/gram (exact RB Gold price)`);
-        } else {
-          console.error('❌ CRITICAL: Base rate still not available - Normal Price will not show exact RB Gold prices!');
-        }
-      } else {
-        console.log(`✅ Base rate available for Normal Price: ₹${baseRateFromSource.baseRatePerGram}/gram (exact RB Gold price)`);
+        await fetchBaseRate();
       }
     } catch (error) {
       const errorMsg = error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to fetch rates';
