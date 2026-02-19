@@ -488,18 +488,10 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       const currentAdjustment = currentRate.manualAdjustment || 0;
       const currentPercentage = currentRate.manualAdjustmentPercentage || 0;
 
-      // Normalize adjustment value based on item type (only for fixed amount adjustments)
+      // Use adjustment value directly as per-gram (no normalization needed)
       let normalizedDelta = amount;
       if (!isPercentage) {
-        if (itemType === 'gold') {
-          // Input for gold is "per 10g", so divide by 10 to get "per gram"
-          normalizedDelta = amount / 10;
-          console.log(`🟡 Gold item detected: Normalized ${amount}/10g to ${normalizedDelta}/g`);
-        } else {
-          // Input for silver is "per kg", so divide by 1000 to get "per gram"
-          normalizedDelta = amount / 1000;
-          console.log(`⚪ Silver item detected: Normalized ${amount}/kg to ${normalizedDelta}/g`);
-        }
+        console.log(`📊 Adjustment: ₹${normalizedDelta}/gram for ${rateName} (${itemType})`);
       }
 
       // If normalPrice is missing, try to calculate or use fallback

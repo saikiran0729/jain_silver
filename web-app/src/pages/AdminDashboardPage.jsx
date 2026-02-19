@@ -703,15 +703,8 @@ function AdminDashboardPage() {
           }
 
           if (shouldAdjust) {
-            // Normalize adjustment amount (copied logic from backend)
+            // Use adjustment value directly as per-gram (no normalization)
             let normalizedDelta = amountValue;
-            if (!isPercentage) {
-              if (r.type === 'gold') {
-                normalizedDelta = amountValue / 10;
-              } else {
-                normalizedDelta = amountValue / 1000;
-              }
-            }
 
             const currentPercentage = r.manualAdjustmentPercentage || 0;
             const currentAdjustment = r.manualAdjustment || 0;
@@ -1201,7 +1194,7 @@ function AdminDashboardPage() {
                               {hasAdjustment ? (
                                 <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                                   <Chip
-                                    label={`${displayedAdjustment > 0 ? '+' : ''}${rate.type === 'gold' ? (displayedAdjustment * 10).toFixed(2) : (displayedAdjustment * 1000).toFixed(0)}`}
+                                    label={`${displayedAdjustment > 0 ? '+' : ''}${displayedAdjustment.toFixed(2)}`}
                                     size="small"
                                     sx={{
                                       height: 20,
@@ -1213,7 +1206,7 @@ function AdminDashboardPage() {
                                     }}
                                   />
                                   <Typography variant="caption" sx={{ fontSize: '0.6rem', mt: 0.5, color: colors.textSecondary }}>
-                                    {rate.type === 'gold' ? 'per 10g' : 'per kg'}
+                                    per gram
                                   </Typography>
                                 </Box>
                               ) : (
