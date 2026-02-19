@@ -228,7 +228,8 @@ const ensureAllProductsForAdmin = (rates, isAdmin, baseRatePerGram = null, skipU
 // Helper function to apply manual adjustments to rates from MongoDB
 // NOTE: Rates from MongoDB already have adjustments applied in ratePerGram
 // This function just ensures the data structure is correct for the API response
-const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false) => {
+// When showAsItIs=true, adjustments are zeroed out so customers see raw market prices
+const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false, showAsItIs = false) => {
   // Fetch current adjustments from MongoDB
   // Use originalName if available (for admin), otherwise use name
   // This ensures we fetch adjustments correctly even when displayName is set
@@ -260,12 +261,12 @@ const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false
       percentage: rate.manualAdjustmentPercentage || 0
     };
 
-    const manualAdjustment = adjData.amount;
-    const manualAdjustmentPercentage = adjData.percentage;
+    // When showAsItIs is true (and not admin), zero out all adjustments
+    // so customers see the raw market price
+    const manualAdjustment = (showAsItIs && !isAdmin) ? 0 : adjData.amount;
+    const manualAdjustmentPercentage = (showAsItIs && !isAdmin) ? 0 : adjData.percentage;
 
     // Recalculate everything from current market values
-    // rate.ratePerGram from DB is just a snapshot - we should really re-calc from normalPrice
-    // but normalPrice in DB is also baseRate.
     const currentRatePerGram = rate.ratePerGram || 0;
 
     // originalRatePerGram = (current - adjustmentAmount) / (1 + percentage/100)
@@ -278,8 +279,9 @@ const applyManualAdjustments = async (rates, isAdmin = false, skipUpdate = false
     }
     const originalTotalRate = originalRatePerGram * weightInGrams;
 
-    // adjustedTotalRate is what's in the DB usually, but let's be consistent
-    const adjustedRatePerGram = currentRatePerGram;
+    // When showAsItIs: use the original (unadjusted) rate
+    // Otherwise: use the current DB rate (which has adjustments baked in)
+    const adjustedRatePerGram = (showAsItIs && !isAdmin) ? originalRatePerGram : currentRatePerGram;
     const adjustedTotalRate = adjustedRatePerGram * weightInGrams;
 
     // Use displayName if set, otherwise use name
@@ -570,8 +572,21 @@ router.get('/', async (req, res) => {
         }
       }
     }
+    // Check "Show As It Is" setting from DB (for non-admin, zero out adjustments)
+    let showAsItIs = false;
+    if (!isAdmin) {
+      try {
+        if (mongoose.connection.readyState === 1) {
+          const setting = await Settings.getSetting('showAsItIs');
+          showAsItIs = setting?.value === true;
+        }
+      } catch (e) {
+        console.warn('⚠️ Could not read showAsItIs setting:', e.message);
+      }
+    }
+
     if (mongoRates.length > 0) {
-      const finalRates = await applyManualAdjustments(mongoRates, isAdmin, skipUpdate);
+      const finalRates = await applyManualAdjustments(mongoRates, isAdmin, skipUpdate, showAsItIs);
       // Ensure all products are present for admin view
       const completeRates = ensureAllProductsForAdmin(finalRates, isAdmin, cachedBaseRate.ratePerGram, skipUpdate);
 
