@@ -398,9 +398,8 @@ const syncRatesWithSource = async (retryCount = 0) => {
     }
 
     // 5. Prepare Gold Rate
+    // Use rate directly from fetcher (it's already normalized to per-gram there)
     let goldRatePerGram = liveRate.gold999Rate || 0;
-    if (goldRatePerGram > 500000) goldRatePerGram /= 1000;
-    else if (goldRatePerGram > 5000) goldRatePerGram /= 10;
 
     // 6. Execute Bulk Update
     const bulkOps = rateDefinitions.map(rateDef => {
