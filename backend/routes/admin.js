@@ -555,18 +555,21 @@ router.post('/adjust-rates', auth, adminAuth, async (req, res) => {
       await SilverRate.bulkWrite(bulkOps);
       console.log(`✅ Updated ${bulkOps.length} rate adjustments in MongoDB`);
 
-      // Trigger rate update - non-blocking and using the NEW unified sync
-      setImmediate(async () => {
-        try {
-          const ratesRoute = require('./rates');
-          if (ratesRoute.syncRatesWithSource) {
-            await ratesRoute.syncRatesWithSource();
-            console.log('✅ Unified rate sync triggered after adjustment');
-          }
-        } catch (e) {
-          console.warn('Could not trigger background rate update:', e.message);
+      // CRITICAL: Await sync BEFORE sending response.
+      // On Vercel serverless, setImmediate/background calls get killed after res.json().
+      // We must sync inline so rates are recalculated with fresh live prices + new adjustments.
+      try {
+        const ratesRoute = require('./rates');
+        if (ratesRoute.syncRatesWithSource) {
+          await Promise.race([
+            ratesRoute.syncRatesWithSource(),
+            new Promise((resolve) => setTimeout(resolve, 5000)) // 5s timeout
+          ]);
+          console.log('✅ Unified rate sync completed after adjustment');
         }
-      });
+      } catch (e) {
+        console.warn('⚠️ Post-adjustment sync failed (adjustment is saved, will sync on next poll):', e.message);
+      }
     }
     const io = req.app.get('io');
     if (io) io.emit('manualAdjustment', { value: amount, adjustmentType, itemName, category });

@@ -495,13 +495,20 @@ const updateRatesHandler = async (req, res = null) => {
 // Get current base rate from source (without adjustments) - for "Show As It Is" feature
 router.get('/base-rate', async (req, res) => {
   try {
-    // Return cached base rate immediately for speed
-    if (cachedBaseRate && cachedBaseRate.ratePerGram > 0) {
-      // Trigger background update if cache is older than 800ms
-      if (Date.now() - cachedBaseRate.lastUpdated.getTime() > 800) {
-        syncRatesWithSource().catch(e => console.error(e));
+    // If cache is empty or stale, sync first (MUST await on Vercel serverless)
+    const cacheAge = cachedBaseRate.ratePerGram > 0 ? Date.now() - cachedBaseRate.lastUpdated.getTime() : 999999;
+    if (cacheAge > 1000) {
+      try {
+        await Promise.race([
+          syncRatesWithSource(),
+          new Promise((resolve) => setTimeout(resolve, 4000))
+        ]);
+      } catch (e) {
+        console.warn('⚠️ base-rate sync failed:', e.message);
       }
+    }
 
+    if (cachedBaseRate && cachedBaseRate.ratePerGram > 0) {
       return res.json({
         baseRatePerGram: cachedBaseRate.ratePerGram,
         baseRatePerKg: cachedBaseRate.ratePerKg,
@@ -540,16 +547,27 @@ router.get('/', async (req, res) => {
       }
     } catch (e) { console.error('DB fetch failed:', e.message); }
 
-    // ALWAYS trigger background sync if MongoDB data is older than 1 second
-    // This ensures live rates are ALWAYS fresh regardless of skipUpdate flag.
-    // skipUpdate=true just means "don't WAIT for sync, return cached data immediately"
-    // but we must still kick off a background sync so the next poll gets fresh data.
+    // ALWAYS sync if MongoDB data is older than 1 second.
+    // CRITICAL: On Vercel serverless, fire-and-forget calls get killed after res.json().
+    // So we MUST await the sync inline. Use Promise.race with a timeout to keep response fast.
     {
       const latestRate = mongoRates.length > 0 ? mongoRates.reduce((l, r) => (r.lastUpdated > l.lastUpdated ? r : l), mongoRates[0]) : null;
       const mongoAge = latestRate ? Date.now() - new Date(latestRate.lastUpdated).getTime() : 999999;
 
       if (mongoAge > 1000) {
-        syncRatesWithSource().catch(() => { });
+        try {
+          // Await sync with a 4-second timeout so the response doesn't hang
+          await Promise.race([
+            syncRatesWithSource(),
+            new Promise((resolve) => setTimeout(resolve, 4000))
+          ]);
+          // Re-read MongoDB after sync to get updated rates
+          if (mongoose.connection.readyState === 1) {
+            mongoRates = await SilverRate.find({ location: 'Andhra Pradesh' }).sort({ name: 1 }).lean();
+          }
+        } catch (syncErr) {
+          console.warn('⚠️ Inline sync failed, serving stale data:', syncErr.message);
+        }
       }
     }
     if (mongoRates.length > 0) {
