@@ -109,11 +109,11 @@ const fetchFromRBGoldspot = async () => {
 
     const effectiveUsdInr = usdInrRate || 91.675;
 
-    // GOLD Calculation (Retail ID 945 is typically for 20g based on value ~1.6L)
+    // GOLD Calculation (Retail ID 945 is per 10g or user specific unit)
     if (gold999Rate) {
-      // ID 945 = ~160000 is likely price for 20g, so per gram = 160000 / 20 = 8000
-      const goldPerGram = gold999Rate / 20;
-      console.log(`💎 RB Goldspot: Gold 999 -> ₹${goldPerGram.toFixed(2)}/g (Retail ID 945: ${gold999Rate} for 20g)`);
+      // ID 945 = ~160000. User wants ~16000 for 1g. So divide by 10.
+      const goldPerGram = gold999Rate / 10;
+      console.log(`💎 RB Goldspot: Gold 999 -> ₹${goldPerGram.toFixed(2)}/g (Retail ID 945: ${gold999Rate} / 10)`);
       gold999Rate = goldPerGram;
     }
 
