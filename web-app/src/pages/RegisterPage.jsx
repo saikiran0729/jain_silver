@@ -14,6 +14,60 @@ import {
 import api from '../config/api';
 import colors from '../theme/colors';
 
+const compressImage = (file) => {
+  return new Promise((resolve) => {
+    if (!file || !file.type.startsWith('image/')) {
+      resolve(file);
+      return;
+    }
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const maxWidth = 1000;
+        const maxHeight = 1000;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const compressedFile = new File([blob], file.name, {
+              type: 'image/jpeg',
+              lastModified: Date.now(),
+            });
+            resolve(compressedFile);
+          } else {
+            resolve(file); // fallback
+          }
+        }, 'image/jpeg', 0.7);
+      };
+      img.onerror = () => resolve(file);
+    };
+    reader.onerror = () => resolve(file);
+  });
+};
+
 function RegisterPage() {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
@@ -77,10 +131,15 @@ function RegisterPage() {
       data.append('password', formData.password);
       data.append('aadharNumber', formData.aadharNumber.trim());
       data.append('panNumber', formData.panNumber.trim().toUpperCase());
-      data.append('aadharFront', files.aadharFront);
-      data.append('aadharBack', files.aadharBack);
-      data.append('panImage', files.panImage);
-      data.append('selfie', files.selfie);
+      const compressedAadharFront = await compressImage(files.aadharFront);
+      const compressedAadharBack = await compressImage(files.aadharBack);
+      const compressedPanImage = await compressImage(files.panImage);
+      const compressedSelfie = await compressImage(files.selfie);
+
+      data.append('aadharFront', compressedAadharFront);
+      data.append('aadharBack', compressedAadharBack);
+      data.append('panImage', compressedPanImage);
+      data.append('selfie', compressedSelfie);
 
       const response = await fetch(api.defaults.baseURL + '/auth/register', {
         method: 'POST',
