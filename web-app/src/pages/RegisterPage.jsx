@@ -34,10 +34,7 @@ function RegisterPage() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [anchorEl, setAnchorEl] = useState(null);
-  const [currentField, setCurrentField] = useState(null);
-  const cameraInputs = useRef({});
-  const galleryInputs = useRef({});
+  const fileInputs = useRef({});
 
   const handleFileChange = (field, event) => {
     if (event.target.files && event.target.files[0]) {
@@ -45,39 +42,15 @@ function RegisterPage() {
     }
   };
 
-  const handleUploadClick = (event, field) => {
-    setCurrentField(field);
-    setAnchorEl(event.currentTarget);
-  };
-
-  const handleMenuClose = () => {
-    setAnchorEl(null);
-    setCurrentField(null);
-  };
-
-  const handleCameraSelect = () => {
-    if (currentField) {
-      const input = cameraInputs.current[currentField];
-      if (input) {
-        input.click();
-      }
+  const handleUploadClick = (field) => {
+    if (fileInputs.current[field]) {
+      fileInputs.current[field].click();
     }
-    handleMenuClose();
-  };
-
-  const handleGallerySelect = () => {
-    if (currentField) {
-      const input = galleryInputs.current[currentField];
-      if (input) {
-        input.click();
-      }
-    }
-    handleMenuClose();
   };
 
   const handleRegister = async () => {
-    if (!formData.surname || !formData.lastName || !formData.email || !formData.phone || !formData.password) {
-      setError('Please fill all required fields');
+    if (!formData.surname || !formData.lastName || !formData.email || !formData.phone || !formData.password || !formData.aadharNumber || !formData.panNumber) {
+      setError('Please fill all required fields, including Aadhar and PAN numbers');
       return;
     }
 
@@ -123,7 +96,12 @@ function RegisterPage() {
         alert('Registration Successful! Your account is pending admin approval. You can sign in once your account is approved.');
         navigate('/');
       } else {
-        setError(responseData.message || 'Registration failed');
+        if (responseData.errors && Array.isArray(responseData.errors)) {
+          const errorMsgs = responseData.errors.map(e => e.msg || e.message).join('\n');
+          setError(errorMsgs || 'Registration failed');
+        } else {
+          setError(responseData.message || responseData.error || 'Registration failed');
+        }
       }
     } catch (err) {
       setError(err.message || 'Registration failed. Please try again.');
@@ -147,11 +125,11 @@ function RegisterPage() {
           <TextField fullWidth label="Password" type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} margin="normal" />
           <TextField fullWidth label="Confirm Password" type="password" value={formData.confirmPassword} onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })} margin="normal" />
           <TextField fullWidth label="Aadhar Number" value={formData.aadharNumber} onChange={(e) => setFormData({ ...formData, aadharNumber: e.target.value })} margin="normal" />
-          <Button 
-            variant="outlined" 
-            fullWidth 
+          <Button
+            variant="outlined"
+            fullWidth
             sx={{ mt: 2 }}
-            onClick={(e) => handleUploadClick(e, 'aadharFront')}
+            onClick={() => handleUploadClick('aadharFront')}
           >
             {files.aadharFront ? 'Aadhar Front Uploaded ✓' : 'Upload Aadhar Front'}
           </Button>
@@ -159,26 +137,16 @@ function RegisterPage() {
             type="file"
             hidden
             accept="image/*"
-            capture="environment"
             ref={(input) => {
-              if (input) cameraInputs.current.aadharFront = input;
+              if (input) fileInputs.current.aadharFront = input;
             }}
             onChange={(e) => handleFileChange('aadharFront', e)}
           />
-          <input
-            type="file"
-            hidden
-            accept="image/*"
-            ref={(input) => {
-              if (input) galleryInputs.current.aadharFront = input;
-            }}
-            onChange={(e) => handleFileChange('aadharFront', e)}
-          />
-          <Button 
-            variant="outlined" 
-            fullWidth 
+          <Button
+            variant="outlined"
+            fullWidth
             sx={{ mt: 1 }}
-            onClick={(e) => handleUploadClick(e, 'aadharBack')}
+            onClick={() => handleUploadClick('aadharBack')}
           >
             {files.aadharBack ? 'Aadhar Back Uploaded ✓' : 'Upload Aadhar Back'}
           </Button>
@@ -186,27 +154,17 @@ function RegisterPage() {
             type="file"
             hidden
             accept="image/*"
-            capture="environment"
             ref={(input) => {
-              if (input) cameraInputs.current.aadharBack = input;
-            }}
-            onChange={(e) => handleFileChange('aadharBack', e)}
-          />
-          <input
-            type="file"
-            hidden
-            accept="image/*"
-            ref={(input) => {
-              if (input) galleryInputs.current.aadharBack = input;
+              if (input) fileInputs.current.aadharBack = input;
             }}
             onChange={(e) => handleFileChange('aadharBack', e)}
           />
           <TextField fullWidth label="PAN Number" value={formData.panNumber} onChange={(e) => setFormData({ ...formData, panNumber: e.target.value.toUpperCase() })} margin="normal" />
-          <Button 
-            variant="outlined" 
-            fullWidth 
+          <Button
+            variant="outlined"
+            fullWidth
             sx={{ mt: 1 }}
-            onClick={(e) => handleUploadClick(e, 'panImage')}
+            onClick={() => handleUploadClick('panImage')}
           >
             {files.panImage ? 'PAN Image Uploaded ✓' : 'Upload PAN Image'}
           </Button>
@@ -214,26 +172,16 @@ function RegisterPage() {
             type="file"
             hidden
             accept="image/*"
-            capture="environment"
             ref={(input) => {
-              if (input) cameraInputs.current.panImage = input;
+              if (input) fileInputs.current.panImage = input;
             }}
             onChange={(e) => handleFileChange('panImage', e)}
           />
-          <input
-            type="file"
-            hidden
-            accept="image/*"
-            ref={(input) => {
-              if (input) galleryInputs.current.panImage = input;
-            }}
-            onChange={(e) => handleFileChange('panImage', e)}
-          />
-          <Button 
-            variant="outlined" 
-            fullWidth 
+          <Button
+            variant="outlined"
+            fullWidth
             sx={{ mt: 1 }}
-            onClick={(e) => handleUploadClick(e, 'selfie')}
+            onClick={() => handleUploadClick('selfie')}
           >
             {files.selfie ? 'Selfie Uploaded ✓' : 'Upload Selfie'}
           </Button>
@@ -241,33 +189,11 @@ function RegisterPage() {
             type="file"
             hidden
             accept="image/*"
-            capture="user"
             ref={(input) => {
-              if (input) cameraInputs.current.selfie = input;
+              if (input) fileInputs.current.selfie = input;
             }}
             onChange={(e) => handleFileChange('selfie', e)}
           />
-          <input
-            type="file"
-            hidden
-            accept="image/*"
-            ref={(input) => {
-              if (input) galleryInputs.current.selfie = input;
-            }}
-            onChange={(e) => handleFileChange('selfie', e)}
-          />
-          <Menu
-            anchorEl={anchorEl}
-            open={Boolean(anchorEl)}
-            onClose={handleMenuClose}
-          >
-            <MenuItem onClick={handleCameraSelect}>
-              📷 Camera
-            </MenuItem>
-            <MenuItem onClick={handleGallerySelect}>
-              📁 Gallery
-            </MenuItem>
-          </Menu>
           <Button fullWidth variant="contained" onClick={handleRegister} disabled={loading} sx={{ mt: 3 }}>
             {loading ? 'Registering...' : 'Register'}
           </Button>
