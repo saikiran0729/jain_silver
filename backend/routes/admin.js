@@ -684,9 +684,17 @@ router.put('/product', auth, adminAuth, async (req, res) => {
     }
 
     if (!rate) {
-      console.error(`❌ Product not found: ${productName}`);
-      return res.status(404).json({ message: `Product not found: ${productName}` });
+      console.error(`❌ Product not found: "${productName}"`);
+      console.log('   Available rates in DB (first 5):', (await SilverRate.find({ location: 'Andhra Pradesh' }).limit(5).select('name')).map(r => r.name));
+      return res.status(404).json({
+        message: `Product not found: ${productName}`,
+        receivedName: productName,
+        suggestion: 'Try using the exact "name" or "originalName" from the database'
+      });
     }
+
+    console.log(`🔍 Found product for update: ${rate.name} (ID: ${rate._id})`);
+    console.log(`   Inputs - displayName: ${displayName}, isVisible: ${isVisible}`);
 
     // Update fields if provided
     if (displayName !== undefined) {

@@ -180,11 +180,8 @@ function AdminDashboardPage() {
       // Only show loading spinner on initial load, never during polling to avoid UI flickering
       // CRITICAL: Don't set loadingRates during polling to prevent button from being disabled
       if (!isPolling) {
+        // ONLY show loading if we have no rates at all
         if (!rates || rates.length === 0) {
-          setLoadingRates(true);
-        }
-        // Only set loading on initial fetch, not during polling
-        if (!skipUpdate || rates.length === 0) {
           setLoadingRates(true);
         }
       }
@@ -382,9 +379,10 @@ function AdminDashboardPage() {
       // During polling, errors are already logged above as warnings (no alerts)
 
       // Don't clear rates on polling errors - keep showing last known rates
-      if (!isPolling) {
-        setRates([]);
-      }
+      // Also don't clear on manual refresh to keep UI immediate
+      // if (!isPolling) {
+      //   setRates([]);
+      // }
     } finally {
       // Always clear loading state after fetch completes (success or error)
       // But only if we don't have rates yet (to prevent flickering during polling)
@@ -638,7 +636,11 @@ function AdminDashboardPage() {
           : r
       ));
       alert(error.response?.data?.message || 'Failed to update product visibility');
-      console.error('Toggle visibility error:', error);
+      console.error('❌ Toggle visibility error:', error);
+      if (error.response) {
+        console.error('   Response Status:', error.response.status);
+        console.error('   Response Data:', error.response.data);
+      }
     } finally {
       setLoadingAction(false);
     }
@@ -746,9 +748,10 @@ function AdminDashboardPage() {
         timeout: 60000 // 60 seconds timeout
       });
 
-      // Update with actual response data if needed, but fetchRates(true) will handle it
-      // For now, refreshing with fetchRates(true) is safer to ensure absolute sync
-      await fetchRates(true);
+      // NO LONGER AWAITING fetchRates(true) HERE.
+      // We already did an optimistic update. fetchRates(true) triggers a slow sync.
+      // Instead, we can do a background fetch with skipUpdate=true to confirm
+      fetchRates(true, true); // Silent refresh in background
     } catch (error) {
       // Refresh rates on error to rollback optimistic changes
       await fetchRates(true);
