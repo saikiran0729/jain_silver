@@ -12,11 +12,26 @@ const SilverPriceTracker = require('../models/SilverPriceTracker');
 const fetchManualAdjustments = async (rateNames) => {
   let adjustmentsMap = {};
 
-  // CRITICAL FIX: Check connection state to avoid hanging if DB is down (causes 500/Timeout on Vercel)
+  // CRITICAL FIX: Robust connection check for Vercel/Serverless
   try {
+    // If not connected, wait up to 2 seconds for connection to be ready (if in connecting state)
     if (mongoose.connection.readyState !== 1) {
-      console.warn('⚠️ MongoDB not connected, skipping manual adjustments fetch (preserving existing)');
-      return null; // Return null to indicate failure
+      if (mongoose.connection.readyState === 2) {
+        console.log('⏳ MongoDB is connecting, waiting...');
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, 2000); // 2s timeout
+          mongoose.connection.once('connected', () => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
+      }
+
+      // Check again after wait
+      if (mongoose.connection.readyState !== 1) {
+        console.warn('⚠️ MongoDB still not connected (state: ' + mongoose.connection.readyState + '), skipping adjustments fetch');
+        return null; // Return null to indicate failure
+      }
     }
 
     const adjustments = await SilverRate.find({
@@ -374,10 +389,19 @@ const syncRatesWithSource = async (retryCount = 0) => {
     // 3. Ensure MongoDB is connected
     if (mongoose.connection.readyState !== 1) {
       console.log('🔌 Connecting to MongoDB for sync...');
-      await mongoose.connect(process.env.MONGODB_URI, {
-        serverSelectionTimeoutMS: 5000,
-        socketTimeoutMS: 10000
-      });
+      try {
+        await mongoose.connect(process.env.MONGODB_URI, {
+          serverSelectionTimeoutMS: 5000,
+          socketTimeoutMS: 10000
+        });
+        console.log('✅ Connected to MongoDB during sync');
+      } catch (connErr) {
+        console.error('❌ Failed to connect to MongoDB during sync:', connErr.message);
+        // If we are already connecting (2), we might be okay to proceed to fetchManualAdjustments which has its own wait
+        if (mongoose.connection.readyState !== 2) {
+          throw connErr;
+        }
+      }
     }
 
     const rateDefinitions = [
