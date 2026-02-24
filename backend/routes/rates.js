@@ -336,8 +336,15 @@ const calculateSmoothedRate = (newRate) => {
   return Math.round(newRate * 100) / 100;
 };
 
+let isSyncing = false;
+
 // Unified function to sync rates with source and save to MongoDB
 const syncRatesWithSource = async (retryCount = 0) => {
+  if (isSyncing && retryCount === 0) {
+    console.log('⏳ [syncRatesWithSource] Sync already in progress, skipping...');
+    return true; // Assume success or let existing sync handle it
+  }
+  isSyncing = true;
   const startTime = Date.now();
   console.log(`🔄 [syncRatesWithSource] Starting sync (attempt ${retryCount + 1})...`);
 
@@ -470,6 +477,8 @@ const syncRatesWithSource = async (retryCount = 0) => {
       return syncRatesWithSource(retryCount + 1);
     }
     return false;
+  } finally {
+    isSyncing = false;
   }
 };
 
@@ -548,19 +557,21 @@ router.get('/', async (req, res) => {
       }
     } catch (e) { console.error('DB fetch failed:', e.message); }
 
-    // ALWAYS sync if MongoDB data is older than 1 second.
+    // Sync if skipUpdate is false AND MongoDB data is older than 30 seconds.
     // CRITICAL: On Vercel serverless, fire-and-forget calls get killed after res.json().
     // So we MUST await the sync inline. Use Promise.race with a timeout to keep response fast.
     {
       const latestRate = mongoRates.length > 0 ? mongoRates.reduce((l, r) => (r.lastUpdated > l.lastUpdated ? r : l), mongoRates[0]) : null;
       const mongoAge = latestRate ? Date.now() - new Date(latestRate.lastUpdated).getTime() : 999999;
 
-      if (mongoAge > 1000) {
+      const syncThreshold = 30000; // 30 seconds
+      if (!skipUpdate && mongoAge > syncThreshold) {
         try {
-          // Await sync with a 4-second timeout so the response doesn't hang
+          console.log(`📡 Data age (${Math.round(mongoAge / 1000)}s) exceeds threshold (${syncThreshold / 1000}s). Syncing...`);
+          // Await sync with a 6-second timeout so the response doesn't hang
           await Promise.race([
             syncRatesWithSource(),
-            new Promise((resolve) => setTimeout(resolve, 4000))
+            new Promise((resolve) => setTimeout(resolve, 6000))
           ]);
           // Re-read MongoDB after sync to get updated rates
           if (mongoose.connection.readyState === 1) {
