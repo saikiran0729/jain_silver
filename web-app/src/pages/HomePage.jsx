@@ -137,7 +137,7 @@ function HomePage() {
 
       // Add cache-busting timestamp to ensure fresh data every second
       const response = await api.get('/rates', {
-        timeout: 10000,
+        timeout: 30000, // 30s - backend may need time for sync on cold starts
         params: {
           _t: Date.now(),
           skipUpdate: true // POLL-OPTIMIZATION: ask for cached data, let backend update in background
@@ -264,8 +264,8 @@ function HomePage() {
   const fetchRates = async () => {
     try {
       const response = await api.get('/rates', {
-        timeout: 10000, // 10 seconds - backend may wait for fresh rates
-        params: { _t: Date.now() } // Cache busting
+        timeout: 30000, // 30 seconds - backend may need time for sync/DB on cold starts
+        params: { _t: Date.now(), skipUpdate: true } // Cache busting + skip heavy sync
       });
       if (response.data && Array.isArray(response.data) && response.data.length > 0) {
         // Check if rates are default/old - if so, keep loading state

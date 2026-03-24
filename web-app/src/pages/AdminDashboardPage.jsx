@@ -148,7 +148,7 @@ function AdminDashboardPage() {
       // Increase timeout to prevent frequent timeouts
       const response = await api.get('/rates/base-rate', {
         params: { _t: Date.now() },
-        timeout: 10000 // Increased from 5000ms to 10000ms to reduce timeout errors
+        timeout: 30000 // 30s - backend may need time for sync on cold starts
       });
       if (response.data && response.data.baseRatePerGram) {
         setBaseRateFromSource(response.data);
