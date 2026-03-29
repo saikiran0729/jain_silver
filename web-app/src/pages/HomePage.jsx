@@ -146,7 +146,15 @@ function HomePage() {
       });
 
       currentRequestRef.current = null; // Clear after success
-      const newRates = response.data;
+      // Handle both response formats: array directly or object with .rates property
+      let newRates = response.data;
+      if (newRates && !Array.isArray(newRates) && Array.isArray(newRates.rates)) {
+        if (newRates.unavailable) {
+          console.log('ℹ️ Market data temporarily unavailable, preserving current rates.');
+          return;
+        }
+        newRates = newRates.rates;
+      }
       const updateTime = new Date();
 
       if (newRates && Array.isArray(newRates) && newRates.length > 0) {
@@ -267,22 +275,27 @@ function HomePage() {
         timeout: 30000, // 30 seconds - backend may need time for sync/DB on cold starts
         params: { _t: Date.now(), skipUpdate: true } // Cache busting + skip heavy sync
       });
-      if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+      // Handle both response formats: array directly or object with .rates property
+      let ratesData = response.data;
+      if (ratesData && !Array.isArray(ratesData) && Array.isArray(ratesData.rates)) {
+        ratesData = ratesData.rates;
+      }
+      if (ratesData && Array.isArray(ratesData) && ratesData.length > 0) {
         // Check if rates are default/old - if so, keep loading state
-        if (areRatesDefault(response.data)) {
+        if (areRatesDefault(ratesData)) {
           console.log('⏳ Initial rates are old (below ₹100), waiting for fresh rates...');
           setLoading(true); // Keep loading state
           setRates([]); // Don't show default rates
           // Will be updated by polling
         } else {
-          const sortedRates = sortRates(response.data);
+          const sortedRates = sortRates(ratesData);
           setRates(sortedRates);
           setLastUpdateTime(new Date());
           setLoading(false);
           console.log(`✅ Loaded ${sortedRates.length} silver rates`);
         }
       } else {
-        console.warn('⚠️ Unexpected response format:', response.data);
+        console.warn('⚠️ Unexpected response format:', ratesData);
         setLoading(false);
       }
     } catch (error) {

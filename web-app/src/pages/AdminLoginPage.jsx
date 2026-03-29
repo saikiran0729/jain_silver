@@ -30,10 +30,20 @@ function AdminLoginPage() {
         params: { skipUpdate: true },
         timeout: 30000
       });
-      if (response.data && response.data.rates) {
+      // Handle both response formats:
+      // - Array directly (normal success case)
+      // - Object with .rates property (fallback/unavailable case)
+      let ratesData = [];
+      if (Array.isArray(response.data)) {
+        ratesData = response.data;
+      } else if (response.data && Array.isArray(response.data.rates)) {
+        ratesData = response.data.rates;
+      }
+
+      if (ratesData.length > 0) {
         // Filter to show only Gold products
-        const goldProducts = response.data.rates.filter(rate =>
-          rate.name.toLowerCase().includes('gold')
+        const goldProducts = ratesData.filter(rate =>
+          rate.name?.toLowerCase().includes('gold')
         );
         setRates(goldProducts);
       }
