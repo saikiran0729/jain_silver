@@ -56,14 +56,11 @@ function AdminDashboardPage() {
       fetchBaseRate();
     }, 1000); // Updated to 1 second per user request
 
-    // Set up interval to fetch rates every second for live Adjusted Price updates
-    // Use skipUpdate=true for fast polling (backend triggers updates in background on Vercel)
-    // Optimized to update smoothly without causing UI flickering
+    // Poll rates every second to update Adjusted Price according to market changes + manual adjustments
+    // We now use fetchRates(false) to ensure every poll triggers a fresh sync from the live API
     ratesIntervalRef.current = setInterval(() => {
-      // Use skipUpdate=true for fast polling (backend triggers updates in background on Vercel)
-      // Pass isPolling=true to suppress error alerts and prevent loading state changes
-      fetchRates(true, true);
-    }, 1000); // Updated to 1 second per user request
+      fetchRates(false, true);
+    }, 1000);
 
     // Cleanup on unmount
     return () => {
@@ -118,8 +115,8 @@ function AdminDashboardPage() {
       setGlobalShowAsItIs(newValue);
       setShowOriginalRates(newValue); // Sync local view
       alert(response.data.message || `"Show As It Is" ${newValue ? 'enabled' : 'disabled'} successfully`);
-      // Refresh rates to show updated values - skip update to avoid timeout
-      await fetchRates(true);
+      // Refresh rates to show updated values
+      await fetchRates(false);
     } catch (error) {
       alert(error.response?.data?.message || 'Failed to toggle "Show As It Is" setting');
     } finally {
@@ -197,7 +194,7 @@ function AdminDashboardPage() {
       // Use longer timeout for skipUpdate=false (manual refresh that triggers full update)
       const response = await api.get('/rates', {
         params: {
-          skipUpdate: skipUpdate ? 'true' : undefined,
+          skipUpdate: skipUpdate ? 'true' : 'false',
           _t: Date.now() // Cache busting
         },
         timeout: 30000 // Increased to 30 seconds to handle network variability

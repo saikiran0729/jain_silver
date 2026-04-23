@@ -31,12 +31,12 @@ const normalizeSafeGoldRate = (ratePerGram) => {
   return normalizedRate;
 };
 
-// Fetch from RB Goldspot (Using User Provided URL)
+// Fetch from New Live Endpoint (api.abhinavgoldandsilver.com)
 const fetchFromRBGoldspot = async () => {
   try {
-    // console.log('📡 Fetching from RB Goldspot (Direct)...'); 
+    // console.log('📡 Fetching from New Live Endpoint...'); 
 
-    const response = await axios.get('https://bcast.rbgoldspot.com:7768/VOTSBroadcastStreaming/Services/xml/GetLiveRateByTemplateID/rbgold', {
+    const response = await axios.get('https://api.abhinavgoldandsilver.com/api/rates/live', {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -47,12 +47,18 @@ const fetchFromRBGoldspot = async () => {
     });
 
     if (!response.data) {
-      console.warn('⚠️ RB Goldspot: Empty response received');
+      console.warn('⚠️ Rates API: Empty response received');
       return null;
     }
 
-    // Parse Response - Robust splitting
-    const lines = response.data.split('\n').filter(line => line.trim());
+    // Parse Response - Handle JSON wrapper with .text field
+    const rawText = response.data.text || (typeof response.data === 'string' ? response.data : '');
+    if (!rawText) {
+      console.warn('⚠️ Rates API: No text data found in response');
+      return null;
+    }
+
+    const lines = rawText.split('\n').filter(line => line.trim());
     let ratePerKg = null;
     let ratePerGram = null;
     let gold999Rate = null;
@@ -103,25 +109,19 @@ const fetchFromRBGoldspot = async () => {
     }
 
     // CRITICAL: Use Retail IDs directly as per user clarification
-    // User confirmed: 
-    // - Silver: ₹3,50,000 per 1kg (ID 2966)
-    // - Gold: ₹1,63,820 per 10g (ID 945) -> store as ₹16,382 per gram
+    const effectiveUsdInr = usdInrRate || 94.073; // Updated fallback from live data
 
-    const effectiveUsdInr = usdInrRate || 91.675;
-
-    // GOLD Calculation (Retail ID 945 is per 10g or user specific unit)
+    // GOLD Calculation (Retail ID 945 is per 10g)
     if (gold999Rate) {
-      // ID 945 = ~160000. User wants ~16000 for 1g. So divide by 10.
       const goldPerGram = gold999Rate / 10;
-      console.log(`💎 RB Goldspot: Gold 999 -> ₹${goldPerGram.toFixed(2)}/g (Retail ID 945: ${gold999Rate} / 10)`);
+      console.log(`💎 Live API: Gold 999 -> ₹${goldPerGram.toFixed(2)}/g (ID 945: ${gold999Rate} / 10)`);
       gold999Rate = goldPerGram;
     }
 
     // SILVER Calculation (Retail ID 2966 is per kg)
     if (ratePerKg) {
-      // ID 2966 = 350000 is the price for 1kg, so per gram = 350000 / 1000 = 350
       ratePerGram = ratePerKg / 1000;
-      console.log(`💎 RB Goldspot: Silver 999 -> ₹${ratePerKg.toFixed(2)}/kg (Retail ID 2966: ${ratePerKg})`);
+      console.log(`💎 Live API: Silver 999 -> ₹${ratePerKg.toFixed(2)}/kg (ID 2966: ${ratePerKg})`);
     }
 
     if (ratePerGram) {
@@ -130,19 +130,20 @@ const fetchFromRBGoldspot = async () => {
         ratePerGram: ratePerGram,
         gold999Rate: gold999Rate,
         usdInrRate: effectiveUsdInr,
-        source: 'rbgoldspot',
+        source: 'live-api',
         timestamp: new Date()
       };
     }
 
-    console.warn('⚠️ RB Goldspot: Could not find/calculate Silver rate in response');
+    console.warn('⚠️ Live API: Could not find/calculate Silver rate in response');
     return null;
 
   } catch (error) {
-    console.error('❌ Error fetching from RB Goldspot:', error.message);
+    console.error('❌ Error fetching from Live API:', error.message);
     return null;
   }
 };
+
 
 /**
  * Simplified Fetcher - Always uses RB Goldspot

@@ -588,7 +588,7 @@ router.get('/', async (req, res) => {
       const latestRate = mongoRates.length > 0 ? mongoRates.reduce((l, r) => (r.lastUpdated > l.lastUpdated ? r : l), mongoRates[0]) : null;
       const mongoAge = latestRate ? Date.now() - new Date(latestRate.lastUpdated).getTime() : 999999;
 
-      const syncThreshold = 30000; // 30 seconds
+      const syncThreshold = 1000; // 1 second
       if (!skipUpdate && mongoAge > syncThreshold) {
         try {
           console.log(`📡 Data age (${Math.round(mongoAge / 1000)}s) exceeds threshold (${syncThreshold / 1000}s). Syncing...`);

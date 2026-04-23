@@ -140,7 +140,7 @@ function HomePage() {
         timeout: 30000, // 30s - backend may need time for sync on cold starts
         params: {
           _t: Date.now(),
-          skipUpdate: true // POLL-OPTIMIZATION: ask for cached data, let backend update in background
+          skipUpdate: false // Ensure we trigger updates every second
         },
         cancelToken: source.token
       });
