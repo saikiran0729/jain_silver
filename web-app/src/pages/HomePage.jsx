@@ -423,7 +423,7 @@ function HomePage() {
   }
 
   return (
-    <Box sx={{ p: { xs: 1, sm: 2 }, maxWidth: 1400, mx: 'auto', height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ p: { xs: 1, sm: 2 }, maxWidth: 1400, mx: 'auto', minHeight: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography
           variant="h5"
@@ -443,18 +443,20 @@ function HomePage() {
       </Box>
 
       <Grid container spacing={2} sx={{ flex: 1, minHeight: 0 }}>
-        <Grid item xs={12} md={3} sx={{ order: { xs: 2, md: 0 } }}>
+        <Grid item xs={12} md={3} sx={{ order: { xs: 2, md: 0 }, display: 'flex' }}>
           <Box
             component="img"
             src="/banner2.png"
-            alt="Banner"
+            alt="Gold Banner"
             sx={{
               width: '100%',
               height: '100%',
-              objectFit: 'contain',
+              objectFit: 'cover',
               objectPosition: 'center',
-              borderRadius: 1,
-              boxShadow: 2,
+              borderRadius: 3,
+              boxShadow: '0 10px 30px rgba(0,0,0,0.15)',
+              transition: 'transform 0.3s ease',
+              '&:hover': { transform: 'scale(1.02)' }
             }}
           />
         </Grid>
@@ -462,7 +464,7 @@ function HomePage() {
           {rates.length === 0 ? (
             <Alert severity="info">No rates available</Alert>
           ) : (
-            <TableContainer component={Paper} sx={{ boxShadow: '0 4px 12px rgba(0,0,0,0.08)', borderRadius: 2, overflow: 'hidden' }}>
+            <TableContainer component={Paper} sx={{ boxShadow: '0 10px 30px rgba(0,0,0,0.08)', borderRadius: 3, overflow: 'hidden', height: '100%' }}>
               <Table sx={{ width: '100%' }} size="medium">
                 <TableHead>
                   <TableRow sx={{ backgroundColor: '#f8f9fa' }}>
@@ -565,18 +567,20 @@ function HomePage() {
             </TableContainer>
           )}
         </Grid>
-        <Grid item xs={12} md={3} sx={{ order: { xs: 3, md: 0 } }}>
+        <Grid item xs={12} md={3} sx={{ order: { xs: 3, md: 0 }, display: 'flex' }}>
           <Box
             component="img"
-            src="/banner.png"
-            alt="Banner"
+            src="https://www.preciousmoments.in/cdn/shop/files/Front_Image_1.jpg?v=1752235117&width=1080"
+            alt="Silver Banner"
             sx={{
               width: '100%',
               height: '100%',
-              objectFit: 'contain',
+              objectFit: 'cover',
               objectPosition: 'center',
-              borderRadius: 1,
-              boxShadow: 2,
+              borderRadius: 3,
+              boxShadow: '0 10px 30px rgba(0,0,0,0.15)',
+              transition: 'transform 0.3s ease',
+              '&:hover': { transform: 'scale(1.02)' }
             }}
           />
         </Grid>
