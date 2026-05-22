@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Box, Card, CardContent, Typography, Button, Divider, Chip, Alert, Grid } from '@mui/material';
-import { Logout, AccountCircle, Phone, Store, AccountBalance, Verified, Star, Info } from '@mui/icons-material';
+import { Logout, AccountCircle, Phone, Store, AccountBalance, Verified, Star, Info, Delete } from '@mui/icons-material';
 import { AuthContext } from '../context/AuthContext';
 import api from '../config/api';
 import colors from '../theme/colors';
@@ -64,6 +64,23 @@ function ProfilePage() {
       navigate('/');
     }
   };
+
+  const handleDeleteAccount = async () => {
+    if (window.confirm('Are you absolutely sure you want to permanently delete your account? This will erase your profile, all uploaded documents, and all access rights. This action CANNOT be undone.')) {
+      try {
+        setLoading(true);
+        await api.delete('/users/profile');
+        alert('Your account has been permanently deleted.');
+        await logout();
+        navigate('/');
+      } catch (error) {
+        alert(error.response?.data?.message || 'Failed to delete account. Please try again later.');
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
 
   const handlePhoneCall = (phoneNumber) => {
     if (phoneNumber) {
@@ -345,19 +362,36 @@ function ProfilePage() {
         </CardContent>
       </Card>
 
-      {/* Logout Button */}
+      {/* Logout & Delete Buttons */}
       <Card>
         <CardContent>
-          <Button
-            fullWidth
-            variant="contained"
-            color="error"
-            startIcon={<Logout />}
-            onClick={handleLogout}
-            sx={{ py: 1.5 }}
-          >
-            Logout
-          </Button>
+          <Grid container spacing={2}>
+            <Grid item xs={12} sm={6}>
+              <Button
+                fullWidth
+                variant="contained"
+                color="error"
+                startIcon={<Logout />}
+                onClick={handleLogout}
+                sx={{ py: 1.5 }}
+              >
+                Logout
+              </Button>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Button
+                fullWidth
+                variant="outlined"
+                color="error"
+                startIcon={<Delete />}
+                onClick={handleDeleteAccount}
+                sx={{ py: 1.5 }}
+                disabled={loading}
+              >
+                Delete Account
+              </Button>
+            </Grid>
+          </Grid>
         </CardContent>
       </Card>
     </Box>
