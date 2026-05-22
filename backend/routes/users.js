@@ -174,5 +174,25 @@ router.put('/profile', auth, async (req, res) => {
   }
 });
 
+// Delete user profile / account (requires authentication)
+router.delete('/profile', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Completely delete the user from MongoDB
+    await User.findByIdAndDelete(req.user.userId);
+    
+    console.log(`🗑️ Account permanently deleted via mobile app: ${user.email || user.phone}`);
+    res.json({ message: 'Your account and all associated data have been permanently deleted.' });
+  } catch (error) {
+    console.error('Delete account error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 module.exports = router;
+
 

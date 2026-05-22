@@ -1,0 +1,69 @@
+{
+  "expo": {
+    "name": "Jain Silver Plaza",
+    "slug": "jain-silver-2",
+    "version": "1.0.1",
+    "orientation": "portrait",
+    "icon": "./assets/Gemini_Generated_Image_8ia19c8ia19c8ia1.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.jainsilver.app",
+      "buildNumber": "1.0.1",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to upload documents.",
+        "NSCameraUsageDescription": "This app needs access to your camera to take photos for document upload.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/Gemini_Generated_Image_8ia19c8ia19c8ia1.png",
+        "backgroundColor": "#1976D2"
+      },
+      "package": "com.jainsilver.app",
+      "versionCode": 3,
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO"
+      ],
+      "playStoreUrl": "https://play.google.com/store/apps/details?id=com.jainsilver.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to upload documents for registration.",
+          "cameraPermission": "The app accesses your camera to take photos for document upload."
+        }
+      ]
+    ],
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "a1f790dd-1354-4de9-ab24-9415b1a28deb"
+      }
+    },
+    "owner": "konapalask"
+  }
+}

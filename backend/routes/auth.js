@@ -1163,5 +1163,55 @@ router.post('/reset-password',
   }
 );
 
+// Public account deletion endpoint
+router.post('/delete-account', async (req, res) => {
+  const { identifier, password } = req.body;
+  
+  if (!identifier || !password) {
+    return res.status(400).json({ success: false, message: 'Please provide your registered Email/Phone and Password.' });
+  }
+  
+  try {
+    const normalizedIdentifier = identifier.trim().toLowerCase();
+    
+    // Find user by email or phone
+    // Normalize phone number search
+    let normalizedPhone = identifier.replace(/\s|-/g, '').trim();
+    if (normalizedPhone.startsWith('+91')) {
+      normalizedPhone = normalizedPhone.substring(3);
+    } else if (normalizedPhone.startsWith('91') && normalizedPhone.length === 12) {
+      normalizedPhone = normalizedPhone.substring(2);
+    }
+
+    const user = await User.findOne({
+      $or: [
+        { email: normalizedIdentifier },
+        { phone: normalizedPhone },
+        { phone: identifier.trim() }
+      ]
+    });
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found. Check your Email or Phone number.' });
+    }
+    
+    // Verify password
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+      return res.status(400).json({ success: false, message: 'Incorrect password.' });
+    }
+    
+    // Completely delete the user from MongoDB
+    await User.findByIdAndDelete(user._id);
+    
+    console.log(`🗑️ Account permanently deleted via web portal: ${user.email || user.phone}`);
+    res.json({ success: true, message: 'Your account and all associated data have been permanently deleted.' });
+  } catch (error) {
+    console.error('Web Account deletion error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
 module.exports = router;
+
 

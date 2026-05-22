@@ -274,6 +274,25 @@ app.get('/favicon.png', (req, res) => {
   res.status(204).end(); // No Content
 });
 
+// Account Deletion HTML Page
+app.get('/delete-account', (req, res) => {
+  const fs = require('fs');
+  const possiblePaths = [
+    path.join(__dirname, 'delete-account.html'),
+    path.join(__dirname, '..', 'delete-account.html'),
+    path.join(process.cwd(), 'delete-account.html'),
+    path.join(process.cwd(), 'backend', 'delete-account.html')
+  ];
+  
+  for (const filePath of possiblePaths) {
+    if (fs.existsSync(filePath)) {
+      return res.sendFile(filePath);
+    }
+  }
+  
+  res.status(404).send('Account deletion page not found. Please contact support.');
+});
+
 // Root route
 app.get('/', (req, res) => {
   res.json({
