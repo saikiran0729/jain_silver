@@ -110,11 +110,13 @@ export default function RegisterScreen() {
             text: 'Gallery',
             onPress: async () => {
               try {
-                // Request media library permissions
-                const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-                if (status !== 'granted') {
-                  Alert.alert('Permission Required', 'Media library permission is required to select photos. Please enable it in your device settings.');
-                  return;
+                // Request media library permissions only on iOS
+                if (Platform.OS === 'ios') {
+                  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                  if (status !== 'granted') {
+                    Alert.alert('Permission Required', 'Media library permission is required to select photos. Please enable it in your device settings.');
+                    return;
+                  }
                 }
 
                 console.log('🖼️ Launching image library...');
@@ -249,11 +251,13 @@ export default function RegisterScreen() {
             text: 'Gallery',
             onPress: async () => {
               try {
-                // Request media library permissions
-                const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-                if (status !== 'granted') {
-                  Alert.alert('Permission Required', 'Media library permission is required to select photos. Please enable it in your device settings.');
-                  return;
+                // Request media library permissions only on iOS
+                if (Platform.OS === 'ios') {
+                  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                  if (status !== 'granted') {
+                    Alert.alert('Permission Required', 'Media library permission is required to select photos. Please enable it in your device settings.');
+                    return;
+                  }
                 }
 
                 console.log('🖼️ Launching image library for selfie...');

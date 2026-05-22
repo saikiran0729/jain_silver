@@ -2,7 +2,7 @@
   "expo": {
     "name": "Jain Silver Plaza",
     "slug": "jain-silver-2",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/Gemini_Generated_Image_8ia19c8ia19c8ia1.png",
     "userInterfaceStyle": "light",
@@ -17,7 +17,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.jainsilver.app",
-      "buildNumber": "1.0.1",
+      "buildNumber": "1.0.2",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to upload documents.",
         "NSCameraUsageDescription": "This app needs access to your camera to take photos for document upload.",
@@ -30,14 +30,8 @@
         "backgroundColor": "#1976D2"
       },
       "package": "com.jainsilver.app",
-      "versionCode": 3,
-      "permissions": [
-        "CAMERA",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
-        "READ_MEDIA_IMAGES",
-        "READ_MEDIA_VIDEO"
-      ],
+      "versionCode": 4,
+      "permissions": [],
       "playStoreUrl": "https://play.google.com/store/apps/details?id=com.jainsilver.app"
     },
     "web": {
