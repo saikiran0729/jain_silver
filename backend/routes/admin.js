@@ -684,6 +684,65 @@ router.put('/product', auth, adminAuth, async (req, res) => {
     }
 
     if (!rate) {
+      // Check if it matches a standard rate definition, and create it on the fly
+      const rateDefinitions = [
+        { name: 'Silver Coin 1 Gram', type: 'coin', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+        { name: 'Silver Coin 5 Grams', type: 'coin', weight: { value: 5, unit: 'grams' }, purity: '99.9%' },
+        { name: 'Silver Coin 10 Grams', type: 'coin', weight: { value: 10, unit: 'grams' }, purity: '99.9%' },
+        { name: 'Silver Coin 50 Grams', type: 'coin', weight: { value: 50, unit: 'grams' }, purity: '99.9%' },
+        { name: 'Silver Coin 100 Grams', type: 'coin', weight: { value: 100, unit: 'grams' }, purity: '99.9%' },
+        { name: 'Silver Bar 100 Grams', type: 'bar', weight: { value: 100, unit: 'grams' }, purity: '99.99%' },
+        { name: 'Silver Bar 500 Grams', type: 'bar', weight: { value: 500, unit: 'grams' }, purity: '99.99%' },
+        { name: 'Silver Bar 1 Kg', type: 'bar', weight: { value: 1, unit: 'kg' }, purity: '99.99%' },
+        { name: 'Silver Jewelry 92.5%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '92.5%' },
+        { name: 'Silver Jewelry 99.9%', type: 'jewelry', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+        { name: 'Gold 999 1 Gram', type: 'gold', weight: { value: 1, unit: 'grams' }, purity: '99.9%' },
+        { name: 'Gold 999 10 Grams', type: 'gold', weight: { value: 10, unit: 'grams' }, purity: '99.9%' }
+      ];
+
+      const matchedDef = rateDefinitions.find(
+        def => def.name === productName || 
+               Buffer.from(def.name).toString('base64').substring(0, 24) === productName
+      );
+
+      if (matchedDef) {
+        console.log(`✨ Product "${productName}" is missing from DB but exists in standard definitions. Creating it now...`);
+        
+        let ratePerGram = 100; // default silver rate fallback
+        if (matchedDef.type === 'gold') {
+          ratePerGram = 6500; // default gold rate fallback
+        }
+
+        let weightInGrams = matchedDef.weight.value;
+        if (matchedDef.weight.unit === 'kg') {
+          weightInGrams = matchedDef.weight.value * 1000;
+        }
+        const totalRate = ratePerGram * weightInGrams;
+        const customId = Buffer.from(matchedDef.name).toString('base64').substring(0, 24);
+
+        rate = new SilverRate({
+          _id: customId,
+          name: matchedDef.name,
+          originalName: matchedDef.name,
+          type: matchedDef.type,
+          weight: matchedDef.weight,
+          purity: matchedDef.purity,
+          ratePerGram: ratePerGram,
+          rate: totalRate,
+          manualAdjustment: 0,
+          manualAdjustmentPercentage: 0,
+          location: 'Andhra Pradesh',
+          unit: 'INR',
+          isVisible: isVisible !== undefined ? Boolean(isVisible) : true,
+          displayName: displayName !== undefined ? (displayName.trim() || null) : null
+        });
+
+        await rate.save();
+        console.log(`✅ Successfully created missing product "${rate.name}" in DB.`);
+      }
+    }
+
+    if (!rate) {
       console.error(`❌ Product not found: "${productName}"`);
       console.log('   Available rates in DB (first 5):', (await SilverRate.find({ location: 'Andhra Pradesh' }).limit(5).select('name')).map(r => r.name));
       return res.status(404).json({
