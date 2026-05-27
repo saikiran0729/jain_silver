@@ -107,8 +107,8 @@ try {
 }
 
 // Generate JWT token
-const generateToken = (userId) => {
-  return jwt.sign({ userId }, process.env.JWT_SECRET || 'jain_silver_secret_key_2024_change_in_production', {
+const generateToken = (userId, role = 'user') => {
+  return jwt.sign({ userId, role }, process.env.JWT_SECRET || 'jain_silver_secret_key_2024_change_in_production', {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d'
   });
 };
@@ -862,7 +862,7 @@ router.post('/signin',
       }
 
       // Generate token - only for approved users
-      const token = generateToken(user._id);
+      const token = generateToken(user._id, user.role);
 
       console.log('✅ Sign in successful:', { email: user.email, status: user.status });
 
@@ -960,7 +960,7 @@ router.post('/admin/signin',
       console.log('✅ Password verified successfully');
 
       // Generate token
-      const token = generateToken(user._id);
+      const token = generateToken(user._id, user.role);
       console.log('✅ Admin login successful:', { email: user.email, id: user._id });
 
       res.json({

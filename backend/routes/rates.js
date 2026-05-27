@@ -126,12 +126,19 @@ const getOriginalRates = async (baseRatePerGram, goldRatePerGram = null) => {
 };
 
 // Helper function to check if user is admin from token
-const isAdminUser = (req) => {
+const isAdminUser = async (req) => {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) return false;
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jain_silver_secret_key_2024_change_in_production');
-    return decoded.role === 'admin';
+    
+    // 1. Direct check from JWT payload
+    if (decoded.role === 'admin') return true;
+    
+    // 2. Fallback check for legacy/existing tokens
+    const User = require('../models/User');
+    const user = await User.findById(decoded.userId);
+    return user && user.role === 'admin';
   } catch (error) {
     return false;
   }
@@ -572,7 +579,7 @@ router.get('/', async (req, res) => {
     const adminParam = req.query.admin === 'true' || req.query.admin === true;
 
     // Check if user is admin
-    const isAdmin = isAdminUser(req) || adminParam;
+    const isAdmin = (await isAdminUser(req)) || adminParam;
 
     let mongoRates = [];
     try {
